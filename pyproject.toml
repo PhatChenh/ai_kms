@@ -1,0 +1,25 @@
+[project]
+name = "ai-kms"
+version = "0.1.0"
+description = "Building knowledge system with AI"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pyyaml",
+    "python-frontmatter",
+    "pydantic>=2.0",
+    "structlog",
+    "jinja2",
+    "pytest",
+    "pytest-asyncio",
+    "requests>=2.33.1",
+    "anthropic>=0.97.0",
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = ["tests*", "data*", "logs*", "venv*", ".venv*"]

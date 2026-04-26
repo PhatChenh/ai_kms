@@ -1,0 +1,46 @@
+# config.yaml — Central configuration for your knowledge base
+
+vault_path: "/Users/phatchenh/knowledge-base"
+database_path: "./data/kb.db"
+para_context_path: "/Users/phatchenh/Library/Mobile Documents/iCloud~md~obsidian/Documents/Claude Brain/para-context.yaml"
+
+# ─── AI Provider Configuration ───
+# For each task, choose which AI provider to use.
+# Options: "claude", "ollama"
+providers:
+  classify: "claude"            # Claude is better at nuanced PARA classification
+  synthesis: "ollama"           # Claude writes better synthesis narratives
+  embeddings: "ollama"          # Ollama is free and embeddings run fine locally
+  self_learn: "claude"          # Claude is better at understanding evaluation patterns
+
+# ─── Claude Configuration ───
+claude:
+  api_key: "sk-ant-..."        # Your Anthropic API key (or use ANTHROPIC_API_KEY env var)
+  model: "claude-haiku-4-5-20251001"  # Fast + cheap for classification
+  synthesis_model: "claude-sonnet-4-5-20241022"  # Smarter model for weekly synthesis
+  max_tokens: 1024
+  timeout: 60
+
+# ─── Ollama Configuration ───
+ollama:
+  base_url: "http://localhost:11434"
+  chat_model: "qwen3.5:9b"               # for classification, synthesis
+  embedding_model: "nomic-embed-text" # for semantic search
+  timeout: 120
+  delay_between_calls: 2             # seconds between batch AI calls
+
+# ─── MCP Server Configuration ───  ← NEW
+mcp:
+  port: 3838
+  host: "0.0.0.0"                    # listen on all interfaces for remote access
+  api_key: ""                        # set this for remote access security
+  enable_http: false                 # enable HTTP transport (for VPS deployment)
+
+# ─── Self-Learning Configuration ───  ← NEW
+self_learning:
+  enabled: true
+  min_evaluations: 20                # minimum evaluations before adjusting prompts
+  confidence_threshold: 0.8          # above this, trust the AI's classification
+  include_examples_in_prompt: true   # include past corrections as few-shot examples
+  max_examples: 5                    # how many examples to include in prompts
+
