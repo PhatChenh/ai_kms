@@ -12,7 +12,7 @@ Branching convention: prefer `match/case` in pipeline stages,
 import traceback as tb
 from dataclasses import dataclass, field
 from typing import Never
-from exceptions import KMSError
+from core.exceptions import KMSError
 
 # ---------------------------------------------------------------------------
 # Core result types
@@ -68,6 +68,20 @@ class Failure:
     def unwrap(self) -> Never:
         """Always raises. Forces callers to handle Failure explicitly."""
         raise KMSError(self.error)
+    
+    def to_log_dict(self) -> dict:
+        """
+        Returns a flat, JSON-serializable dict for structured logging.
+        
+        Usage in pipeline stages:
+            logger.error("stage failed", **f.to_log_dict())
+    """
+        return {
+            "error": self.error,
+            "recoverable": self.recoverable,
+            "context": {k: str(v) for k, v in self.context.items()},
+            "traceback": self.traceback,
+        }
 
 
 # ---------------------------------------------------------------------------
