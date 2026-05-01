@@ -1,21 +1,25 @@
-import yaml
+from core.exceptions import KMSError, ConfigError, VaultError
+from core.result import Result, Failure
 
-from llm.provider import get_provider
-
-with open('config.yaml') as f:
-    config = yaml.safe_load(f)
-
-task = 'synsthesis'
-test_llm = get_provider(task, config)
-response = test_llm.chat("What is going on?")
-print(response)
+def check_error(_input: str) -> Result[str]:
+    if _input == 'config':
+        raise ConfigError("bad config")
+    if _input == 'vault':
+        raise VaultError("bad vault path")
 
 
-# import yaml
-# from llm.provider import get_provider
+try:
+    error = input("What do you want?")
+    check_error(error)
+except KMSError as e:
+    # print(type(e).__name__)
+    # print(e)
+    fail = Failure(
+        error = str(e),
+        recoverable=True,
+        context={}
+    )
+    # fail.unwrap()
 
-# with open("config.yaml") as f:
-#     config = yaml.safe_load(f)
-
-# test_llm = get_provider("synthesis", config=config)
-# print(response)
+print(fail.error)
+print(fail.traceback)
