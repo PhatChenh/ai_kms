@@ -1,6 +1,7 @@
 # config.yaml — Central configuration for your knowledge base
 
-vault_path: "/Users/phatchenh/knowledge-base"
+
+vault_path: "/Users/phatchenh/ai_kms"
 database_path: "./data/kb.db"
 para_context_path: "/Users/phatchenh/Library/Mobile Documents/iCloud~md~obsidian/Documents/Claude Brain/para-context.yaml"
 
