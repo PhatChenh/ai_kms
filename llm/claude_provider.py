@@ -1,50 +1,76 @@
-# llm/claude_provider.py
+"""
+llm/claude_provider.py
 
-import os
+Claude implementation of AIProvider.
+
+Key design: the task determines which model is used.
+- synthesis / documentation → claude.synthesis_model (Sonnet — smarter, slower)
+- everything else           → claude.model           (Haiku — fast, cheap)
+
+This means pipelines don't need to think about model selection. They just call
+get_provider("synthesis", CONFIG.main) and automatically get the right model.
+"""
+
 import json
+import os
+
 from anthropic import Anthropic
+
+from core.config import ClaudeConfig, Task
 from llm.provider import AIProvider
 
-class ClaudeProvider(AIProvider):
-    """Calls Claude API via the official Anthropic Python SDK."""
+# Tasks that need the smarter synthesis model instead of the fast default.
+_SYNTHESIS_TASKS: frozenset[Task] = frozenset({"synthesis", "documentation"})
 
-    def __init__(self, config: dict):
-        api_key = os.environ.get("ANTHROPIC_API_KEY") or config.get("api_key")
+
+class ClaudeProvider(AIProvider):
+    """Calls the Claude API via the official Anthropic Python SDK."""
+
+    def __init__(self, config: ClaudeConfig, task: Task = "capture") -> None:
+        """
+        Args:
+            config: The validated ClaudeConfig from MainConfig.
+            task:   The pipeline task this provider is being created for.
+                    Used to select model (haiku vs sonnet).
+        """
+        # Key resolution order: env var → config field (which should be a placeholder).
+        # The validator in ApiKeys already strips empty strings, so we only need env here.
+        api_key = os.environ.get("ANTHROPIC_API_KEY") or config.__dict__.get("api_key")
         if not api_key:
             raise ValueError(
-                "Claude API key not found. Set ANTHROPIC_API_KEY environment variable "
-                "or add api_key to claude section in config.yaml"
+                "ANTHROPIC_API_KEY not set. "
+                "Export it in your shell or add it to .env — never put it in config.yaml."
             )
-        self.client = Anthropic(api_key=api_key)
-        self.model = config.get("model", "claude-haiku-4-5-20251001")
-        self.max_tokens = config.get("max_tokens", 1024)
-        self.timeout = config.get("timeout", 60)
+
+        self.client     = Anthropic(api_key=api_key)
+        self.max_tokens = config.max_tokens
+        self.timeout    = config.timeout
+
+        # Select model based on the task.
+        self.model = (
+            config.synthesis_model if task in _SYNTHESIS_TASKS
+            else config.model
+        )
+
+    # ── public interface ──────────────────────────────────────────────────
 
     def chat(self, prompt: str, system_prompt: str = "", json_mode: bool = False) -> str:
-        """Send a prompt to Claude and get a response."""
-
-        messages = [{"role": "user", "content": prompt}]
-
-        # If we want JSON, add an instruction to the system prompt
-        if json_mode and system_prompt:
-            system_prompt += "\n\nReturn ONLY valid JSON. No markdown, no explanation."
-        elif json_mode:
-            system_prompt = "Return ONLY valid JSON. No markdown, no explanation."
+        """Send a prompt to Claude and return the text response."""
+        if json_mode:
+            suffix = "\n\nReturn ONLY valid JSON. No markdown, no explanation."
+            system_prompt = (system_prompt + suffix) if system_prompt else suffix.strip()
 
         response = self.client.messages.create(
             model=self.model,
             max_tokens=self.max_tokens,
-            system=system_prompt if system_prompt else "",
-            messages=messages,
+            system=system_prompt,
+            messages=[{"role": "user", "content": prompt}],
         )
-
-        # Extract the text from Claude's response
         return response.content[0].text
 
     def embed(self, text: str) -> list[float]:
-        """Claude doesn't have an embedding endpoint.
-        Fall back to sentence-transformers for embeddings."""
+        """Claude has no embedding endpoint — route embeddings to Ollama."""
         raise NotImplementedError(
-            "Claude API does not support embeddings. "
-            "Use 'ollama' or 'sentence-transformers' for the embeddings provider."
+            "Claude does not support embeddings. "
+            "Set providers.embeddings = 'ollama' in config/config.yaml."
         )

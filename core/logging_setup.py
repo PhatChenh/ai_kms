@@ -77,8 +77,8 @@ def new_correlation_id() -> str:
 
 # ─── Internal helpers ─────────────────────────────────────────────────────────
 
-_LOG_DIR = Path("logs")
-_LOG_FILE = _LOG_DIR / "kms.log"
+_LOG_DIR = Path(__file__).parent.parent
+_LOG_FILE = _LOG_DIR / "logs"/ "kms.log"
 
 
 def _ensure_log_dir() -> None:
@@ -145,7 +145,10 @@ def _configure_stdlib_handlers(log_level: str, dev_mode: bool) -> None:
         production — JSON to file is the source of truth.
     """
     # Map the string level to a stdlib int constant (e.g. "INFO" → 20).
-    numeric_level = getattr(logging, log_level.upper(), logging.INFO)
+    if log_level.upper() in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+        numeric_level = getattr(logging, log_level.upper())
+    else:
+        raise ValueError("Unknown log level")
 
     # ── JSON file handler ────────────────────────────────────────────────────
     json_formatter = structlog.stdlib.ProcessorFormatter(
