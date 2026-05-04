@@ -24,6 +24,8 @@ import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from core.exceptions import ConfigError 
+
 # ---------------------------------------------------------------------------
 # Resolve config dir relative to this file — works regardless of cwd.
 # ---------------------------------------------------------------------------
@@ -314,22 +316,36 @@ def _load_yaml(filename: str) -> dict:
     return data or {}
 
 
-def load_config() -> Config:
+def load_config() -> "Config":
     """
-    Load all three YAML files, validate, and return a Config.
-    Called once at module level — do not call directly elsewhere.
-
+    Load and validate all config files. Called once at module level.
+ 
     Raises:
-        FileNotFoundError — any YAML is missing
-        ValidationError   — any value fails the schema
-        RuntimeError      — vault root does not exist
+        ConfigError — if any YAML file is missing OR any value fails the schema.
+                      Wraps FileNotFoundError and Pydantic ValidationError so
+                      callers get one typed exception to catch.
     """
-    return Config(
-        main=MainConfig(**_load_yaml("config.yaml")),
-        thresholds=Thresholds(**_load_yaml("thresholds.yaml")),
-        routing=Routing(**_load_yaml("routing.yaml")),
-        keys=ApiKeys(),
-    )
+    try:
+        raw_main       = _load_yaml("config.yaml")
+        raw_thresholds = _load_yaml("thresholds.yaml")
+        raw_routing    = _load_yaml("routing.yaml")
+ 
+        from pydantic import ValidationError  # local import avoids circular risk
+ 
+        try:
+            return Config(
+                main=MainConfig(**raw_main),
+                thresholds=Thresholds(**raw_thresholds),
+                routing=Routing(**raw_routing),
+                keys=ApiKeys(),
+            )
+        except ValidationError as exc:
+            raise ConfigError(
+                f"Config validation failed:\n{exc}"
+            ) from exc
+ 
+    except FileNotFoundError as exc:
+        raise ConfigError(f"Config file missing: {exc}") from exc
 
 
 # ===========================================================================
