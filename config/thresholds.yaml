@@ -1,27 +1,19 @@
 # config/thresholds.yaml
 # Confidence score cutoffs that control routing decisions.
 #
-# How scores map to actions:
-#   score >= auto    → pipeline acts automatically, no human review
-#   score >= review  → item is flagged for human review before action
-#   score <  review  → item is rejected / skipped entirely
+# Three bands — evaluated top-down:
+#
+#   score >= auto    → AUTO     — pipeline acts immediately
+#   score >= suggest → SUGGEST  — AI flags note with candidate destinations;
+#                                 human confirms before any move is made
+#   score <  suggest → CLUELESS — AI reviewed but has no useful candidate;
+#                                 note is flagged "needs human — AI is stuck"
+#                                 NEVER stays silent. Always audit-logged.
 #
 # All values are floats in [0.0, 1.0].
 
 global:
   auto: 0.85    # Act automatically above this confidence
-  review: 0.60  # Queue for review above this, below auto
-
-# Per-pipeline overrides. If a pipeline name is listed here,
-# its values take precedence over global. Leave empty — Phase 2 fills this.
-#
-# Example (do not uncomment until Phase 2):
-# pipelines:
-#   journal_tagger:
-#     auto: 0.90
-#     review: 0.70
-#   resource_classifier:
-#     auto: 0.80
-#     review: 0.55
+  suggest: 0.60  # Queue for review above this, below auto
 
 pipelines: {}

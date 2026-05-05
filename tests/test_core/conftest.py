@@ -62,14 +62,46 @@ def config_dir(tmp_path: Path, vault_dir: Path) -> Path:
     _write_yaml(cfg / "config.yaml", {
         "vault": {
             "root": str(vault_dir),
-            "journal_dir": "Journal",
-            "resources_dir": "Resources",
-            "inbox_dir": "Inbox",
+            "inbox_dir": "inbox",
+            "projects_dir": "Projects",
+            "domain_dir": "Domain",
+            "documentation_dir": "Documentation",
+            "synthesis_dir": "Synthesis",
+            "briefings_dir": "Briefings",
+            "archive_dir": "Archive",
         },
         "logging": {"level": "DEBUG", "console": True},
-        "llm": {
-            "default_provider": "anthropic",
-            "timeout_seconds": 30,
+        "providers": {
+            "classify": "claude",
+            "synthesis": "claude",
+            "embeddings": "ollama",
+            "self_learn": "claude",
+            "capture": "claude",
+        },
+        "claude": {
+            "model": "claude-haiku-4-5-20251001",
+            "synthesis_model": "claude-sonnet-4-20250514",
+            "max_tokens": 1024,
+            "timeout": 60,
+        },
+        "ollama": {
+            "base_url": "http://localhost:11434",
+            "chat_model": "qwen3.5:9b",
+            "embedding_model": "nomic-embed-text",
+            "timeout": 120,
+            "delay_between_calls": 2,
+        },
+        "mcp": {
+            "port": 3838,
+            "host": "0.0.0.0",
+            "enable_http": False,
+        },
+        "self_learning": {
+            "enabled": True,
+            "min_evaluations": 20,
+            "confidence_threshold": 0.8,
+            "include_examples_in_prompt": True,
+            "max_examples": 5,
         },
         "env": "dev",
     })

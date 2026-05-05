@@ -30,3 +30,8 @@ exclude = ["tests*", "data*", "logs*", "venv*", ".venv*"]
 dev = [
     "pytest>=9.0.3",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "smoke: tests that require real config files and a live vault on disk",
+]

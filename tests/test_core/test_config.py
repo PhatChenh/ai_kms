@@ -59,16 +59,20 @@ from core.config import (
     _load_yaml,
     load_config,
     ApiKeys,
+    ClaudeConfig,
     ConfidenceBand,
     DatabaseConfig,
-    # LLMConfig,
-    # LLMModels,
     LoggingConfig,
     MainConfig,
+    MCPConfig,
+    OllamaConfig,
     PipelineRouting,
+    ProvidersConfig,
     Routing,
+    SelfLearningConfig,
     Thresholds,
     VaultConfig,
+    RouteDecision,
 )
 from core.exceptions import ConfigError
 
@@ -87,10 +91,10 @@ class TestLoadYaml:
         monkeypatch.setattr(cfg_module, "_CONFIG_DIR", tmp_path)
 
         (tmp_path / "sample.yaml").write_text(
-            "global:\n  auto: 0.85\n  review: 0.60\n"
+            "global:\n  auto: 0.85\n  suggest: 0.60\n"
         )
         result = cfg_module._load_yaml("sample.yaml")
-        assert result == {"global": {"auto": 0.85, "review": 0.60}}
+        assert result == {"global": {"auto": 0.85, "suggest": 0.60}}
 
     def test_returns_empty_dict_for_empty_file(self, tmp_path: Path, monkeypatch):
         """
@@ -121,7 +125,7 @@ class TestLoadYaml:
         import core.config as cfg_module
         monkeypatch.setattr(cfg_module, "_CONFIG_DIR", tmp_path)
 
-        with pytest.raises(FileNotFoundError, match="Config file not found"):
+        with pytest.raises(FileNotFoundError, match="Config file missing"):
             cfg_module._load_yaml("does_not_exist.yaml")
 
     def test_error_message_names_the_missing_file(self, tmp_path: Path, monkeypatch):
@@ -161,9 +165,9 @@ class TestConfidenceBand:
         band = ConfidenceBand()
         assert band.auto == 0.85
 
-    def test_default_review_is_060(self):
+    def test_default_suggest_is_060(self):
         band = ConfidenceBand()
-        assert band.review == 0.60
+        assert band.suggest == 0.60
 
     def test_defaults_are_floats(self):
         """
@@ -172,7 +176,7 @@ class TestConfidenceBand:
         """
         band = ConfidenceBand()
         assert isinstance(band.auto, float)
-        assert isinstance(band.review, float)
+        assert isinstance(band.suggest, float)
 
     # ── Parsing from YAML-sourced values ─────────────────────────────────────
 
@@ -181,61 +185,61 @@ class TestConfidenceBand:
         YAML often gives you integers (auto: 1) instead of floats (auto: 1.0).
         Pydantic must coerce these — the field type is float, not int | float.
         """
-        band = ConfidenceBand(auto=1, review=0)
+        band = ConfidenceBand(auto=1, suggest=0)
         assert isinstance(band.auto, float)
-        assert isinstance(band.review, float)
+        assert isinstance(band.suggest, float)
 
     def test_string_float_inputs_are_coerced(self):
         """Some YAML parsers return '0.85' as a string. Pydantic coerces it."""
-        band = ConfidenceBand(auto="0.90", review="0.65")
+        band = ConfidenceBand(auto="0.90", suggest="0.65")
         assert band.auto == pytest.approx(0.90)
-        assert band.review == pytest.approx(0.65)
+        assert band.suggest == pytest.approx(0.65)
 
     def test_custom_values_parse_correctly(self):
-        band = ConfidenceBand(auto=0.95, review=0.75)
+        band = ConfidenceBand(auto=0.95, suggest=0.75)
         assert band.auto == pytest.approx(0.95)
-        assert band.review == pytest.approx(0.75)
+        assert band.suggest == pytest.approx(0.75)
 
     # ── Boundary acceptance ───────────────────────────────────────────────────
 
     def test_accepts_auto_at_exactly_one(self):
         """Upper boundary — 1.0 is a valid 'always auto-execute' sentinel."""
-        band = ConfidenceBand(auto=1.0, review=0.0)
+        band = ConfidenceBand(auto=1.0, suggest=0.0)
         assert band.auto == 1.0
 
-    def test_accepts_review_at_exactly_zero(self):
-        """Lower boundary — 0.0 is valid (everything auto-reviewed)."""
-        band = ConfidenceBand(auto=1.0, review=0.0)
-        assert band.review == 0.0
+    def test_accepts_suggest_at_exactly_zero(self):
+        """Lower boundary — 0.0 is valid (everything auto-suggested)."""
+        band = ConfidenceBand(auto=1.0, suggest=0.0)
+        assert band.suggest == 0.0
 
     # ── Constraint violations ─────────────────────────────────────────────────
 
-    def test_rejects_review_greater_than_auto(self):
+    def test_rejects_suggest_greater_than_auto(self):
         """
-        review >= auto is a logical contradiction (the review gate would be
+        suggest >= auto is a logical contradiction (the suggest gate would be
         higher than the auto gate). Must be rejected at parse time.
         """
-        with pytest.raises(ValidationError, match="review.*must be strictly less than"):
-            ConfidenceBand(auto=0.70, review=0.80)
+        with pytest.raises(ValidationError, match="suggest.*must be strictly less than"):
+            ConfidenceBand(auto=0.70, suggest=0.80)
 
-    def test_rejects_review_equal_to_auto(self):
-        """Equal thresholds leaves no 'flag for review' band — also invalid."""
+    def test_rejects_suggest_equal_to_auto(self):
+        """Equal thresholds leaves no 'flag for suggest' band — also invalid."""
         with pytest.raises(ValidationError):
-            ConfidenceBand(auto=0.75, review=0.75)
+            ConfidenceBand(auto=0.75, suggest=0.75)
 
     def test_rejects_auto_above_one(self):
         """Probability > 1.0 is nonsensical."""
         with pytest.raises(ValidationError):
-            ConfidenceBand(auto=1.01, review=0.60)
+            ConfidenceBand(auto=1.01, suggest=0.60)
 
-    def test_rejects_review_below_zero(self):
+    def test_rejects_suggest_below_zero(self):
         """Probability < 0.0 is nonsensical."""
         with pytest.raises(ValidationError):
-            ConfidenceBand(auto=0.85, review=-0.01)
+            ConfidenceBand(auto=0.85, suggest=-0.01)
 
     def test_rejects_auto_below_zero(self):
         with pytest.raises(ValidationError):
-            ConfidenceBand(auto=-0.1, review=-0.5)
+            ConfidenceBand(auto=-0.1, suggest=-0.5)
 
 
 # ===========================================================================
@@ -249,14 +253,14 @@ class TestThresholds:
         'global' is a Python keyword, so the field is named global_ with an
         alias. Pydantic must accept {'global': {...}} from YAML correctly.
         """
-        t = Thresholds(**{"global": {"auto": 0.90, "review": 0.65}})
+        t = Thresholds(**{"global": {"auto": 0.90, "suggest": 0.65}})
         assert t.global_.auto == pytest.approx(0.90)
 
     def test_defaults_to_standard_global_band(self):
         """With no YAML input, the global band should be 0.85 / 0.60."""
         t = Thresholds()
         assert t.global_.auto == pytest.approx(0.85)
-        assert t.global_.review == pytest.approx(0.60)
+        assert t.global_.suggest == pytest.approx(0.60)
 
     def test_for_pipeline_returns_global_for_unknown_name(self):
         """
@@ -266,19 +270,19 @@ class TestThresholds:
         t = Thresholds()
         band = t.for_pipeline("nonexistent_pipeline")
         assert band.auto == pytest.approx(0.85)
-        assert band.review == pytest.approx(0.60)
+        assert band.suggest == pytest.approx(0.60)
 
     def test_for_pipeline_returns_override_when_configured(self):
         """A named pipeline with its own band must return that band, not global."""
         t = Thresholds(**{
-            "global": {"auto": 0.85, "review": 0.60},
+            "global": {"auto": 0.85, "suggest": 0.60},
             "pipelines": {
-                "classify": {"auto": 0.92, "review": 0.72},
+                "classify": {"auto": 0.92, "suggest": 0.72},
             },
         })
         band = t.for_pipeline("classify")
         assert band.auto == pytest.approx(0.92)
-        assert band.review == pytest.approx(0.72)
+        assert band.suggest == pytest.approx(0.72)
 
     def test_for_pipeline_other_pipelines_still_fall_back(self):
         """
@@ -286,9 +290,9 @@ class TestThresholds:
         Regression guard: we once returned the wrong band here.
         """
         t = Thresholds(**{
-            "global": {"auto": 0.85, "review": 0.60},
+            "global": {"auto": 0.85, "suggest": 0.60},
             "pipelines": {
-                "classify": {"auto": 0.92, "review": 0.72},
+                "classify": {"auto": 0.92, "suggest": 0.72},
             },
         })
         band = t.for_pipeline("capture")
@@ -302,7 +306,7 @@ class TestThresholds:
 
     def test_empty_pipelines_dict_is_valid(self):
         """routing.yaml ships with `pipelines: {}` — that must parse without error."""
-        t = Thresholds(**{"global": {"auto": 0.85, "review": 0.60}, "pipelines": {}})
+        t = Thresholds(**{"global": {"auto": 0.85, "suggest": 0.60}, "pipelines": {}})
         assert t.pipelines == {}
 
 
@@ -312,8 +316,10 @@ class TestThresholds:
 
 class TestVaultConfig:
     """
-    Tests for the three derived path properties.
-    These exist so callers never build paths with string concatenation.
+    Tests for all derived path properties on VaultConfig.
+    These exist so callers never build paths by string concatenation elsewhere.
+    VaultConfig has seven subdirectories: inbox, projects, domain,
+    documentation, synthesis, briefings, archive.
     """
 
     @pytest.fixture()
@@ -321,22 +327,44 @@ class TestVaultConfig:
         tmp_path.mkdir(exist_ok=True)
         return VaultConfig(root=tmp_path)
 
-    def test_journal_path_is_root_plus_journal_dir(self, vault, tmp_path):
-        assert vault.journal_path == tmp_path / "Journal"
-
-    def test_resources_path_is_root_plus_resources_dir(self, vault, tmp_path):
-        assert vault.resources_path == tmp_path / "Resources"
+    # ── default path properties ───────────────────────────────────────────────
 
     def test_inbox_path_is_root_plus_inbox_dir(self, vault, tmp_path):
-        assert vault.inbox_path == tmp_path / "Inbox"
+        assert vault.inbox_path == tmp_path / "inbox"
 
-    def test_custom_dir_names_are_reflected_in_properties(self, tmp_path):
-        vc = VaultConfig(root=tmp_path, journal_dir="Logs", inbox_dir="Drop")
-        assert vc.journal_path == tmp_path / "Logs"
+    def test_projects_path_is_root_plus_projects_dir(self, vault, tmp_path):
+        assert vault.projects_path == tmp_path / "Projects"
+
+    def test_domain_path_is_root_plus_domain_dir(self, vault, tmp_path):
+        assert vault.domain_path == tmp_path / "Domain"
+
+    def test_documentation_path_is_root_plus_documentation_dir(self, vault, tmp_path):
+        assert vault.documentation_path == tmp_path / "Documentation"
+
+    def test_synthesis_path_is_root_plus_synthesis_dir(self, vault, tmp_path):
+        assert vault.synthesis_path == tmp_path / "Synthesis"
+
+    def test_briefings_path_is_root_plus_briefings_dir(self, vault, tmp_path):
+        assert vault.briefings_path == tmp_path / "Briefings"
+
+    def test_archive_path_is_root_plus_archive_dir(self, vault, tmp_path):
+        assert vault.archive_path == tmp_path / "Archive"
+
+    # ── custom dir names are honoured ─────────────────────────────────────────
+
+    def test_custom_inbox_dir_reflected_in_property(self, tmp_path):
+        """Overriding a dir name in YAML must propagate to the path property."""
+        vc = VaultConfig(root=tmp_path, inbox_dir="Drop")
         assert vc.inbox_path == tmp_path / "Drop"
 
-    def test_root_is_coerced_to_path(self, tmp_path):
-        """Passing root as a string (common from YAML) must become a Path."""
+    def test_custom_projects_dir_reflected_in_property(self, tmp_path):
+        vc = VaultConfig(root=tmp_path, projects_dir="Work")
+        assert vc.projects_path == tmp_path / "Work"
+
+    # ── type coercion ─────────────────────────────────────────────────────────
+
+    def test_root_is_coerced_from_string_to_path(self, tmp_path):
+        """YAML delivers root as a string. Pydantic must coerce it to Path."""
         vc = VaultConfig(root=str(tmp_path))
         assert isinstance(vc.root, Path)
 
@@ -388,9 +416,27 @@ class TestMainConfig:
         assert cfg.logging.level == "INFO"
         assert cfg.logging.console is True
 
-    def test_llm_default_provider_is_anthropic(self, vault_dir: Path):
+    def test_default_provider_for_classify_is_claude(self, vault_dir: Path):
+        """ProvidersConfig replaces the old LLMConfig — check its defaults."""
         cfg = MainConfig(vault={"root": str(vault_dir)})
-        assert cfg.llm.default_provider == "anthropic"
+        assert cfg.providers.classify == "claude"
+
+    def test_default_provider_for_embeddings_is_ollama(self, vault_dir: Path):
+        """Embeddings are always routed to the local Ollama model by default."""
+        cfg = MainConfig(vault={"root": str(vault_dir)})
+        assert cfg.providers.embeddings == "ollama"
+
+    def test_claude_default_model_contains_haiku(self, vault_dir: Path):
+        cfg = MainConfig(vault={"root": str(vault_dir)})
+        assert "haiku" in cfg.claude.model.lower()
+
+    def test_self_learning_enabled_by_default(self, vault_dir: Path):
+        cfg = MainConfig(vault={"root": str(vault_dir)})
+        assert cfg.self_learning.enabled is True
+
+    def test_mcp_default_port_is_3838(self, vault_dir: Path):
+        cfg = MainConfig(vault={"root": str(vault_dir)})
+        assert cfg.mcp.port == 3838
 
 
 # ===========================================================================
@@ -446,6 +492,11 @@ class TestApiKeys:
 # Section 7 — Routing / LLMConfig : auxiliary model defaults
 # ===========================================================================
 
+# ===========================================================================
+# Section 7 — Auxiliary config models: ProvidersConfig, ClaudeConfig,
+#              OllamaConfig, MCPConfig, SelfLearningConfig
+# ===========================================================================
+
 class TestRouting:
 
     def test_empty_pipelines_dict_is_the_default(self):
@@ -465,24 +516,119 @@ class TestRouting:
         assert pr.fallback_provider is None
 
 
-class TestLLMConfig:
+class TestProvidersConfig:
 
-    def test_default_provider_is_anthropic(self):
-        llm = LLMConfig()
-        assert llm.default_provider == "anthropic"
+    def test_default_classify_provider_is_claude(self):
+        p = ProvidersConfig()
+        assert p.classify == "claude"
 
-    def test_rejects_unknown_provider(self):
+    def test_default_embeddings_provider_is_ollama(self):
+        """Embeddings run locally on Ollama by default — never pay per-call."""
+        p = ProvidersConfig()
+        assert p.embeddings == "ollama"
+
+    def test_for_task_returns_correct_provider(self):
+        """for_task() must return the per-task provider, not a fixed value."""
+        p = ProvidersConfig(classify="claude", embeddings="ollama")
+        assert p.for_task("classify") == "claude"
+        assert p.for_task("embeddings") == "ollama"
+
+    def test_rejects_unknown_provider_value(self):
+        """Only 'claude' and 'ollama' are valid — 'openai' is not wired yet."""
         with pytest.raises(ValidationError):
-            LLMConfig(default_provider="gemini")
+            ProvidersConfig(classify="openai")
 
-    def test_timeout_defaults_to_60(self):
-        llm = LLMConfig()
-        assert llm.timeout_seconds == 60
 
-    def test_models_submodel_has_sensible_defaults(self):
-        models = LLMModels()
-        assert "claude" in models.anthropic.lower()
-        assert "gpt" in models.openai.lower()
+class TestClaudeConfig:
+
+    def test_default_model_is_haiku(self):
+        """Haiku is the fast/cheap default for most tasks."""
+        c = ClaudeConfig()
+        assert "haiku" in c.model.lower()
+
+    def test_synthesis_model_is_sonnet(self):
+        """Sonnet is the smarter model reserved for synthesis tasks."""
+        c = ClaudeConfig()
+        assert "sonnet" in c.synthesis_model.lower()
+
+    def test_default_timeout_is_60(self):
+        c = ClaudeConfig()
+        assert c.timeout == 60
+
+    def test_default_max_tokens_is_1024(self):
+        c = ClaudeConfig()
+        assert c.max_tokens == 1024
+
+    def test_custom_model_overrides_default(self):
+        c = ClaudeConfig(model="claude-opus-4")
+        assert c.model == "claude-opus-4"
+
+
+class TestOllamaConfig:
+
+    def test_default_base_url(self):
+        o = OllamaConfig()
+        assert o.base_url == "http://localhost:11434"
+
+    def test_default_embedding_model(self):
+        o = OllamaConfig()
+        assert o.embedding_model == "nomic-embed-text"
+
+    def test_default_timeout_is_120(self):
+        """Ollama runs locally and can be slow — generous default timeout."""
+        o = OllamaConfig()
+        assert o.timeout == 120
+
+    def test_delay_between_calls_default(self):
+        o = OllamaConfig()
+        assert o.delay_between_calls == 2
+
+
+class TestMCPConfig:
+
+    def test_default_port_is_3838(self):
+        m = MCPConfig()
+        assert m.port == 3838
+
+    def test_default_host_listens_on_all_interfaces(self):
+        m = MCPConfig()
+        assert m.host == "0.0.0.0"
+
+    def test_http_disabled_by_default(self):
+        """HTTP transport is off by default — enable explicitly for VPS deploys."""
+        m = MCPConfig()
+        assert m.enable_http is False
+
+
+class TestSelfLearningConfig:
+
+    def test_enabled_by_default(self):
+        s = SelfLearningConfig()
+        assert s.enabled is True
+
+    def test_confidence_threshold_is_float(self):
+        s = SelfLearningConfig()
+        assert isinstance(s.confidence_threshold, float)
+
+    def test_confidence_threshold_default_is_080(self):
+        s = SelfLearningConfig()
+        assert s.confidence_threshold == pytest.approx(0.8)
+
+    def test_rejects_confidence_threshold_above_one(self):
+        with pytest.raises(ValidationError):
+            SelfLearningConfig(confidence_threshold=1.1)
+
+    def test_rejects_confidence_threshold_below_zero(self):
+        with pytest.raises(ValidationError):
+            SelfLearningConfig(confidence_threshold=-0.1)
+
+    def test_min_evaluations_default(self):
+        s = SelfLearningConfig()
+        assert s.min_evaluations == 20
+
+    def test_max_examples_default(self):
+        s = SelfLearningConfig()
+        assert s.max_examples == 5
 
 
 # ===========================================================================
@@ -522,7 +668,7 @@ class TestLoadConfig:
 
         # From thresholds.yaml
         assert isinstance(cfg.thresholds.global_.auto, float)
-        assert isinstance(cfg.thresholds.global_.review, float)
+        assert isinstance(cfg.thresholds.global_.suggest, float)
 
         # From routing.yaml
         assert isinstance(cfg.routing.pipelines, dict)
@@ -535,13 +681,13 @@ class TestLoadConfig:
         """
         band = loaded_config.thresholds.global_
         assert isinstance(band.auto, float)
-        assert isinstance(band.review, float)
+        assert isinstance(band.suggest, float)
 
     def test_pipeline_thresholds_are_floats(self, loaded_config):
         """Per-pipeline overrides must also be floats."""
         band = loaded_config.thresholds.for_pipeline("classify")
         assert isinstance(band.auto, float)
-        assert isinstance(band.review, float)
+        assert isinstance(band.suggest, float)
 
     def test_for_pipeline_classify_uses_override(self, loaded_config):
         """The fixture sets classify.auto=0.90 — verify it wins over global 0.85."""
@@ -602,7 +748,7 @@ class TestLoadConfig:
             _yaml.dump({"vault": {"root": str(vault_dir)}})
         )
         (tmp_path / "thresholds.yaml").write_text(
-            _yaml.dump({"global": {"auto": 0.85, "review": 0.60}})
+            _yaml.dump({"global": {"auto": 0.85, "suggest": 0.60}})
         )
 
         with pytest.raises(ConfigError):
@@ -614,7 +760,7 @@ class TestLoadConfig:
         self, monkeypatch, config_dir
     ):
         """
-        review >= auto is a schema violation in ConfidenceBand.
+        suggest >= auto is a schema violation in ConfidenceBand.
         Must surface as ConfigError, not a raw Pydantic ValidationError.
         """
         import yaml as _yaml
@@ -626,8 +772,8 @@ class TestLoadConfig:
         bad_thresholds.write_text(
             _yaml.dump({
                 "global": {
-                    "auto": 0.60,    # ← review (0.80) > auto (0.60): invalid
-                    "review": 0.80,
+                    "auto": 0.60,    # ← suggest (0.80) > auto (0.60): invalid
+                    "suggest": 0.80,
                 },
                 "pipelines": {},
             })
@@ -646,7 +792,7 @@ class TestLoadConfig:
         # Read, mutate, rewrite config.yaml
         with (config_dir / "config.yaml").open() as f:
             data = _yaml.safe_load(f)
-        data["llm"] = {"default_provider": "gemini"}     # not in Provider literal
+        data["providers"] = {"classify": "gemini"}     # not in Provider literal
         (config_dir / "config.yaml").write_text(_yaml.dump(data))
 
         with pytest.raises(ConfigError):
@@ -723,12 +869,12 @@ class TestConfigSingleton:
     def test_global_auto_threshold_is_float(self):
         assert isinstance(self.cfg.thresholds.global_.auto, float)
 
-    def test_global_review_threshold_is_float(self):
-        assert isinstance(self.cfg.thresholds.global_.review, float)
+    def test_global_suggest_threshold_is_float(self):
+        assert isinstance(self.cfg.thresholds.global_.suggest, float)
 
-    def test_review_is_below_auto(self):
+    def test_suggest_is_below_auto(self):
         band = self.cfg.thresholds.global_
-        assert band.review < band.auto
+        assert band.suggest < band.auto
 
     def test_vault_root_exists(self):
         assert self.cfg.main.vault.root.exists()
@@ -739,8 +885,34 @@ class TestConfigSingleton:
     def test_env_is_dev_or_prod(self):
         assert self.cfg.main.env in ("dev", "prod")
 
-    def test_default_llm_provider_is_valid(self):
-        assert self.cfg.main.llm.default_provider in ("anthropic", "openai", "ollama")
+    def test_default_provider_for_classify_is_valid(self):
+        assert self.cfg.main.providers.classify in ("claude", "ollama")
 
     def test_routing_pipelines_is_dict(self):
         assert isinstance(self.cfg.routing.pipelines, dict)
+    
+    def test_route_returns_auto_at_threshold(self):
+        band = ConfidenceBand(auto=0.85, suggest=0.60)
+        assert band.route(0.85) == RouteDecision.AUTO
+        assert band.route(1.00) == RouteDecision.AUTO
+
+    def test_route_returns_suggest_between_thresholds(self):
+        band = ConfidenceBand(auto=0.85, suggest=0.60)
+        assert band.route(0.60) == RouteDecision.SUGGEST
+        assert band.route(0.72) == RouteDecision.SUGGEST
+        assert band.route(0.849) == RouteDecision.SUGGEST
+
+    def test_route_returns_clueless_below_suggest(self):
+        band = ConfidenceBand(auto=0.85, suggest=0.60)
+        assert band.route(0.59) == RouteDecision.CLUELESS
+        assert band.route(0.00) == RouteDecision.CLUELESS
+
+    def test_route_clueless_is_never_silent(self):
+        """
+        Regression guard: score < suggest must return CLUELESS, not None or
+        a silent pass. The whole point is that nothing goes unacknowledged.
+        """
+        band = ConfidenceBand(auto=0.85, suggest=0.60)
+        result = band.route(0.10)
+        assert result is not None
+        assert result == RouteDecision.CLUELESS

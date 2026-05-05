@@ -19,6 +19,7 @@ The module-level CONFIG singleton is loaded once on first import.
 import logging
 from pathlib import Path
 from typing import Literal, Self
+from enum import Enum
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -40,6 +41,25 @@ type Task      = Literal["classify", "synthesis", "embeddings", "self_learn", "c
 type LogLevel  = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 type Env       = Literal["dev", "prod"]
 
+
+# core/config.py
+
+class RouteDecision(str, Enum):
+    """
+    The three possible outcomes of confidence-gated routing.
+
+    AUTO     — score ≥ band.auto:    pipeline acts immediately, no human needed.
+    SUGGEST  — score ≥ band.suggest: AI has candidate destinations but is not
+               confident enough to act. Flags the note with suggestions for
+               human confirmation before any move is made.
+    CLUELESS — score <  band.suggest: AI reviewed the note but could not form
+               a useful candidate. Flags the note with a "needs human"
+               signal. Never stays silent — the audit trail always records
+               the review attempt.
+    """
+    AUTO     = "auto"
+    SUGGEST  = "suggest"
+    CLUELESS = "clueless"
 
 # ===========================================================================
 # 1. Sub-models for config/config.yaml
@@ -192,22 +212,62 @@ class MainConfig(BaseModel):
 
 class ConfidenceBand(BaseModel):
     """
-    A pair of (auto, review) cutoffs that drive confidence-gated routing.
+    Confidence thresholds that drive routing decisions.
 
-    score >= auto   → pipeline acts automatically
-    score >= review → flag for human review
-    score <  review → reject / stay in inbox
+    Three bands, evaluated top-down:
+
+        score >= auto    → RouteDecision.AUTO
+                           Pipeline acts immediately. Audit log records outcome.
+
+        score >= suggest → RouteDecision.SUGGEST
+                           AI has candidate destinations but confidence is
+                           insufficient to act. Note stays in inbox, flagged
+                           with AI's top candidates for human confirmation.
+
+        score <  suggest → RouteDecision.CLUELESS
+                           AI reviewed the note but could not form a useful
+                           candidate. Note stays in inbox, flagged with a
+                           "needs human — AI has no suggestion" signal.
+                           Never silent. Always audit-logged.
+
+    All thresholds live in config/thresholds.yaml — never in code.
     """
-    auto:   float = Field(0.85, ge=0.0, le=1.0)
-    review: float = Field(0.60, ge=0.0, le=1.0)
+    auto:    float = Field(0.85, ge=0.0, le=1.0)
+    suggest: float = Field(0.60, ge=0.0, le=1.0)   # renamed from `review`
 
     @model_validator(mode="after")
-    def review_below_auto(self) -> Self:
-        if self.review >= self.auto:
+    def suggest_below_auto(self) -> Self:
+        if self.suggest >= self.auto:
             raise ValueError(
-                f"'review' ({self.review}) must be strictly less than 'auto' ({self.auto})."
+                f"'suggest' ({self.suggest}) must be strictly less than 'auto' ({self.auto})."
             )
         return self
+
+    def route(self, score: float) -> RouteDecision:
+        """
+        Map a confidence score to a RouteDecision.
+
+        This is the single authoritative routing gate. All pipeline code
+        calls this method — never compares against threshold floats directly.
+
+        Usage:
+            band = CONFIG.thresholds.for_pipeline("classify")
+            decision = band.route(confidence_score)
+
+            match decision:
+                case RouteDecision.AUTO:
+                    auto_move(note)
+                case RouteDecision.SUGGEST:
+                    flag_with_suggestions(note, candidates)
+                case RouteDecision.CLUELESS:
+                    flag_as_clueless(note)
+        """
+        if score >= self.auto:
+            return RouteDecision.AUTO
+        elif score >= self.suggest:
+            return RouteDecision.SUGGEST
+        else:
+            return RouteDecision.CLUELESS
 
 
 class Thresholds(BaseModel):
@@ -273,7 +333,7 @@ class ApiKeys(BaseSettings):
     @field_validator("anthropic_api_key", "openai_api_key", mode="before")
     @classmethod
     def empty_string_to_none(cls, v: str | None) -> str | None:
-        return v if v else None
+        return v.strip() if v and v.strip() else None
 
 
 # ===========================================================================
