@@ -108,9 +108,9 @@ def config_dir(tmp_path: Path, vault_dir: Path) -> Path:
 
     # -- thresholds.yaml -------------------------------------------------------
     _write_yaml(cfg / "thresholds.yaml", {
-        "global": {"auto": 0.85, "review": 0.60},
+        "global": {"auto": 0.85, "suggest": 0.60},
         "pipelines": {
-            "classify": {"auto": 0.90, "review": 0.70},
+            "classify": {"auto": 0.90, "suggest": 0.70},
         },
     })
 

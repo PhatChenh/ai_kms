@@ -1,9 +1,8 @@
 from pydantic import BaseModel, Field, model_validator
-from core.config import ConfidenceBand, Thresholds
 from core.config import ConfidenceBand, RouteDecision as RoutingOutcome
 import structlog
 
-logger = structlog.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 __all__ = ["AIDecision", "RoutingOutcome", "route"]
 
@@ -87,7 +86,7 @@ def route(decision: AIDecision, thresholds: ConfidenceBand) -> RoutingOutcome:
     >>> route(d, band)
     <RouteDecision.AUTO: 'AUTO'>
     """
-    outcome: RoutingOutcome = thresholds.route(AIDecision.confidence)
+    outcome: RoutingOutcome = thresholds.route(decision.confidence)
     # DEBUG-only: rich context for developer traces; never emitted in production
     # INFO runs. Structured so log aggregation tools can filter/search.
     logger.debug(
