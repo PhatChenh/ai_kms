@@ -20,8 +20,6 @@ AI-enhanced knowledge management system for busy managers. Watches an Obsidian v
 **Reference docs** (read before changing architecture):
 - `docs/roadmap.md` — phase-by-phase build order and rules of the road
 - `docs/top-level_layout.md` — every folder explained, pattern-to-folder mapping
-- `docs/phase0_guide.md` — Phase 0 checklist and smoke-test
-
 ---
 
 ## Tech stack
@@ -220,17 +218,22 @@ The following rules are enforced by hooks in `.claude/settings.json` — Claude 
 
 ---
 
-## Phase 0 status
+## Build progress
 
-**Built:** `core/` (config, result, confidence, exceptions, logging), `llm/` (provider abstraction, Claude + Ollama implementations).
+**Overall:** Phase 0 of 8 — targeting M1 (Capture + Classify + Search) by ~15 May 2026. See `docs/roadmap.md` for the full phase breakdown.
 
-**Still needed before Phase 1:** `vault/` (reader, writer, indexer), `storage/` (schema.sql, db init, audit log), `core/pipeline.py` (runner), `llm/prompt_loader.py`, and at least one `prompts/*.yaml`.
-
-**Smoke test** (must pass before Phase 1):
-```bash
-uv run python test.py
-```
-Checks: write a markdown file with frontmatter → parse → upsert to SQLite → write audit row. All green = Phase 0 done.
+**Phase 0 checklist:**
+- [x] core/exceptions.py
+- [x] core/result.py
+- [x] core/logging_setup.py
+- [x] core/config.py
+- [ ] core/pipeline.py
+- [ ] storage/schema.sql
+- [ ] storage/migrations/
+- [ ] storage/db.py
+- [ ] llm/ + prompts/
+- [ ] vault/
+- [ ] smoke test
 
 ---
 
