@@ -1,0 +1,52 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [[ \"$CLAUDE_TOOL_INPUT_FILE_PATH\" == *.py ]]; then uv run ruff format \"$CLAUDE_TOOL_INPUT_FILE_PATH\" 2>/dev/null || true; fi"
+          },
+          {
+            "type": "command",
+            "command": "FILE=\"$CLAUDE_TOOL_INPUT_FILE_PATH\"; if [[ \"$FILE\" == *.py && \"$FILE\" != */vault/writer.py ]]; then if grep -nE '\\.(write_text|write_bytes)\\(|open\\([^)]+[,\"]\\s*[\"\\x27]w' \"$FILE\" 2>/dev/null; then echo \"⛔ VIOLATION: Direct file write detected in $FILE — all vault writes must go through vault/writer.py\" >&2; exit 2; fi; fi"
+          },
+          {
+            "type": "command",
+            "command": "FILE=\"$CLAUDE_TOOL_INPUT_FILE_PATH\"; if [[ \"$FILE\" == */pipelines/*.py ]]; then if grep -nE 'if .*(confidence|score).*[<>]=?\\s+0\\.[0-9]' \"$FILE\" 2>/dev/null; then echo \"⛔ VIOLATION: Hardcoded confidence threshold in $FILE — thresholds belong in config/thresholds.yaml\" >&2; exit 2; fi; fi"
+          },
+          {
+            "type": "command",
+            "command": "FILE=\"$CLAUDE_TOOL_INPUT_FILE_PATH\"; if [[ \"$FILE\" == */mcp_server/tools.py ]]; then if grep -nE '^\\s+(if |elif |for |while )' \"$FILE\" 2>/dev/null; then echo \"⛔ VIOLATION: Logic detected in mcp_server/tools.py — move it to the pipeline\" >&2; exit 2; fi; fi"
+          },
+          {
+            "type": "command",
+            "command": "FILE=\"$CLAUDE_TOOL_INPUT_FILE_PATH\"; if [[ \"$FILE\" == *.py && \"$FILE\" != */prompts/* ]]; then if grep -nE 'f[\"\\x27].*(summarize|classify|extract|summarise|prompt|system_prompt)' \"$FILE\" 2>/dev/null; then echo \"⚠️  WARNING: Possible hardcoded prompt f-string in $FILE — prompts belong in prompts/*.yaml\" >&2; fi; fi"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if echo \"$CLAUDE_TOOL_INPUT_COMMAND\" | grep -qE 'rm -rf|DROP TABLE|TRUNCATE'; then echo '⛔ BLOCKED: Destructive command' >&2; exit 2; fi"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "osascript -e 'display notification \"Claude finished\" with title \"AI-kms\"' 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}

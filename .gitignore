@@ -13,4 +13,5 @@ data/
 logs/
 *.db
 
-docs/reference/knowledge-base-server/
+repomix-output.xml
+repomix-reference.xml

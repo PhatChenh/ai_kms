@@ -1,0 +1,26 @@
+{
+  "output": {
+    "style": "xml",
+    "filePath": "repomix-output.xml",
+    "showLineNumbers": true,
+    "topFilesLength": 15,
+    "removeComments": false
+  },
+  "ignore": {
+    "customPatterns": [
+        "uv.lock",
+        "*.lock",
+        "data/**",
+        "logs/**",
+        "Vault/**",
+        "tests/**",
+        "docs/reference/**",
+        ".venv/**",
+        "venv/**",
+        "*.pyc",
+        "__pycache__/**",
+        "repomix-output*.xml",
+        "repomix.config.json"
+    ]
+}
+}

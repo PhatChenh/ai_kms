@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # AI-kms
 
 AI-enhanced knowledge management system for busy managers. Watches an Obsidian vault, processes drops (notes, PDFs, emails, YouTube, web articles), summarises and classifies them, and surfaces patterns back to the user via a daily briefing and MCP server.
@@ -105,7 +109,7 @@ gate = ConfidenceGate.from_config(config)
 action = gate.route(confidence_score)  # auto | review | inbox
 
 # Bad
-if confidence > 0.85:   # hardcoded threshold
+if confidence > 0.85:   # hardcoded threshold — hook will block this
 ```
 
 **4. Handler Registry — new source = new file only**
@@ -125,7 +129,7 @@ class YouTubeHandler(BaseHandler):
 prompt = prompt_loader.get("summarize")   # from prompts/summarize.yaml
 
 # Bad
-prompt = f"Summarise this note: {content}"
+prompt = f"Summarise this note: {content}"   # hook will warn on this
 ```
 
 **6. Audit Trail — every AI decision is logged**
@@ -137,7 +141,7 @@ Every pipeline stage that makes an AI decision must call `audit.write(...)` with
 writer.upsert(note)   # safe to call twice
 
 # Bad
-vault_path.write_text(content)   # bypasses the guard
+vault_path.write_text(content)   # bypasses the guard — hook will block this
 ```
 
 ---
@@ -156,12 +160,27 @@ and flag where our approach intentionally diverges.
 
 ---
 
+## Environment
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...   # required; read by core/config.py via pydantic-settings
+```
+
+Vault root path is set in `config/config.yaml` under `vault.root`. It must exist on disk before startup.
+
+---
+
 ## Commands
 
 ```bash
 # Setup
 uv sync                        # install dependencies
-uv run python -m pytest tests/ # run test suite
+
+# Tests
+uv run pytest tests/                                              # full suite
+uv run pytest tests/test_core/test_config.py                     # single file
+uv run pytest tests/test_core/test_config.py::TestVaultConfig    # single class
+uv run pytest -m "not smoke"                                      # skip tests that need real vault on disk
 
 # CLI (after install)
 kms capture <file>             # run capture pipeline on a single file
@@ -173,23 +192,41 @@ kms briefing                   # generate today's briefing
 uv run python test.py          # quick smoke test (write → parse → upsert → audit)
 ```
 
+The `smoke` pytest marker (defined in `pyproject.toml`) flags tests that hit real disk config or the real vault. Skip them with `-m "not smoke"` when the vault isn't set up locally.
+
 ---
 
-## Critical rules — do not violate
+## Automated enforcement
 
-- **`vault/writer.py` is the only entry point for vault writes.** Never call `open()` or `pathlib.write_text()` against vault files anywhere else.
+The following rules are enforced by hooks in `.claude/settings.json` — Claude Code will block or warn if they are violated. Do not attempt to work around them.
+
+| Rule | Severity | What triggers it |
+|---|---|---|
+| No direct vault writes outside `vault/writer.py` | ⛔ Hard block | `.write_text()` or `open(..., 'w')` in any `.py` file except `vault/writer.py` |
+| No hardcoded confidence thresholds in pipelines | ⛔ Hard block | Float literals in `if/elif` comparisons inside `pipelines/` |
+| No logic in `mcp_server/tools.py` | ⛔ Hard block | `if`, `elif`, `for`, `while` at statement level in that file |
+| No destructive bash commands | ⛔ Hard block | `rm -rf`, `DROP TABLE`, `TRUNCATE` |
+| No hardcoded prompt f-strings | ⚠️ Warning | f-strings containing prompt-like keywords in `.py` files |
+| Auto-format on every write | ℹ️ Silent | `ruff format` runs automatically on every `.py` file Claude touches |
+
+---
+
+## Critical rules — judgment required, not auto-enforced
+
 - **Never add an MCP tool before its pipeline exists and is tested.** A stub tool that calls nothing is a lie.
-- **Never hardcode a confidence threshold.** All thresholds live in `config/thresholds.yaml` and are loaded via `core/config.py`.
-- **Never write a prompt string in Python code.** All prompts live in `prompts/*.yaml`, loaded once at startup by `llm/prompt_loader.py`.
 - **`updated_by_human = true` means hands off.** If a frontmatter field carries this flag, do not propose overwriting it. Surface a conflict instead.
-- **MCP tools contain zero logic.** If you find yourself writing conditional branches inside `mcp_server/tools.py`, stop — move it to the pipeline.
 - **Audit log is non-negotiable from Phase 1.** Phase 8 (Daily Briefing) reads from it. No audit log means no briefing.
 - **Schedulers come last.** Build manual CLI first, then automate.
 
 ---
 
-## Phase 0 smoke test (must pass before any other phase)
+## Phase 0 status
 
+**Built:** `core/` (config, result, confidence, exceptions, logging), `llm/` (provider abstraction, Claude + Ollama implementations).
+
+**Still needed before Phase 1:** `vault/` (reader, writer, indexer), `storage/` (schema.sql, db init, audit log), `core/pipeline.py` (runner), `llm/prompt_loader.py`, and at least one `prompts/*.yaml`.
+
+**Smoke test** (must pass before Phase 1):
 ```bash
 uv run python test.py
 ```
@@ -197,10 +234,20 @@ Checks: write a markdown file with frontmatter → parse → upsert to SQLite �
 
 ---
 
+## Key runtime patterns
+
+**CONFIG singleton** — call `load_config()` once at startup (in `cli/main.py`). Every other module imports the validated singleton directly:
+```python
+from core.config import CONFIG
+```
+
+**LLM model routing** — per-task model selection is in `config/config.yaml` under `providers:`. Never hardcode model names in code; always read from config.
+
+**Correlation IDs** — call `new_correlation_id()` from `core/logging_setup.py` at the top of every pipeline entry point. All downstream log lines and audit entries inherit it automatically via Python contextvars.
+
+---
+
 ## What Claude gets wrong in this codebase
 
-- **Putting thresholds in pipeline code.** Always move them to `config/thresholds.yaml`.
-- **Writing logic inside `mcp_server/tools.py`.** Tools are thin; logic belongs in pipelines.
-- **Calling `pathlib` directly on vault files** instead of going through `vault/writer.py`.
 - **Skipping `Result` type on helper functions.** Every public function in `handlers/` and `pipelines/` must return `Success` or `Failure`, not raw values or `None`.
 - **Using `@property` instead of Pydantic `Field` for user-configurable values.** Rule: `Field` = things a human configures. `@property` = things the code computes from other fields.

@@ -1,0 +1,10 @@
+{
+  "output": {
+    "style": "xml",
+    "filePath": "repomix-reference.xml",
+    "showLineNumbers": true
+  },
+  "include": [
+    "docs/reference/**"
+  ]
+}
