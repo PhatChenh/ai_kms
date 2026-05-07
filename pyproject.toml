@@ -14,8 +14,8 @@ dependencies = [
     "pytest-asyncio",
     "requests>=2.33.1",
     "anthropic>=0.97.0",
-    "better-exceptions>=0.3.3",
     "pydantic-settings>=2.14.0",
+    "rich>=15.0.0",
 ]
 
 [build-system]
