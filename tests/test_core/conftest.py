@@ -128,9 +128,13 @@ def loaded_config(monkeypatch, config_dir: Path):
     A fully-loaded Config object backed by the temporary config_dir fixture.
     Use this in tests that need a real Config without touching real files.
     """
+    # import core.config as cfg_module
+    # monkeypatch.setattr(cfg_module, "_CONFIG_DIR", config_dir)
+    # return cfg_module.load_config()
     import core.config as cfg_module
     monkeypatch.setattr(cfg_module, "_CONFIG_DIR", config_dir)
-    return cfg_module.load_config()
+    monkeypatch.setattr(cfg_module, "_CONFIG", None)   # ← force re-load
+    return cfg_module.CONFIG          
 
 
 # ---------------------------------------------------------------------------

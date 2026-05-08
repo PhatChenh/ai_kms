@@ -412,17 +412,29 @@ def load_config() -> "Config":
 # 6. Singleton
 # ===========================================================================
 
-try:
-    CONFIG: Config = load_config()
-    logging.getLogger(__name__).info(
-        "Config loaded. env=%s  vault=%s",
-        CONFIG.main.env,
-        CONFIG.main.vault.root,
-    )
-except Exception as exc:
-    raise RuntimeError(
-        f"\n\n{'='*60}\n"
-        f"CONFIG LOAD FAILED — fix this before running anything.\n"
-        f"{'='*60}\n"
-        f"{exc}\n"
-    ) from exc
+# try:
+#     CONFIG: Config = load_config()
+#     logging.getLogger(__name__).info(
+#         "Config loaded. env=%s  vault=%s",
+#         CONFIG.main.env,
+#         CONFIG.main.vault.root,
+#     )
+# except Exception as exc:
+#     raise RuntimeError(
+#         f"\n\n{'='*60}\n"
+#         f"CONFIG LOAD FAILED — fix this before running anything.\n"
+#         f"{'='*60}\n"
+#         f"{exc}\n"
+#     ) from exc
+
+
+_CONFIG: Config | None = None
+
+
+def __getattr__(name: str) -> object:
+    if name == "CONFIG":
+        global _CONFIG
+        if _CONFIG is None:
+            _CONFIG = load_config()
+        return _CONFIG
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
