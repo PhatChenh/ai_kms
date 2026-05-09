@@ -1,5 +1,5 @@
 ---
-description: Execute the next pending phase from plans/<feature>.md. Updates plan progress after each phase. Waits for human verification before continuing.
+description: Execute the next pending phase from docs/plans/<feature>.md. Updates plan progress after each phase. Waits for human verification before continuing.
 allowed-tools: Read, Edit, Bash(python:*), Bash(pytest:*), Bash(uv:*), Bash(find:*), Bash(cat:*)
 argument-hint: <feature>
 ---
@@ -16,7 +16,7 @@ Feature to implement: $ARGUMENTS
 
 First, read `CLAUDE.md`. It contains current build progress and project conventions — what commands to use, what patterns are established, what has already been decided. Your implementation must conform to these conventions.
 
-Then read `plans/$FEATURE.md`.
+Then read `docs/plans/$FEATURE.md`.
 
 - **If it does not exist**: Stop and output:
   ```
@@ -73,7 +73,7 @@ If a test fails:
 
 ## Step 5 — Update the plan
 
-After all test criteria pass, update `plans/$FEATURE.md`:
+After all test criteria pass, update `docs/plans/$FEATURE.md`:
 
 1. Change the phase status from `[ ] pending` to `[x] done`
 2. Add an implementation note directly under the phase:
@@ -90,7 +90,7 @@ After all test criteria pass, update `plans/$FEATURE.md`:
 After updating the plan, output:
 
 ```
-✅ Phase <N> complete — plans/$FEATURE.md updated
+✅ Phase <N> complete — docs/plans/$FEATURE.md updated
 
 What was done:
 - [bullet summary of changes made]

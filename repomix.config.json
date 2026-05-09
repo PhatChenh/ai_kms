@@ -20,7 +20,9 @@
         "*.pyc",
         "__pycache__/**",
         "repomix-output*.xml",
-        "repomix.config.json"
+        "repomix.config.json",
+        "plans",
+        "research"
     ]
 }
 }

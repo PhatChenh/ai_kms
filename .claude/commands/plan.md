@@ -1,5 +1,5 @@
 ---
-description: Generate a phased implementation plan from research findings. Writes to plans/<feature>.md. Never writes code.
+description: Generate a phased implementation plan from research findings. Writes to docs/plans/<feature>.md. Never writes code.
 allowed-tools: Read, Bash(find:*), Bash(cat:*)
 argument-hint: <feature>
 ---
@@ -16,23 +16,33 @@ The feature name is used as the filename slug.
 
 ## Step 1 — Load all inputs
 
-Your plan must synthesize two sources. Read both before writing anything.
+Read these in order before writing anything. Every source serves a different purpose.
 
-**Source 1 — The spec (from this conversation):**
-The human has pasted implementation details into the conversation before running this command. This is your primary source of truth for what to build — the exact files, function signatures, and design decisions already made. Do not invent or assume anything the spec has already decided.
+**1. `CLAUDE.md`** — Read in full. Current build progress and project conventions. Tells you what is already done and what patterns must be followed.
 
-**Source 2 — Research findings:**
-Check if `research/$FEATURE.md` exists.
+**2. `docs/research/$FEATURE.md`** — Check if it exists.
+- **If it exists**: Read it fully. It contains the spec details, codebase findings, and reference project patterns from a prior session. This is your primary source of truth when no spec has been pasted in the current conversation.
+- **If it does not exist**: This is a green-field step. The human should have pasted the spec into the conversation. If neither exists, stop and output:
+  ```
+  ❌ No research file and no spec found for "$FEATURE".
+  Either paste the spec into the conversation or run /research $FEATURE first.
+  ```
 
-- **If it exists**: Read it fully. It tells you what already exists in the codebase, what interfaces to conform to, and what the reference project does. Your plan must connect the spec to these real interfaces — not imagined ones.
-- **If it does not exist**: This is a green-field step with no existing dependencies to research. Proceed using the spec alone, but note this clearly at the top of the plan.
+**3. `docs/plans/$FEATURE.md`** — Check if it exists.
+- **If it exists**: Read it fully. Look for `# QUESTION:` and `# COMMENT:` annotations left by the human. These are your primary task for this run — address every one of them. Preserve all completed phases.
+- **If it does not exist**: You are writing the plan for the first time.
 
-**Source 3 — Existing plan:**
-Also check if `plans/$FEATURE.md` already exists. If it does, read it — you will update it, not overwrite it from scratch. Preserve completed phases and existing annotations.
+**4. The current conversation** — Check if the human has pasted a spec. If yes, it takes priority over the research file for design decisions — it reflects the human's latest intent. If no spec is pasted, rely on the research file.
+
+**5. `repomix-output.xml` — only if needed.** If resolving an annotation requires verifying an actual interface, function signature, or file that exists in the codebase, grep it surgically:
+```
+grep -n "<file path" repomix-output.xml | grep -i <relevant-keyword>
+```
+Do not read this file in full. Only pull the specific blocks you need.
 
 ## Step 2 — Check for human annotations
 
-If `plans/$FEATURE.md` already exists, scan it for any lines starting with `# QUESTION:` or `# COMMENT:`. These are annotations left by the human during review.
+If `docs/plans/$FEATURE.md` already exists, scan it for any lines starting with `# QUESTION:` or `# COMMENT:`. These are annotations left by the human during review.
 
 For each annotation found:
 - Address it explicitly in your revision
@@ -41,7 +51,7 @@ For each annotation found:
 Do not proceed to output a new plan if there are unresolved `# QUESTION:` annotations. Instead, output:
 
 ```
-⚠️ Unresolved questions found in plans/$FEATURE.md:
+⚠️ Unresolved questions found in docs/plans/$FEATURE.md:
 - [list each question]
 
 Please answer these in the file and run /plan $FEATURE again.
@@ -49,7 +59,7 @@ Please answer these in the file and run /plan $FEATURE again.
 
 ## Step 3 — Write the plan
 
-Write the plan to `plans/$FEATURE.md` using this structure:
+Write the plan to `docs/plans/$FEATURE.md` using this structure:
 
 ```
 # Plan: <Feature>
@@ -105,7 +115,7 @@ _Status: [ ] pending | [~] in progress | [x] done_
 After writing the file, output exactly:
 
 ```
-✅ Plan written → plans/$FEATURE.md
+✅ Plan written → docs/plans/$FEATURE.md
 
 Phases: <count>
 Open questions: <count>

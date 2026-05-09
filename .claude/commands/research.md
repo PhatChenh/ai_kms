@@ -1,5 +1,5 @@
 ---
-description: Deep-research a topic or subsystem and write findings to research/<topic>.md. Never writes code.
+description: Deep-research a topic or subsystem and write findings to docs/research/<topic>.md. Never writes code.
 allowed-tools: Read, Grep, Glob, Bash(find:*), Bash(cat:*), Bash(grep:*)
 argument-hint: <topic> [path/to/relevant/folder]
 ---
@@ -41,7 +41,7 @@ Only then move to Step 1.
 
 ## Step 1 — Check for existing research
 
-Check whether `research/$TOPIC.md` already exists.
+Check whether `docs/research/$TOPIC.md` already exists.
 
 - **If it exists**: Read the full file carefully. You will APPEND new findings at the bottom under a new dated section. Do NOT rewrite or restructure what is already there. Skip anything already covered.
 - **If it does not exist**: Create a new file from scratch.
@@ -57,7 +57,7 @@ Do this **in great depth and detail**. Understand the intricacies of the code, n
 
 ## Step 3 — Write findings to file
 
-Write your findings to `research/$TOPIC.md`.
+Write your findings to `docs/research/$TOPIC.md`.
 
 If the file is new, use this structure:
 
@@ -103,7 +103,7 @@ If the file already exists, append at the bottom:
 After writing the file, output exactly:
 
 ```
-✅ Research complete → research/$TOPIC.md
+✅ Research complete → docs/research/$TOPIC.md
 Open questions remaining: <count>
 Ready for: /plan $TOPIC
 ```
