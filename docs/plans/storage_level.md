@@ -1,6 +1,6 @@
 # Plan: storage_level
 _Last updated: 2026-05-09_
-_Status: [ ] pending_
+_Status: [~] in progress_
 
 ## Approach
 
@@ -61,6 +61,8 @@ by a runnable test before the next phase starts.
    outcome was O."
 
    # RESOLVED: `pipeline` = the named workflow that was running, e.g. `"capture"`, `"classify"`, `"promotion"`. Each pipeline is a chain of pure-function stages. `stage` = the specific function within that pipeline that made the AI call, e.g. `"summarize"` or `"route_decision"`. `source_ids` = JSON list of the vault paths (or external IDs) that were the *input* to this AI decision — stored as JSON because a synthesis pipeline might combine 3 notes at once. Together, pipeline+stage+source_ids let you replay exactly what the AI saw and why it decided what it did, which is what Phase 8's daily briefing needs.
+
+   # RESOLVED: `source_ids` stays as a JSON list of STRINGS (vault paths or external IDs), not integers. Reasons: (1) Not all sources have a `documents.id` — YouTube URLs, email message IDs, and web articles fed into the pipeline have no integer FK in the documents table. Forcing integers would make external sources impossible to represent. (2) Audit entries are time-stamped snapshots of provenance — they record what path was accessed AT DECISION TIME, not a live pointer to the current location. If a note is renamed later, the audit row is still a valid historical record of what existed then. (3) Human readability: a manager reviewing the audit log or daily briefing can read `"inbox/meeting-2026-05-07.md"` directly; integer `42` requires a JOIN. (4) The rename-stability problem (integer FK vs stale path) is solved at the documents layer, not here: `documents.id` is the stable integer PK, and the vault indexer (Phase 1) UPDATEs `vault_path` in place when it detects a move via `content_hash`. The audit log reflects the path at the time of the decision — that is correct and expected. The frontmatter `doc_id` approach (Open Question Q-001) is the long-term solution for linking audit entries to renamed notes without requiring a JOIN, but it is deferred to Phase 1 when vault/writer.py exists.
 
    ```sql
    CREATE TABLE IF NOT EXISTS audit_log (
@@ -131,16 +133,18 @@ by a runnable test before the next phase starts.
 > **What is `sqlite3 :memory: < storage/schema.sql`?**
 > # RESOLVED: `sqlite3 :memory:` opens the SQLite3 CLI connected to an in-memory database (`:memory:` is a special SQLite filename meaning "no file on disk — live only while the process runs"). The `<` operator redirects the content of `storage/schema.sql` as input to that CLI, so every SQL statement in the file executes and the result is discarded when the process exits. It is used for testing because: (a) it leaves no files behind, (b) it is fast, (c) it proves the SQL is valid syntax and creates the expected tables. A "one-shot pytest" is just a pytest test function that performs a complete action inline — no shared state, no fixtures needed beyond a database handle — and is designed to run once and be done, not be composed with other tests.
 
-- [ ] `sqlite3 :memory: < storage/schema.sql` exits 0 and creates exactly
+- [x] `sqlite3 :memory: < storage/schema.sql` exits 0 and creates exactly
       four tables: `documents`, `audit_log`, `corrections`, `schema_version`.
-- [ ] `SELECT version FROM schema_version` returns `0`.
-- [ ] An `UPDATE audit_log SET pipeline='x'` after inserting a row raises
+- [x] `SELECT version FROM schema_version` returns `0`.
+- [x] An `UPDATE audit_log SET pipeline='x'` after inserting a row raises
       with message containing `append-only`.
-- [ ] A `DELETE FROM audit_log` raises with the same message.
-- [ ] Running the script twice on the same `:memory:` handle does not error
+- [x] A `DELETE FROM audit_log` raises with the same message.
+- [x] Running the script twice on the same `:memory:` handle does not error
       (idempotent `IF NOT EXISTS` on all DDL).
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-05-09
+**Notes**: All criteria pass. `sqlite_sequence` (SQLite internal table, created by AUTOINCREMENT) is filtered from the 4-table count — not a schema defect. Trigger raises `sqlite3.IntegrityError` (not `OperationalError`) — Python's `sqlite3` maps `RAISE(ABORT)` to `IntegrityError`; Phase 4 test for `test_trigger_blocks_direct_update` must catch `sqlite3.IntegrityError` or the parent `sqlite3.DatabaseError`.
 
 ---
 
@@ -167,12 +171,14 @@ files here without a code change.
 > **What is `sqlite3.connect(":memory:").executescript(...)`?**
 > # RESOLVED: `sqlite3.connect(":memory:")` is Python's stdlib `sqlite3` module opening an in-memory database — same idea as the CLI command above, but from Python code. The returned object is a `Connection` instance (conventionally called `conn`). Calling `.executescript(text)` on it runs a string of SQL statements. Because the database is in-memory, it exists only while the Python process runs and is garbage-collected when the variable goes out of scope — perfect for throwaway tests that shouldn't leave files on disk.
 
-- [ ] `Path("storage/migrations").glob("*.sql")` finds exactly one file
+- [x] `Path("storage/migrations").glob("*.sql")` finds exactly one file
       and its name starts with `001_`.
-- [ ] `sqlite3.connect(":memory:").executescript(open("storage/migrations/001_initial.sql").read())`
+- [x] `sqlite3.connect(":memory:").executescript(open("storage/migrations/001_initial.sql").read())`
       exits cleanly even though the file is comment-only.
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-05-10
+**Notes**: Files created as specified. Both criteria pass. No deviations.
 
 ---
 
@@ -234,24 +240,29 @@ and returns `Result` at module boundaries.
 - `storage/db.py` — new.
 
 **Test criteria**:
-- [ ] `tests/test_storage/test_db.py::test_init_db_creates_file` —
+- [x] `tests/test_storage/test_db.py::test_init_db_creates_file` —
       `init_db(tmp_path / "kb.db")` returns `Success`, file exists,
       `SELECT name FROM sqlite_master WHERE type='table'` includes the
       four tables.
-- [ ] `test_init_db_is_idempotent` — calling `init_db` twice on the same
+- [x] `test_init_db_is_idempotent` — calling `init_db` twice on the same
       path is a no-op (no error, version unchanged).
-- [ ] `test_pragma_foreign_keys_on` — open via `get_connection()`,
+- [x] `test_pragma_foreign_keys_on` — open via `get_connection()`,
       `PRAGMA foreign_keys` returns `1`.
-- [ ] `test_pragma_journal_mode_wal` — same, returns `'wal'`.
-- [ ] `test_migration_runner_advances_version` — monkeypatch `_MIGRATIONS_DIR`
+- [x] `test_pragma_journal_mode_wal` — same, returns `'wal'`.
+- [x] `test_migration_runner_advances_version` — monkeypatch `_MIGRATIONS_DIR`
       to a tmp dir with a synthetic `002_test.sql` (valid SQL: a no-op
       `CREATE TABLE IF NOT EXISTS _test (x INT)`). Assert
       `schema_version.version == 2` after a single boot.
-- [ ] `test_migration_failure_rolls_back` — synthetic `003_bad.sql`
+- [x] `test_migration_failure_rolls_back` — synthetic `003_bad.sql`
       containing `THIS IS NOT SQL`. Assert `init_db` returns `Failure`,
       version is unchanged from 2, table structure is intact.
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-05-10
+**Notes**: Three deviations from plan, all necessary:
+1. `CONFIG` lazy-import moved inside `if db_path is None` branch — importing CONFIG at function entry fails in tests that pass an explicit db_path (real config.yaml requires a vault that doesn't exist in CI).
+2. `get_connection` gained `db_path: Path | None = None` param — plan showed no param but tests need to point at a tmp DB without monkeypatching CONFIG.
+3. `test_init_db_is_idempotent` asserts version unchanged (not `== 0`) — `001_initial.sql` is comment-only but the migration runner still increments schema_version to 1, which is correct behaviour. Test now captures version after first call and asserts second call doesn't change it.
 
 ---
 
@@ -270,7 +281,7 @@ and returns `Result` at module boundaries.
    class AuditEntry:
        pipeline:       str
        stage:          str
-       source_ids:     list[str]
+       source_ids:     list[str]   # vault paths or external IDs — always strings
        decision:       str
        confidence:     float
        reasoning:      str
@@ -327,7 +338,7 @@ and returns `Result` at module boundaries.
       correct fields.
 - [ ] `test_source_ids_round_trip` — append with
       `source_ids=["inbox/a.md", "inbox/b.md"]`; query back; assert a
-      `list`, not a string, with both paths intact.
+      `list[str]`, not a raw string, with both paths intact.
 - [ ] `test_append_only_at_module_level` — `import storage.audit_log`,
       `dir()` contains no public symbol matching `^(update|delete)`.
 - [ ] `test_trigger_blocks_direct_update` — via `get_connection()`, run raw
@@ -349,7 +360,7 @@ and returns `Result` at module boundaries.
      - `decision` → `entry.decision` (maps `AIDecision.action`)
      - `confidence` → `entry.confidence`
      - `reasoning` → `entry.reasoning`
-     - `source_ids` → `entry.source_ids`
+     - `source_ids` → `entry.source_ids` (already a list of strings)
      - plus `pipeline`, `stage`, `outcome` from keyword args.
    - Call `storage.audit_log.append(entry)`.
    - Return `Success(rowid)` or propagate `Failure`.
@@ -429,8 +440,10 @@ criterion called out in CLAUDE.md.
    whether a frontmatter `doc_id` field (written on first capture, survives
    any move or rename) is worth implementing. If notes are frequently edited
    *and* moved simultaneously, content_hash–based detection will fail.
-   Frontmatter `doc_id` is the more robust long-term solution but requires
-   vault write capability.
+   Frontmatter `doc_id` is the more robust long-term solution and also makes
+   `source_ids` fully traceability-safe across renames (Phase 8 briefing
+   could join audit rows to current documents via frontmatter id rather
+   than vault path).
 
 2. **Fine-grained AI vs human authorship.** `updated_by_human` is a
    whole-note boolean safety gate. It does NOT track which sentences or

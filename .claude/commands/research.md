@@ -31,6 +31,11 @@ Before doing anything else, read these four files in order. They tell you where 
 
 4. **`repomix-reference.xml`** — Same surgical approach as above. Grep for the equivalent subsystem in the reference project, read those blocks in full, ignore the rest. Use this to understand proven patterns to align with or learn from.
 
+5. **`STATE.md`** — If it exists, read it in full. Pay attention to:
+   - "Architecture Decisions" — do not re-research what is already decided
+   - "Cross-Phase Constraints" — your findings must flag any conflict with these
+   - "Open Questions" — if any are relevant to this topic, address them in your findings
+
 After reading, you should be able to answer:
 - What already exists in the codebase that is relevant to this topic?
 - What interfaces will this topic's code need to conform to?

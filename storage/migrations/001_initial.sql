@@ -1,0 +1,5 @@
+-- Migration 001: post-schema.sql placeholder.
+-- schema.sql establishes version 0. This file is a no-op that exists so
+-- the migration runner has a real file to discover and execute, proving the
+-- glob + executescript path works before any real ALTER TABLE delta lands.
+-- Phase 3 (embeddings) and Phase 7 (corrections enrichment) add new files here.

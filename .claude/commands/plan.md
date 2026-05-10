@@ -34,7 +34,12 @@ Read these in order before writing anything. Every source serves a different pur
 
 **4. The current conversation** — Check if the human has pasted a spec. If yes, it takes priority over the research file for design decisions — it reflects the human's latest intent. If no spec is pasted, rely on the research file.
 
-**5. `repomix-output.xml` — only if needed.** If resolving an annotation requires verifying an actual interface, function signature, or file that exists in the codebase, grep it surgically:
+**5. `STATE.md`** — If it exists, read it in full before writing anything.
+- Any "Architecture Decision" relevant to this feature is a hard constraint — the plan must conform to it, not re-litigate it
+- Any "Open Question" tagged as blocking this feature must be resolved in the plan's "Open Questions" section or escalated to the human
+- Any "Technical Debt" that this feature is responsible for retiring should appear as an explicit phase step
+
+**6. `repomix-output.xml` — only if needed.** If resolving an annotation requires verifying an actual interface, function signature, or file that exists in the codebase, grep it surgically:
 ```
 grep -n "<file path" repomix-output.xml | grep -i <relevant-keyword>
 ```
