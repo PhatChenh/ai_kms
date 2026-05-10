@@ -1,6 +1,6 @@
 # Plan: storage_level
 _Last updated: 2026-05-09_
-_Status: [~] in progress_
+_Status: [x] done_
 
 ## Approach
 
@@ -319,33 +319,37 @@ and returns `Result` at module boundaries.
 - `storage/audit_log.py` — new.
 
 **Test criteria**:
-- [ ] `tests/test_storage/test_audit_log.py::test_append_returns_rowid` —
+- [x] `tests/test_storage/test_audit_log.py::test_append_returns_rowid` —
       with `init_db(tmp_path/"kb.db")` and manually bound `correlation_id`,
       `append(AuditEntry(...))` returns `Success(value=1)`, second call
       returns `Success(value=2)`.
-- [ ] `test_append_pulls_correlation_id_from_contextvars` —
+- [x] `test_append_pulls_correlation_id_from_contextvars` —
       call `new_correlation_id()`, then `append(...)` without setting
       `entry.correlation_id`. Query the row via SQL and assert the stored
       UUID matches.
-- [ ] `test_append_fails_when_correlation_id_missing` —
+- [x] `test_append_fails_when_correlation_id_missing` —
       `structlog.contextvars.clear_contextvars()`, then `append(...)`
       returns `Failure(recoverable=False)` with `"missing correlation_id"` in
       the error string.
-- [ ] `test_query_filters_by_date` — two entries with different timestamps;
+- [x] `test_query_filters_by_date` — two entries with different timestamps;
       query with `date=` matching only one; assert one row back.
-- [ ] `test_query_filters_by_correlation_id` — two entries under different
+- [x] `test_query_filters_by_correlation_id` — two entries under different
       correlation_ids; query for one; assert exactly one `AuditEntry` with
       correct fields.
-- [ ] `test_source_ids_round_trip` — append with
+- [x] `test_source_ids_round_trip` — append with
       `source_ids=["inbox/a.md", "inbox/b.md"]`; query back; assert a
       `list[str]`, not a raw string, with both paths intact.
-- [ ] `test_append_only_at_module_level` — `import storage.audit_log`,
+- [x] `test_append_only_at_module_level` — `import storage.audit_log`,
       `dir()` contains no public symbol matching `^(update|delete)`.
-- [ ] `test_trigger_blocks_direct_update` — via `get_connection()`, run raw
+- [x] `test_trigger_blocks_direct_update` — via `get_connection()`, run raw
       `UPDATE audit_log SET pipeline='x' WHERE id=1` and assert
       `sqlite3.OperationalError` with `"append-only"` in message.
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-05-10
+**Notes**: All 8 criteria pass. Two deviations from plan:
+1. `append` and `query` gained `db_path: Path | None = None` — same pattern as `init_db`/`get_connection`; tests need to point at tmp DB without monkeypatching CONFIG.
+2. Trigger raises `sqlite3.IntegrityError` not `sqlite3.OperationalError` (as noted in Phase 1 completion notes) — test catches `IntegrityError` correctly.
 
 ---
 
@@ -373,18 +377,20 @@ and returns `Result` at module boundaries.
 - `core/audit.py` — new.
 
 **Test criteria**:
-- [ ] `tests/test_core/test_audit.py::test_write_lifts_aidecision` —
+- [x] `tests/test_core/test_audit.py::test_write_lifts_aidecision` —
       construct an `AIDecision`, call `audit.write(...)`, assert the
       resulting `AuditEntry` stored in the DB has all five mirrored fields
       (`decision`, `confidence`, `reasoning`, `source_ids`, plus
       `pipeline`, `stage`, `outcome`).
-- [ ] `test_write_propagates_failure` — if `append` returns `Failure`,
+- [x] `test_write_propagates_failure` — if `append` returns `Failure`,
       `write` propagates it unchanged (no swallowing).
-- [ ] `test_write_pulls_correlation_id_via_contextvars` — `new_correlation_id()`,
+- [x] `test_write_pulls_correlation_id_via_contextvars` — `new_correlation_id()`,
       then `write(...)`, assert the stored row has a matching
       `correlation_id`.
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-05-10
+**Notes**: One deviation from plan: `write()` gained `db_path: Path | None = None` — same testability pattern as Phases 3–4. Production callers pass no `db_path` (reads from CONFIG via `get_connection`); tests pass `tmp_path`. `test_write_propagates_failure` triggers failure via missing correlation_id (no contextvars) rather than mocking `append` — same failure path, no mock needed.
 
 ---
 
@@ -419,14 +425,23 @@ criterion called out in CLAUDE.md.
 - `CLAUDE.md` — tick six checklist items.
 
 **Test criteria**:
-- [ ] `uv run python test.py` exits 0 and prints "10 entries written".
-- [ ] `uv run pytest tests/test_storage/ -m "not smoke"` passes (Phases 3–4
+- [x] `uv run python test.py` exits 0 and prints "10 entries written".
+- [x] `uv run pytest tests/test_storage/ -m "not smoke"` passes (Phases 3–4
       unit tests; smoke excluded).
-- [ ] `uv run pytest tests/test_storage/test_smoke.py -m smoke` passes
+- [x] `uv run pytest tests/test_storage/test_smoke.py -m smoke` passes
       against tmp DB (no real vault needed).
-- [ ] `uv run pytest tests/test_core/` continues to pass (no regression).
+- [x] `uv run pytest tests/test_core/` continues to pass (no regression).
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-05-10
+**Notes**: One deviation from plan: `test.py` uses explicit `db_path=Path("./data/kb.db")` instead of `init_db()` with no args. Vault root in config.yaml points to `/Users/lap14806/ai_kms_test_vault` which doesn't exist on this machine — CONFIG import triggers vault existence validation and fails before touching the DB. Explicit path bypasses CONFIG entirely. See Surprises section.
+
+---
+
+## Surprises
+
+**S-001** — Vault required by CONFIG on import (Phase 6).
+`CONFIG` validates that the vault root exists at import time. The vault path in `config/config.yaml` (`/Users/lap14806/ai_kms_test_vault`) doesn't exist on the dev machine running CI. `test.py` works around this by passing `db_path=Path("./data/kb.db")` directly to `init_db()` and `audit.write()`, bypassing CONFIG entirely. When the vault IS set up, `test.py` can be updated to call `init_db()` with no args.
 
 ---
 

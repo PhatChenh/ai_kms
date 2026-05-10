@@ -228,12 +228,14 @@ The following rules are enforced by hooks in `.claude/settings.json` — Claude 
 - [x] core/logging_setup.py
 - [x] core/config.py
 - [ ] core/pipeline.py
-- [ ] storage/schema.sql
-- [ ] storage/migrations/
-- [ ] storage/db.py
+- [x] storage/schema.sql
+- [x] storage/migrations/
+- [x] storage/db.py
+- [x] storage/audit_log.py
+- [x] core/audit.py
 - [ ] llm/ + prompts/
 - [ ] vault/
-- [ ] smoke test
+- [x] smoke test
 
 ---
 

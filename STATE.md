@@ -1,6 +1,6 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-05-09_
+_Last updated: 2026-05-10_
 
 ## Current Position
 **Phase**: Phase 0 — Foundations
@@ -12,17 +12,17 @@ _Last updated: 2026-05-09_
 - [x] core/config.py
 - [x] core/confidence.py _(exists on disk; not in CLAUDE.md checklist but listed in roadmap Phase 0)_
 - [x] llm/ _(provider.py, claude_provider.py, ollama_provider.py exist on disk; CLAUDE.md marks unchecked — prompts/ still empty)_
-- [ ] core/audit.py
+- [x] core/audit.py
 - [ ] core/pipeline.py
-- [ ] storage/schema.sql
-- [ ] storage/migrations/
-- [ ] storage/db.py
-- [ ] storage/audit_log.py
+- [x] storage/schema.sql
+- [x] storage/migrations/
+- [x] storage/db.py
+- [x] storage/audit_log.py
 - [ ] prompts/ (empty)
 - [ ] vault/
-- [ ] smoke test
+- [x] smoke test
 
-**Next planned work**: `docs/plans/storage_level.md` — 6-phase plan covering schema.sql → migrations scaffold → db.py → audit_log.py → core/audit.py → smoke test. All phases pending.
+**Next planned work**: `docs/plans/storage_level.md` — all 6 phases complete (2026-05-10). Remaining Phase 0 items: `core/pipeline.py`, `llm/ + prompts/`, `vault/`.
 
 ---
 
@@ -114,6 +114,7 @@ _Last updated: 2026-05-09_
 - **`mcp_server/tools.py` is logic-free.** `if`, `elif`, `for`, `while` at statement level is a hard-block hook violation. Tools call pipelines; pipelines do the work.
 - **Never add an MCP tool before its pipeline exists and is tested.** A stub tool that calls nothing misleads the demo.
 - **Schedulers come last in each phase.** Build manual CLI first, automate second.
+- **`CONFIG` validates vault root at import time.** Any code or test that imports `CONFIG` at module level fails if the vault path doesn't exist on disk. Tests must pass explicit paths (e.g. `db_path=tmp_path/...`) to bypass CONFIG, or lazy-import CONFIG inside functions. Do not import CONFIG at module scope in test files. _(Source: plans/storage_level.md Phase 6 Surprises S-001)_
 - **`PRAGMA foreign_keys=ON` on every new connection.** The pragma is connection-scoped; forgetting it silently disables FK enforcement including `ON DELETE CASCADE` on `corrections`.
 - **All schema changes via versioned `.sql` deltas.** No in-code `ALTER TABLE`. Migration runner applies in lexical order and records version in `schema_version`.
 

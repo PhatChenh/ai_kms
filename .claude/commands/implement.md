@@ -116,6 +116,12 @@ Code quality rules — these are non-negotiable:
 - No silent failures — use the project's `Result` type pattern where it applies
 - Functions do one thing — if you find yourself bundling two concerns, split them
 - Run typecheck after each file edit: `uv run mypy <file>` or whatever the project's typecheck command is
+- Every public function gets a docstring: one-line summary, `Args:`,
+  `Returns:`, and `Raises:` if relevant. Keep it factual — describe the
+  contract, not the implementation.
+- Inline comments explain **why**, not what. Comment when a decision was
+  non-obvious, a constraint forced this shape, or a future reader would
+  ask "why not just...". Never restate what the next line does.
 
 If you encounter something the plan did not anticipate:
 - DO NOT improvise a large change

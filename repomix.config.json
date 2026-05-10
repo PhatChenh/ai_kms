@@ -12,7 +12,6 @@
         "*.lock",
         "data/**",
         "logs/**",
-        "Vault/**",
         "tests/**",
         "docs/reference/**",
         ".venv/**",
@@ -21,8 +20,12 @@
         "__pycache__/**",
         "repomix-output*.xml",
         "repomix.config.json",
-        "plans",
-        "research"
+        "docs/plans/**",
+        "docs/research/**",
+        "docs/discussions/**",
+        "STATE.md",
+        "CLAUDE.md",
+        ".claude/**"
     ]
 }
 }
