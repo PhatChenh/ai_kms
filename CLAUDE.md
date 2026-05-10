@@ -20,6 +20,7 @@ AI-enhanced knowledge management system for busy managers. Watches an Obsidian v
 **Reference docs** (read before changing architecture):
 - `docs/roadmap.md` — phase-by-phase build order and rules of the road
 - `docs/top-level_layout.md` — every folder explained, pattern-to-folder mapping
+- `STATE.md` — current position, architecture decisions, open questions, and technical debt; read at session start
 ---
 
 ## Tech stack
@@ -256,3 +257,4 @@ from core.config import CONFIG
 
 - **Skipping `Result` type on helper functions.** Every public function in `handlers/` and `pipelines/` must return `Success` or `Failure`, not raw values or `None`.
 - **Using `@property` instead of Pydantic `Field` for user-configurable values.** Rule: `Field` = things a human configures. `@property` = things the code computes from other fields.
+- **Importing `CONFIG` at module scope in tests.** `CONFIG` validates vault root at import time; tests on machines without the vault fail immediately. Pass explicit paths (e.g. `db_path=tmp_path / "kb.db"`) to bypass CONFIG, or lazy-import inside the function under test.
