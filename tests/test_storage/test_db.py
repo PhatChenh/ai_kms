@@ -96,3 +96,41 @@ def test_migration_failure_rolls_back(tmp_path: Path, monkeypatch: pytest.Monkey
     version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
     conn.close()
     assert version == 2
+
+
+def test_init_db_returns_failure_on_bad_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import storage.db as db_module
+
+    bad_schema = tmp_path / "bad_schema.sql"
+    bad_schema.write_text("THIS IS NOT VALID SQL;")
+    monkeypatch.setattr(db_module, "_SCHEMA_FILE", bad_schema)
+
+    result = init_db(tmp_path / "kb.db")
+    assert isinstance(result, Failure)
+
+
+def test_get_connection_readonly_does_not_commit(db_path: Path) -> None:
+    init_db(db_path)
+    with get_connection(db_path, readonly=True) as conn:
+        conn.execute(
+            "INSERT INTO audit_log "
+            "(pipeline, stage, source_ids, decision, confidence, reasoning, outcome, correlation_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("p", "s", "[]", "d", 1.0, "r", "o", "test-cid"),
+        )
+    # no commit → rollback on close → row must not persist
+    verify = sqlite3.connect(str(db_path))
+    count = verify.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+    verify.close()
+    assert count == 0
+
+
+def test_schema_version_rejects_second_row(db_path: Path) -> None:
+    init_db(db_path)
+    conn = sqlite3.connect(str(db_path))
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO schema_version (id, version) VALUES (2, 0)")
+        conn.commit()
+    conn.close()

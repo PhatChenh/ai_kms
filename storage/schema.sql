@@ -41,8 +41,11 @@ CREATE TABLE IF NOT EXISTS corrections (
     human_value TEXT
 );
 
-CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
-INSERT OR IGNORE INTO schema_version (version) VALUES (0);
+CREATE TABLE IF NOT EXISTS schema_version (
+    id      INTEGER PRIMARY KEY CHECK (id = 1),
+    version INTEGER NOT NULL
+);
+INSERT OR IGNORE INTO schema_version (id, version) VALUES (1, 0);
 
 CREATE INDEX IF NOT EXISTS idx_documents_note_type  ON documents(note_type);
 CREATE INDEX IF NOT EXISTS idx_documents_updated_at ON documents(updated_at);

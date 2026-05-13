@@ -21,6 +21,11 @@ def _connect(db_path: Path) -> sqlite3.Connection:
 
 
 def _run_migrations(conn: sqlite3.Connection) -> None:
+    # executescript() issues an implicit COMMIT before running the script, so DDL
+    # inside a migration file is committed immediately and cannot be rolled back if
+    # the subsequent UPDATE schema_version fails. Keep migration files to a single
+    # atomic DDL statement to minimise partial-apply risk. Revisit in Phase 3 when
+    # multi-statement migrations land.
     version: int = conn.execute("SELECT version FROM schema_version").fetchone()[0]
     for path in sorted(_MIGRATIONS_DIR.glob("[0-9][0-9][0-9]_*.sql")):
         file_version = int(path.name[:3])
@@ -44,10 +49,12 @@ def init_db(db_path: Path | None = None) -> Result[None]:
     try:
         resolved.parent.mkdir(parents=True, exist_ok=True)
         conn = _connect(resolved)
-        conn.executescript(_SCHEMA_FILE.read_text())
-        _run_migrations(conn)
-        conn.close()
-        return Success(None)
+        try:
+            conn.executescript(_SCHEMA_FILE.read_text())
+            _run_migrations(conn)
+            return Success(None)
+        finally:
+            conn.close()
     except StorageError as exc:
         return Failure(error=str(exc), recoverable=False, context={"db_path": str(resolved)})
     except sqlite3.Error as exc:
@@ -55,7 +62,9 @@ def init_db(db_path: Path | None = None) -> Result[None]:
 
 
 @contextmanager
-def get_connection(db_path: Path | None = None) -> Generator[sqlite3.Connection, None, None]:
+def get_connection(
+    db_path: Path | None = None, *, readonly: bool = False
+) -> Generator[sqlite3.Connection, None, None]:
     if db_path is None:
         from core.config import CONFIG
         resolved: Path = CONFIG.main.database.path
@@ -64,7 +73,8 @@ def get_connection(db_path: Path | None = None) -> Generator[sqlite3.Connection,
     conn = _connect(resolved)
     try:
         yield conn
-        conn.commit()
+        if not readonly:
+            conn.commit()
     except Exception:
         conn.rollback()
         raise

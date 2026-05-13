@@ -15,7 +15,7 @@ from storage.db import get_connection
 class AuditEntry:
     pipeline:       str
     stage:          str
-    source_ids:     list[str]
+    source_ids:     tuple[str,...]
     decision:       str
     confidence:     float
     reasoning:      str
@@ -92,7 +92,7 @@ def query(
     params.append(limit)
 
     try:
-        with get_connection(db_path) as conn:
+        with get_connection(db_path, readonly=True) as conn:
             rows = conn.execute(sql, params).fetchall()
         entries = [
             AuditEntry(

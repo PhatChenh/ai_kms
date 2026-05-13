@@ -77,8 +77,8 @@ def new_correlation_id() -> str:
 
 # ─── Internal helpers ─────────────────────────────────────────────────────────
 
-_LOG_DIR = Path(__file__).parent.parent
-_LOG_FILE = _LOG_DIR / "logs"/ "kms.log"
+_LOG_DIR = Path(__file__).parent.parent / "logs"
+_LOG_FILE = _LOG_DIR / "kms.log"
 
 
 def _ensure_log_dir() -> None:
