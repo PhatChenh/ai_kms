@@ -1,6 +1,6 @@
 # Plan: Pipeline
-_Last updated: 2026-05-13_
-_Status: [ ] pending_
+_Last updated: 2026-05-14_
+_Status: [x] done_
 
 ## Approach
 
@@ -72,7 +72,10 @@ No new dependencies (no `click-anyio`). Documented here so Phase 1 CLI wiring us
 - [ ] `core/pipeline.py` imports no module from `llm/`, `vault/`, `handlers/`, `storage/`, or `core/audit.py` (importable without those modules present)
 - [ ] `run_pipeline` is an async function (verify with `asyncio.iscoroutinefunction`)
 
-**Status**: [ ] pending
+**Status**: [x] done
+
+**Completed**: 2026-05-14
+**Notes**: Created `core/pipeline.py` with `PipelineContext`, `Stage` (Protocol), and `run_pipeline` (async). No deviations. Three phase-1 criteria tests pass. Pre-existing test failures in `test_result_type.py` (stdin at module scope) and `test_logging.py` (missing fixture) are unrelated.
 
 ---
 
@@ -121,7 +124,10 @@ No new dependencies (no `click-anyio`). Documented here so Phase 1 CLI wiring us
 - [ ] `uv run pytest tests/test_core/test_pipeline.py -m "not smoke" -v` — all tests pass (none should be smoke-marked)
 - [ ] `uv run pytest tests/ -m "not smoke"` — full suite green (no regressions)
 
-**Status**: [ ] pending
+**Status**: [x] done
+
+**Completed**: 2026-05-14
+**Notes**: All 6 behavioral tests pass. One surprise: `test_no_explicit_context_generates_correlation_id` can't use real CONFIG (vault root missing on this machine). Fixed by seeding `core.config._CONFIG` with MagicMock via monkeypatch — bypasses `load_config()` without mocking the import itself. This pattern matches the guidance in CLAUDE.md ("pass explicit paths to bypass CONFIG"). No smoke marker needed.
 
 ---
 

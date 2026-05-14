@@ -1,0 +1,322 @@
+---
+description: Execute the next pending phase from docs/plans/<feature>.md. Updates plan progress after each phase. Waits for human verification before continuing.
+allowed-tools: Read, Edit, Bash(python:*), Bash(pytest:*), Bash(uv:*), Bash(find:*), Bash(cat:*)
+argument-hint: <feature>
+---
+
+# Implementation Task
+
+You implement ONE phase at a time. You stop after each phase and wait for human verification.
+
+## Input
+
+Feature to implement: $ARGUMENTS
+
+## Step 1 — Load and validate the plan
+
+First, read `CLAUDE.md`. It contains current build progress and project conventions — what commands to use, what patterns are established, what has already been decided. Your implementation must conform to these conventions.
+
+Then read `docs/plans/$FEATURE.md`.
+
+- **If it does not exist**: Stop and output:
+  ```
+  ❌ No plan found for "$FEATURE".
+  Run /plan $FEATURE first.
+  ```
+
+- **If any `# QUESTION:` annotations exist** (unresolved): Stop and output:
+  ```
+  ⚠️ Plan has unresolved questions. Resolve them before implementing.
+  Run /plan $FEATURE to address them.
+  ```
+
+- **If all phases are `[x] done`**: Stop and output:
+  ```
+  ✅ All phases complete for "$FEATURE". Nothing left to implement.
+  ```
+
+## Step 1.5 — Capture the discussion log for the previous phase
+
+Check `docs/plans/$FEATURE.md` for the most recently completed phase
+(status `[x] done`). If one exists, scan back through the conversation from the moment this phase started
+until now. Extract every exchange where the human asked a question and
+you gave a conceptual explanation — code walkthroughs, "why does this
+work this way", design rationale, terminology, anything that was new
+knowledge to them.
+
+Extract all conceptual exchanges and append them to
+`docs/discussions/$FEATURE.md` (create if absent) before doing anything else.
+
+Append a new section for this phase in this exact format:
+
+---
+
+## Phase <N> — <Phase name>
+_Completed: <date>_
+
+### Exchanges
+
+**Q:** <question>
+```python
+# optional: the code the human pointed to
+```
+
+**A:** <explanation>
+```python
+# optional: minimum snippet illustrating the concept
+```
+_Key concept: <label>_
+
+**Q:** ...
+
+Rules:
+- Include ALL conceptual exchanges, even ones that seem minor.
+  Small confusions are often the richest flashcard material.
+- Do NOT include exchanges that were purely procedural
+  ("run this command", "the test passed") — only knowledge transfer.
+- Paraphrase the human's question into a clean, standalone sentence.
+  Remove "wait, so..." and "I don't get why..." — keep the core question.
+- Keep answers complete but cut throat-clearing ("Great question —
+  the reason is..."). Start directly with the explanation.
+- The `Key concept:` tag is required on every exchange — it is the
+  anchor the flashcard command uses to decide card type and framing.
+- If the exchange was triggered by a specific piece of code, attach the
+minimum snippet that illustrates the concept being explained — typically
+3–10 lines. Trim aggressively: remove lines that aren't load-bearing for
+the concept. Label it clearly:
+
+  Do NOT attach a snippet when:
+  - The exchange was pure theory with no code anchor
+  - The snippet would require the full function to make sense
+  - The concept is better stated in words alone
+
+  The snippet is context for the flashcard command — not the thing being
+  tested.
+
+If no phase is marked done yet, skip this step.
+
+## Step 2 — Identify the current phase
+
+Find the first phase with status `[ ] pending`. That is your target phase. Do not skip ahead, do not implement multiple phases at once.
+
+Output before starting:
+```
+▶ Implementing: Phase <N> — <Phase name>
+  Goal: <phase goal>
+  Files: <list of files to modify>
+```
+
+## Step 3 — Implement with TDD (Red-Green-Refactor)
+
+**Iron law: No production code without a failing test first.**
+
+Wrote code before the test? Delete it. Start over. No exceptions.
+
+For each behavior the phase requires, follow this cycle:
+
+### 3a. RED — Write one failing test
+
+Write a single test that describes the next behavior to implement. Write the test from the spec's required behavior (inputs → expected outputs), not from your intended implementation. If you already know what the implementation will look like before finishing the test, stop — you're writing tests after.Requirements:
+- Tests one behavior only. If the name contains "and", split it.
+- Clear name that describes the expected behavior, not implementation.
+- Uses real code, not mocks, unless external I/O makes it unavoidable.
+- Follows the project's test conventions (see CLAUDE.md).
+- Assertions must check specific expected values, not just type, presence, or non-None. A test that would pass for any non-crashing implementation is not a test.
+
+If the plan's **Test criteria** section names specific test files/functions,
+use those exact names. If a named test file already exists with placeholder
+`pass` bodies, fill them in now — do not proceed with placeholders.
+
+### 3b. Verify RED — Watch it fail
+
+Run the test. This step is mandatory. Never skip it.
+
+```bash
+uv run pytest path/to/test_file.py::test_name -x
+```
+
+Confirm:
+- The test **fails** (not errors from import/syntax problems).
+- The failure message matches your expectation (feature missing, not typo).
+- It fails because the production code doesn't exist yet.
+
+Paste the actual pytest output. Do not paraphrase or summarize it.
+
+If the test **passes** immediately → you're testing existing behavior.
+Rewrite the test.
+
+If the test **errors** (import failure, syntax) → fix the error,
+re-run until it fails correctly for the right reason.
+
+If the implementation you're about to write would only work for the specific inputs in this test, write a second test with different inputs first. Both must fail. Then implement the general logic.
+
+
+### 3c. GREEN — Write minimal production code
+
+Write the simplest code that makes the failing test pass. Nothing more.
+
+- Do not add features the test doesn't require.
+- Do not refactor other code.
+- Do not "improve" beyond what the test demands.
+- Do not anticipate future tests.
+- Never hardcode return values to satisfy a test. If the implementation only works for the exact inputs in the test, it's not an implementation — it's a cheat. Production code must express the general logic, not memorize the test's expected output.
+
+### 3d. Verify GREEN — Watch it pass
+
+Run the test again, plus the full test suite for affected files:
+
+```bash
+uv run pytest path/to/test_file.py -x
+```
+
+Confirm:
+- The new test passes.
+- All existing tests still pass.
+- No warnings or errors in output.
+
+For any test that fails, paste the actual pytest output. Do not paraphrase or summarize it.
+If the new test fails → fix the production code, not the test.
+If other tests broke → fix now before continuing.
+
+
+### 3e. REFACTOR — Clean up (tests must stay green)
+
+After green, and only after green:
+- Remove duplication in production code.
+- Improve names and structure.
+- Extract helpers if warranted.
+- Run the full suite after every refactor change — tests must stay green.
+- Do not add new behavior during refactor.
+
+### 3f. Repeat
+
+Go back to 3a for the next behavior in this phase.
+
+## Testing rules — non-negotiable
+
+These apply to every test written during implementation.
+
+### Never test mock behavior
+If your assertion checks that a mock exists or a mock was called, you're
+testing the mock, not the code. Delete the assertion. Test real behavior
+or remove the mock.
+
+Gate: Before asserting on any mock element, ask: "Am I verifying real
+component behavior, or just that my mock is wired up?" If the latter, stop.
+
+### Never add test-only methods to production classes
+If a method exists solely for test cleanup or inspection, it doesn't belong
+in the production class. Put it in test utilities (`tests/helpers/`,
+`conftest.py`, or a test fixture).
+
+Gate: Before adding any method to a production class, ask: "Is this only
+called by tests?" If yes, it goes in test utilities.
+
+### Mock with understanding, not fear
+Before mocking any dependency:
+1. Know what side effects the real method has.
+2. Know whether your test depends on any of those side effects.
+3. Mock at the lowest level that removes the slow/external part while
+   preserving the behavior the test needs.
+
+Never mock "to be safe." Never mock without tracing the dependency chain.
+If mock setup exceeds 50% of the test, consider an integration test instead.
+
+### Use complete mocks
+When mocking a data structure (API response, config object, database row),
+mirror the full real structure — not just the fields your immediate test
+uses. Partial mocks hide structural assumptions and break silently when
+downstream code accesses omitted fields.
+
+### Recognize the red flags
+Any of these mean you've gone wrong — stop and course-correct:
+- Assertion checks for `*-mock` test IDs
+- Methods only called in test files
+- Mock setup is >50% of the test
+- Test fails when you remove the mock
+- Can't explain why the mock is needed
+- Test passes on first run (never saw it fail)
+- You're keeping deleted code "as reference"
+- You're rationalizing "just this once"
+
+## Code quality rules — non-negotiable
+
+- Strict typing — no `Any` or untyped returns where avoidable
+- No silent failures — use the project's `Result` type pattern where it applies
+- Functions do one thing — if you're bundling two concerns, split them
+- Run typecheck after each file edit: `uv run mypy <file>` or the project's typecheck command
+- Every public function gets a docstring: one-line summary, `Args:`,
+  `Returns:`, and `Raises:` if relevant. Describe the contract, not the
+  implementation.
+- Inline comments explain **why**, not what. Comment when a decision was
+  non-obvious, a constraint forced this shape, or a future reader would
+  ask "why not just...". Never restate what the next line does.
+
+If you encounter something the plan did not anticipate:
+- DO NOT improvise a large change
+- Make a note in the plan under a `## Surprises` section
+- Implement a minimal solution to unblock the phase, then flag it for human review
+
+## Step 4 — Final verification
+
+Run the full test criteria from the plan. Every criterion must pass.
+
+```bash
+uv run pytest tests/ -x
+```
+
+If a test fails:
+- Fix within the scope of this phase
+- Re-run until all criteria pass
+- Do not proceed until green
+
+### Verification checklist
+
+Before marking the phase done, confirm all of these:
+
+- [ ] Every new function/method has at least one test
+- [ ] Watched each test fail before writing its production code
+- [ ] Each test failed for the expected reason (feature missing, not typo/import)
+- [ ] Wrote minimal code to pass each test — no speculative features
+- [ ] All tests pass, output clean (no warnings, no errors)
+- [ ] Tests use real code — mocks only where external I/O forced it
+- [ ] Edge cases and error paths are covered
+- [ ] No test-only methods in production classes
+- [ ] Typecheck passes on all modified files
+
+Cannot check all boxes? Something was skipped. Fix it before proceeding.
+
+## Step 5 — Update the plan file
+
+After all test criteria pass, update `docs/plans/$FEATURE.md`:
+
+1. Change the phase status from `[ ] pending` to `[x] done`
+2. Add an implementation note directly under the phase:
+
+```
+**Completed**: <date>
+**Notes**: [What was actually done — any deviations from the plan, any surprises, any tech debt introduced]
+```
+
+3. Change the top-level `_Status_` field to `[~] in progress` (or `[x] done` if this was the last phase)
+
+## Step 6 — Hard stop
+
+After updating the plan, output:
+
+```
+✅ Phase <N> complete — docs/plans/$FEATURE.md updated
+
+What was done:
+- [bullet summary of changes made]
+
+Files modified:
+- [list]
+
+Please verify before continuing:
+- [restate the test criteria from the plan]
+
+When verified, run: /implement $FEATURE to continue with Phase <N+1>.
+```
+
+Then STOP. Do not continue to the next phase automatically. Wait for the human to run the command again.

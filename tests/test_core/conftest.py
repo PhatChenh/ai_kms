@@ -17,7 +17,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import structlog
 import yaml
+
+from core.logging_setup import new_correlation_id, setup_logging
+from core.result import Failure
 
 
 # ---------------------------------------------------------------------------
@@ -155,3 +159,49 @@ def without_api_keys(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     yield
+
+
+# ---------------------------------------------------------------------------
+# Logging test fixtures — used by test_logging.py
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def correlation_id() -> str:
+    """
+    Set up logging, write a pipeline run's log lines including a "stage failed"
+    entry, and return the correlation id. Satisfies both test_required_fields_present
+    and test_failure_fields_appear_in_log.
+    """
+    setup_logging(log_level="DEBUG", dev_mode=False)
+    cid = new_correlation_id()
+    logger = structlog.get_logger(__name__)
+    logger.info("pipeline started", pipeline="test_capture")
+    fail = Failure(
+        error="LLM timeout after 60s",
+        recoverable=True,
+        context={"note_id": "note_001", "stage": "classify"},
+    )
+    logger.error("stage failed", **fail.to_log_dict())
+    return cid
+
+
+@pytest.fixture()
+def run_a_id() -> str:
+    """First of two isolated pipeline runs for correlation_id isolation test."""
+    setup_logging(log_level="DEBUG", dev_mode=False)
+    cid = new_correlation_id()
+    logger = structlog.get_logger(__name__)
+    logger.info("pipeline started", pipeline="capture", source="inbox/note_a.md")
+    logger.info("extraction complete", word_count=100, note_id="note_a")
+    return cid
+
+
+@pytest.fixture()
+def run_b_id() -> str:
+    """Second of two isolated pipeline runs for correlation_id isolation test."""
+    setup_logging(log_level="DEBUG", dev_mode=False)
+    cid = new_correlation_id()
+    logger = structlog.get_logger(__name__)
+    logger.info("pipeline started", pipeline="capture", source="inbox/note_b.md")
+    logger.info("extraction complete", word_count=200, note_id="note_b")
+    return cid

@@ -36,7 +36,7 @@ _CONFIG_DIR = _PROJECT_ROOT / "config"
 # ---------------------------------------------------------------------------
 # Type aliases — 3.12 `type` statement, runtime-enforced.
 # ---------------------------------------------------------------------------
-type Provider  = Literal["claude", "ollama"]
+type Provider  = Literal["claude", "ollama", "openai"]
 type Task      = Literal["classify", "synthesis", "embeddings", "self_learn", "capture"]
 type LogLevel  = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 type Env       = Literal["dev", "prod"]
@@ -130,6 +130,7 @@ class ClaudeConfig(BaseModel):
     """
     model:           str = "claude-haiku-4-5-20251001"   # capture, classify, self_learn
     synthesis_model: str = "claude-sonnet-4-20250514"    # synthesis, documentation
+    embedding_model: str = "voyage-3"                    # via Voyage API (future)
     max_tokens:      int = 1024
     timeout:         int = 60   # seconds
 
@@ -138,9 +139,21 @@ class OllamaConfig(BaseModel):
     """Ollama local server settings."""
     base_url:            str = "http://localhost:11434"
     chat_model:          str = "qwen3.5:9b"
+    synthesis_model:     str = "qwen3.5:9b"    # override with a larger model e.g. qwen3.5:32b
     embedding_model:     str = "nomic-embed-text"
     timeout:             int = 120
     delay_between_calls: int = 2   # seconds between batch calls
+
+
+class OpenAICompatConfig(BaseModel):
+    """Settings for any OpenAI-compatible endpoint (Fireworks, Together, etc.)."""
+    base_url:        str = "https://api.fireworks.ai/inference/v1"
+    model:           str = "accounts/fireworks/models/gpt-oss-20b"
+    synthesis_model: str = "accounts/fireworks/models/llama-v3p1-70b-instruct"
+    embedding_model: str = "nomic-ai/nomic-embed-text-v1.5"
+    max_tokens:      int = 1024
+    timeout:         int = 60
+    api_key_env:     str = "FIREWORKS_API_KEY"  # name of the env var holding the key
 
 
 class MCPConfig(BaseModel):
@@ -176,6 +189,7 @@ class MainConfig(BaseModel):
     providers:        ProvidersConfig     = Field(default_factory=ProvidersConfig)
     claude:           ClaudeConfig        = Field(default_factory=ClaudeConfig)
     ollama:           OllamaConfig        = Field(default_factory=OllamaConfig)
+    openai_compat:    OpenAICompatConfig  = Field(default_factory=OpenAICompatConfig)
     mcp:              MCPConfig           = Field(default_factory=MCPConfig)
     self_learning:    SelfLearningConfig  = Field(default_factory=SelfLearningConfig)
     logging:          LoggingConfig       = Field(default_factory=LoggingConfig)

@@ -534,9 +534,9 @@ class TestProvidersConfig:
         assert p.for_task("embeddings") == "ollama"
 
     def test_rejects_unknown_provider_value(self):
-        """Only 'claude' and 'ollama' are valid — 'openai' is not wired yet."""
+        """Only 'claude', 'ollama', 'openai' are valid providers."""
         with pytest.raises(ValidationError):
-            ProvidersConfig(classify="openai")
+            ProvidersConfig(classify="unknown_provider")
 
 
 class TestClaudeConfig:

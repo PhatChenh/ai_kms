@@ -1,76 +1,96 @@
 """
 llm/claude_provider.py
 
-Claude implementation of AIProvider.
+Claude implementation of LLMProvider.
 
-Key design: the task determines which model is used.
-- synthesis / documentation → claude.synthesis_model (Sonnet — smarter, slower)
-- everything else           → claude.model           (Haiku — fast, cheap)
+The task determines which model is used:
+- synthesis / documentation → config.synthesis_model (Sonnet — smarter, slower)
+- everything else           → config.model           (Haiku — fast, cheap)
 
-This means pipelines don't need to think about model selection. They just call
+Pipelines don't need to think about model selection; they call
 get_provider("synthesis", CONFIG.main) and automatically get the right model.
 """
 
-import json
 import os
 
-from anthropic import Anthropic
+from anthropic import AsyncAnthropic, AuthenticationError
+from anthropic import APIError as AnthropicAPIError
 
 from core.config import ClaudeConfig, Task
-from llm.provider import AIProvider
+from core.exceptions import ConfigError
+from core.result import Failure, Result, Success
+from llm.provider import LLMProvider, LLMResponse, SYNTHESIS_TASKS
 
-# Tasks that need the smarter synthesis model instead of the fast default.
-_SYNTHESIS_TASKS: frozenset[Task] = frozenset({"synthesis", "documentation"})
 
-
-class ClaudeProvider(AIProvider):
-    """Calls the Claude API via the official Anthropic Python SDK."""
+class ClaudeProvider(LLMProvider):
+    """Calls the Claude API via the official Anthropic async Python SDK."""
 
     def __init__(self, config: ClaudeConfig, task: Task = "capture") -> None:
         """
+        Initialise the provider.
+
         Args:
             config: The validated ClaudeConfig from MainConfig.
-            task:   The pipeline task this provider is being created for.
-                    Used to select model (haiku vs sonnet).
+            task:   Pipeline task — used to select model (haiku vs sonnet).
+
+        Raises:
+            ConfigError: if ANTHROPIC_API_KEY is unset or empty.
         """
-        # Key resolution order: env var → config field (which should be a placeholder).
-        # The validator in ApiKeys already strips empty strings, so we only need env here.
-        api_key = os.environ.get("ANTHROPIC_API_KEY") or config.__dict__.get("api_key")
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
-            raise ValueError(
+            raise ConfigError(
                 "ANTHROPIC_API_KEY not set. "
                 "Export it in your shell or add it to .env — never put it in config.yaml."
             )
+        self._client = AsyncAnthropic(api_key=api_key)
+        self._model = config.synthesis_model if task in SYNTHESIS_TASKS else config.model
+        self._max_tokens = config.max_tokens
+        self._embedding_model = config.embedding_model
 
-        self.client     = Anthropic(api_key=api_key)
-        self.max_tokens = config.max_tokens
-        self.timeout    = config.timeout
+    async def complete(self, system: str, user: str) -> Result[LLMResponse]:
+        """
+        Send a system + user message pair to Claude.
 
-        # Select model based on the task.
-        self.model = (
-            config.synthesis_model if task in _SYNTHESIS_TASKS
-            else config.model
-        )
+        Args:
+            system: Behavioural instructions for the model.
+            user:   Content to process.
 
-    # ── public interface ──────────────────────────────────────────────────
-
-    def chat(self, prompt: str, system_prompt: str = "", json_mode: bool = False) -> str:
-        """Send a prompt to Claude and return the text response."""
-        if json_mode:
-            suffix = "\n\nReturn ONLY valid JSON. No markdown, no explanation."
-            system_prompt = (system_prompt + suffix) if system_prompt else suffix.strip()
-
-        response = self.client.messages.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            system=system_prompt,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return response.content[0].text
-
-    def embed(self, text: str) -> list[float]:
-        """Claude has no embedding endpoint — route embeddings to Ollama."""
-        raise NotImplementedError(
-            "Claude does not support embeddings. "
-            "Set providers.embeddings = 'ollama' in config/config.yaml."
-        )
+        Returns:
+            Success(LLMResponse) on a valid response.
+            Failure(recoverable=False) on AuthenticationError.
+            Failure(recoverable=True) on any other APIError.
+        """
+        try:
+            resp = await self._client.messages.create(
+                model=self._model,
+                max_tokens=self._max_tokens,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+            )
+            usage = resp.usage.model_dump() if resp.usage else {}
+            return Success(
+                LLMResponse(
+                    content=resp.content[0].text if resp.content else "",
+                    model=resp.model,
+                    usage=usage,
+                )
+            )
+        except AuthenticationError as exc:
+            return Failure(
+                error=str(exc),
+                recoverable=False,
+                context={"provider": "claude"},
+            )
+        except AnthropicAPIError as exc:
+            return Failure(
+                error=str(exc),
+                recoverable=True,
+                context={"provider": "claude"},
+            )
+        except Exception as exc:
+            # httpx / network errors not wrapped by the Anthropic SDK
+            return Failure(
+                error=str(exc),
+                recoverable=True,
+                context={"provider": "claude"},
+            )

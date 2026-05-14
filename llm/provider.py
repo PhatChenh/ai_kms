@@ -1,79 +1,69 @@
 """
 llm/provider.py
 
-Abstract base class for AI providers + factory function.
-
-Pattern: Handler Registry applied to LLM providers.
-- Each provider implements the same interface (AIProvider ABC).
-- The factory get_provider() selects the right one based on config.
-- Adding a new provider = add a new class, register it in the factory. Nothing else changes.
+Abstract base class for LLM providers + factory function.
 
 Usage:
     from core.config import CONFIG
     from llm.provider import get_provider
 
-    provider = get_provider("classify", CONFIG.main)
-    response = provider.chat(prompt="...", system_prompt="...")
+    provider = get_provider("capture", CONFIG.main)
+    result = await provider.complete(system="...", user="...")
 """
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
-from core.config import ClaudeConfig, MainConfig, OllamaConfig, Provider, Task
+from core.config import MainConfig, Provider, Task
+from core.result import Result
+
+# Tasks that route to the synthesis (smarter) model on every provider.
+# Defined here so all providers share one source of truth.
+SYNTHESIS_TASKS: frozenset[Task] = frozenset({"synthesis", "documentation"})
 
 
-class AIProvider(ABC):
+@dataclass(frozen=True)
+class LLMResponse:
+    """Immutable response DTO returned by every LLMProvider.complete() call."""
+    content: str
+    model: str
+    usage: dict
+
+
+class LLMProvider(ABC):
     """
     Interface every LLM provider must satisfy.
-    Callers only speak to this class — never to ClaudeProvider or OllamaProvider directly.
+    Callers only speak to this class — never to concrete providers directly.
     """
 
     @abstractmethod
-    def chat(self, prompt: str, system_prompt: str = "", json_mode: bool = False) -> str:
+    async def complete(self, system: str, user: str) -> Result[LLMResponse]:
         """
-        Send a prompt to the model and return a text response.
+        Send a system + user message pair to the model.
 
         Args:
-            prompt:        The user message / content to process.
-            system_prompt: Behavioural instructions for the model.
-            json_mode:     If True, instruct the model to return valid JSON only.
+            system: Behavioural instructions for the model.
+            user:   The user message / content to process.
 
         Returns:
-            The model's response as a plain string.
-        """
-
-    @abstractmethod
-    def embed(self, text: str) -> list[float]:
-        """
-        Convert text into an embedding vector for semantic search.
-
-        Args:
-            text: The text to embed.
-
-        Returns:
-            A list of floats representing the embedding.
+            Success(LLMResponse) on a valid response,
+            Failure on any API or network error.
         """
 
 
-def get_provider(task: Task, config: MainConfig) -> AIProvider:
+def get_provider(task: Task, config: MainConfig) -> LLMProvider:
     """
-    Factory: return the correct AIProvider for a pipeline task.
-
-    Reads which provider to use from config.providers.for_task(task),
-    then instantiates that provider with its section of the config.
+    Factory: return the correct LLMProvider for a pipeline task.
 
     Args:
         task:   One of the Task literals ("classify", "synthesis", etc.)
         config: The validated MainConfig singleton.
 
     Returns:
-        An AIProvider ready to call.
+        An LLMProvider ready to call.
 
     Raises:
         ValueError: if the configured provider name is unknown.
-
-    Usage:
-        provider = get_provider("synthesis", CONFIG.main)
-        text = provider.chat(prompt, system_prompt)
     """
     provider_name: Provider = config.providers.for_task(task)
 
@@ -83,9 +73,12 @@ def get_provider(task: Task, config: MainConfig) -> AIProvider:
             return ClaudeProvider(config.claude, task=task)
         case "ollama":
             from llm.ollama_provider import OllamaProvider
-            return OllamaProvider(config.ollama)
+            return OllamaProvider(config.ollama, task=task)
+        case "openai":
+            from llm.openai_provider import OpenAIProvider
+            return OpenAIProvider(config.openai_compat, task=task)
         case _:
             raise ValueError(
                 f"Unknown provider '{provider_name}' for task '{task}'. "
-                f"Valid options: 'claude', 'ollama'."
+                f"Valid options: 'claude', 'ollama', 'openai'."
             )
