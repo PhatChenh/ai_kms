@@ -79,62 +79,51 @@ def lines_for_run(correlation_id: str) -> list[dict]:
 
 # ─── Section 1: Core logging setup ───────────────────────────────────────────
 
-def test_log_file_created() -> tuple[bool, str]:
+def test_log_file_created() -> None:
     """logs/kms.log must exist after setup_logging() is called."""
-    exists = Path("logs/kms.log").exists()
-    return exists, "logs/kms.log not found"
+    assert Path("logs/kms.log").exists(), "logs/kms.log not found"
 
 
-def test_all_lines_are_valid_json() -> tuple[bool, str]:
+def test_all_lines_are_valid_json() -> None:
     """Every line in kms.log must parse as JSON."""
     log_file = Path("logs/kms.log")
-    if not log_file.exists():
-        return False, "log file missing"
+    assert log_file.exists(), "log file missing"
     for raw in log_file.read_text().strip().splitlines():
         try:
             json.loads(raw)
         except json.JSONDecodeError:
-            return False, f"non-JSON line: {raw[:80]}"
-    return True, ""
+            assert False, f"non-JSON line: {raw[:80]}"
 
 
-def test_required_fields_present(correlation_id: str) -> tuple[bool, str]:
+def test_required_fields_present(correlation_id: str) -> None:
     """Every log line must have timestamp, level, logger, event, correlation_id."""
     required = {"timestamp", "level", "logger", "event", "correlation_id"}
     for entry in lines_for_run(correlation_id):
         missing = required - entry.keys()
-        if missing:
-            return False, f"missing fields {missing} in: {entry.get('event')}"
-    return True, ""
+        assert not missing, f"missing fields {missing} in: {entry.get('event')}"
 
 
-def test_correlation_id_isolation(run_a_id: str, run_b_id: str) -> tuple[bool, str]:
+def test_correlation_id_isolation(run_a_id: str, run_b_id: str) -> None:
     """
     Lines from run A must only carry run A's correlation_id, and vice versa.
     This proves clear_contextvars() works between runs.
     """
-    if run_a_id == run_b_id:
-        return False, "both runs got the same correlation_id"
+    assert run_a_id != run_b_id, "both runs got the same correlation_id"
 
     a_lines = lines_for_run(run_a_id)
     b_lines = lines_for_run(run_b_id)
 
-    if len(a_lines) == 0:
-        return False, "no log lines found for run A"
-    if len(b_lines) == 0:
-        return False, "no log lines found for run B"
+    assert len(a_lines) > 0, "no log lines found for run A"
+    assert len(b_lines) > 0, "no log lines found for run B"
 
-    # Check none of run B's lines accidentally carry run A's id
     for entry in b_lines:
-        if entry.get("correlation_id") == run_a_id:
-            return False, "run B line carries run A's correlation_id — context bleed"
-
-    return True, ""
+        assert entry.get("correlation_id") != run_a_id, \
+            "run B line carries run A's correlation_id — context bleed"
 
 
 # ─── Section 2: Result type compatibility ────────────────────────────────────
 
-def test_failure_to_log_dict_is_json_serializable() -> tuple[bool, str]:
+def test_failure_to_log_dict_is_json_serializable() -> None:
     """
     Failure.to_log_dict() must return a dict that json.dumps() accepts.
     This is the core contract — if this breaks, every pipeline's error
@@ -148,19 +137,15 @@ def test_failure_to_log_dict_is_json_serializable() -> tuple[bool, str]:
     try:
         serialized = json.dumps(fail.to_log_dict())
     except TypeError as e:
-        return False, f"to_log_dict() produced non-serializable value: {e}"
+        assert False, f"to_log_dict() produced non-serializable value: {e}"
 
-    # Also verify the keys we expect are actually there
     parsed = json.loads(serialized)
     expected_keys = {"error", "recoverable", "context", "traceback"}
     missing = expected_keys - parsed.keys()
-    if missing:
-        return False, f"to_log_dict() is missing keys: {missing}"
-
-    return True, ""
+    assert not missing, f"to_log_dict() is missing keys: {missing}"
 
 
-def test_failure_fields_appear_in_log(correlation_id: str) -> tuple[bool, str]:
+def test_failure_fields_appear_in_log(correlation_id: str) -> None:
     """
     When a pipeline logs a Failure via **f.to_log_dict(), the error,
     recoverable, and context fields must appear as top-level keys in
@@ -169,8 +154,7 @@ def test_failure_fields_appear_in_log(correlation_id: str) -> tuple[bool, str]:
     lines = lines_for_run(correlation_id)
     failure_lines = [e for e in lines if e.get("event") == "stage failed"]
 
-    if not failure_lines:
-        return False, "no 'stage failed' log line found for this run"
+    assert failure_lines, "no 'stage failed' log line found for this run"
 
     entry = failure_lines[0]
 
@@ -181,15 +165,11 @@ def test_failure_fields_appear_in_log(correlation_id: str) -> tuple[bool, str]:
     }
 
     for field, validator in checks.items():
-        if field not in entry:
-            return False, f"field '{field}' not found in log entry"
-        if not validator(entry[field]):
-            return False, f"field '{field}' has unexpected value: {entry[field]}"
-
-    return True, ""
+        assert field in entry, f"field '{field}' not found in log entry"
+        assert validator(entry[field]), f"field '{field}' has unexpected value: {entry[field]}"
 
 
-def test_failure_with_nonserializable_context() -> tuple[bool, str]:
+def test_failure_with_nonserializable_context() -> None:
     """
     Failure.to_log_dict() must handle non-serializable context values
     (Path, datetime) by coercing them to strings. Without this, the
@@ -199,14 +179,14 @@ def test_failure_with_nonserializable_context() -> tuple[bool, str]:
         error="vault write failed",
         recoverable=False,
         context={
-            "path": Path("inbox/meeting_notes.md"),      # Path is not JSON-serializable
-            "attempted_at": datetime(2026, 5, 1, 14, 0, 0),  # datetime is not either
+            "path": Path("inbox/meeting_notes.md"),
+            "attempted_at": datetime(2026, 5, 1, 14, 0, 0),
         },
     )
     try:
         serialized = json.dumps(fail.to_log_dict())
     except TypeError as e:
-        return False, (
+        assert False, (
             f"to_log_dict() did not coerce non-serializable context values: {e}\n"
             f"         Fix: use {{k: str(v) for k, v in self.context.items()}} in to_log_dict()"
         )
@@ -214,15 +194,11 @@ def test_failure_with_nonserializable_context() -> tuple[bool, str]:
     parsed = json.loads(serialized)
     context = parsed.get("context", {})
 
-    if not isinstance(context.get("path"), str):
-        return False, "Path in context was not coerced to string"
-    if not isinstance(context.get("attempted_at"), str):
-        return False, "datetime in context was not coerced to string"
-
-    return True, ""
+    assert isinstance(context.get("path"), str), "Path in context was not coerced to string"
+    assert isinstance(context.get("attempted_at"), str), "datetime in context was not coerced to string"
 
 
-def test_failure_auto_captures_traceback() -> tuple[bool, str]:
+def test_failure_auto_captures_traceback() -> None:
     """
     When Failure is created inside an except block, __post_init__ must
     auto-capture the traceback string. This is what makes error logs
@@ -237,15 +213,12 @@ def test_failure_auto_captures_traceback() -> tuple[bool, str]:
             context={"stage": "summarize"},
         )
 
-    if fail.traceback is None:
-        return False, "traceback was not auto-captured inside except block"
-    if "ValueError" not in fail.traceback:
-        return False, f"traceback does not mention the exception type: {fail.traceback[:100]}"
-
-    return True, ""
+    assert fail.traceback is not None, "traceback was not auto-captured inside except block"
+    assert "ValueError" in fail.traceback, \
+        f"traceback does not mention the exception type: {fail.traceback[:100]}"
 
 
-def test_failure_traceback_is_none_outside_except() -> tuple[bool, str]:
+def test_failure_traceback_is_none_outside_except() -> None:
     """
     When Failure is created outside an except block (e.g. a validation
     failure, not an exception), traceback must be None — not a misleading
@@ -256,14 +229,11 @@ def test_failure_traceback_is_none_outside_except() -> tuple[bool, str]:
         recoverable=False,
         context={"score": 0.45, "threshold": 0.60},
     )
-    if fail.traceback is not None:
-        return False, (
-            f"traceback should be None outside an except block, got: {fail.traceback[:80]}"
-        )
-    return True, ""
+    assert fail.traceback is None, \
+        f"traceback should be None outside an except block, got: {fail.traceback[:80]}"
 
 
-def test_success_value_is_loggable() -> tuple[bool, str]:
+def test_success_value_is_loggable() -> None:
     """
     Success.value should be loggable directly when it's a primitive.
     This is the happy path — no special handling needed, just documenting
@@ -273,11 +243,10 @@ def test_success_value_is_loggable() -> tuple[bool, str]:
     try:
         json.dumps({"value": result.value})
     except TypeError as e:
-        return False, f"Success.value is not JSON-serializable: {e}"
-    return True, ""
+        assert False, f"Success.value is not JSON-serializable: {e}"
 
 
-def test_direct_failure_object_is_not_serializable() -> tuple[bool, str]:
+def test_direct_failure_object_is_not_serializable() -> None:
     """
     DOCUMENTS THE BAD PATTERN: passing the Failure object itself as a log
     field (logger.error('msg', failure=f)) will fail JSONRenderer.
@@ -292,11 +261,9 @@ def test_direct_failure_object_is_not_serializable() -> tuple[bool, str]:
     )
     try:
         json.dumps({"failure": fail})
-        return False, "Failure object serialized directly — to_log_dict() may be unnecessary"
+        assert False, "Failure object serialized directly — to_log_dict() may be unnecessary"
     except TypeError:
-        # Expected — dataclass is NOT JSON-serializable, confirming the bad
-        # pattern would silently drop log entries in production.
-        return True, ""
+        pass  # expected — dataclass is NOT JSON-serializable
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -318,7 +285,6 @@ def main() -> None:
     logger.info("extraction complete", word_count=1204, note_id="note_002")
 
     # ── Produce log lines for the Result compatibility tests ──────────────────
-    # Using a dedicated run so we can isolate its log lines cleanly.
     result_run_id = new_correlation_id()
     fail = Failure(
         error="LLM timeout after 60s",
@@ -360,7 +326,6 @@ def main() -> None:
 
     print_summary()
 
-    # Non-zero exit code if any test failed — useful for CI later
     if any(not ok for _, ok, _ in _results):
         sys.exit(1)
 

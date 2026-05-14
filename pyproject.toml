@@ -16,6 +16,8 @@ dependencies = [
     "anthropic>=0.97.0",
     "pydantic-settings>=2.14.0",
     "rich>=15.0.0",
+    "openai>=1.0",
+    "mypy>=2.1.0",
 ]
 
 [build-system]
@@ -34,4 +36,5 @@ dev = [
 [tool.pytest.ini_options]
 markers = [
     "smoke: tests that require real config files and a live vault on disk",
+    "integration: tests that call a real external API and require a live key",
 ]

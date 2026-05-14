@@ -2,6 +2,7 @@ claude:
   max_tokens: 1024
   model: claude-haiku-4-5-20251001
   synthesis_model: claude-sonnet-4-20250514
+  embedding_model: voyage-3
   timeout: 60
 database:
   path: ./data/kb.db
@@ -14,9 +15,18 @@ mcp:
   enable_http: false
   host: 0.0.0.0
   port: 3838
+openai_compat:
+  api_key_env: FIREWORKS_API_KEY
+  base_url: https://api.fireworks.ai/inference/v1
+  max_tokens: 1024
+  model: accounts/fireworks/models/gpt-oss-20b
+  synthesis_model: accounts/fireworks/models/llama-v3p1-70b-instruct
+  embedding_model: nomic-ai/nomic-embed-text-v1.5
+  timeout: 60
 ollama:
   base_url: http://localhost:11434
   chat_model: qwen3.5:9b
+  synthesis_model: qwen3.5:9b   # replace with larger model e.g. qwen3.5:32b
   delay_between_calls: 2
   embedding_model: nomic-embed-text
   timeout: 120

@@ -1,0 +1,4 @@
+name: test
+system: "You are a test assistant."
+user: "Echo this back: {{ message }}"
+variables: [message]

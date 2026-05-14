@@ -1,66 +1,92 @@
 """
 llm/ollama_provider.py
 
-Ollama implementation of AIProvider.
+Ollama implementation of LLMProvider.
 Calls Ollama's local HTTP API — no API key, no cost, runs offline.
 
-Typical use: embeddings (all tasks), chat tasks you've routed to "ollama".
+The sync requests.post() calls are wrapped in asyncio.to_thread() to avoid
+blocking the event loop. httpx is not added — asyncio.to_thread is sufficient
+for Phase 0 and avoids a new dependency (see plan Out of Scope).
 """
+
+import asyncio
 
 import requests
 
-from core.config import OllamaConfig
-from llm.provider import AIProvider
+from core.config import OllamaConfig, Task
+from core.result import Failure, Result, Success
+from llm.provider import LLMProvider, LLMResponse, SYNTHESIS_TASKS
 
 
-class OllamaProvider(AIProvider):
+class OllamaProvider(LLMProvider):
     """Calls Ollama's local HTTP API."""
 
-    def __init__(self, config: OllamaConfig) -> None:
-        self.base_url        = config.base_url
-        self.chat_model      = config.chat_model
-        self.embedding_model = config.embedding_model
-        self.timeout         = config.timeout
+    def __init__(self, config: OllamaConfig, task: Task = "capture") -> None:
+        """
+        Initialise the provider.
 
-    # ── public interface ──────────────────────────────────────────────────
+        Args:
+            config: The validated OllamaConfig from MainConfig.
+            task:   Pipeline task — used to select model (chat vs synthesis).
+        """
+        self._base_url = config.base_url
+        self._model = config.synthesis_model if task in SYNTHESIS_TASKS else config.chat_model
+        self._embedding_model = config.embedding_model
+        self._timeout = config.timeout
 
-    def chat(self, prompt: str, system_prompt: str = "", json_mode: bool = False) -> str:
-        """Send a prompt to Ollama and return the text response."""
-        payload: dict = {
-            "model":  self.chat_model,
-            "prompt": prompt,
-            "stream": False,
-        }
-        if system_prompt:
-            payload["system"] = system_prompt
-        if json_mode:
-            payload["format"] = "json"
+    async def complete(self, system: str, user: str) -> Result[LLMResponse]:
+        """
+        Send a system + user message pair to Ollama's generate endpoint.
 
-        response = self._post("/api/generate", payload)
-        return response.get("response", "")
+        Args:
+            system: Behavioural instructions.
+            user:   Content to process.
 
-    def embed(self, text: str) -> list[float]:
-        """Generate an embedding vector using Ollama's local model."""
-        response = self._post(
-            "/api/embeddings",
-            {"model": self.embedding_model, "prompt": text},
-        )
-        return response["embedding"]
-
-    # ── private helpers ───────────────────────────────────────────────────
+        Returns:
+            Success(LLMResponse) on a valid response.
+            Failure(recoverable=True) on ConnectionError or TimeoutError.
+        """
+        try:
+            payload = {
+                "model": self._model,
+                "prompt": user,
+                "system": system,
+                "stream": False,
+            }
+            raw = await asyncio.to_thread(self._post, "/api/generate", payload)
+            return Success(
+                LLMResponse(
+                    content=raw.get("response", ""),
+                    model=self._model,
+                    usage={},
+                )
+            )
+        except (ConnectionError, TimeoutError) as exc:
+            return Failure(
+                error=str(exc),
+                recoverable=True,
+                context={"provider": "ollama"},
+            )
 
     def _post(self, endpoint: str, payload: dict) -> dict:
         """
-        Make a POST request to Ollama. Raises ConnectionError with a helpful
-        message if Ollama is not running, instead of a raw requests exception.
+        Make a synchronous POST request to Ollama.
+
+        Raises:
+            TimeoutError: if the request exceeds self._timeout seconds.
+            ConnectionError: if Ollama is not reachable, with a helpful message.
         """
-        url = f"{self.base_url}{endpoint}"
+        url = f"{self._base_url}{endpoint}"
         try:
-            resp = requests.post(url, json=payload, timeout=self.timeout)
+            resp = requests.post(url, json=payload, timeout=self._timeout)
             resp.raise_for_status()
             return resp.json()
+        except requests.Timeout as exc:
+            raise TimeoutError(
+                f"Ollama at {self._base_url} timed out after {self._timeout}s."
+            ) from exc
         except requests.ConnectionError as exc:
             raise ConnectionError(
-                f"Cannot reach Ollama at {self.base_url}. "
+                f"Cannot reach Ollama at {self._base_url}. "
                 "Is Ollama running? Try: ollama serve"
             ) from exc

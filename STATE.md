@@ -1,6 +1,6 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-05-10_
+_Last updated: 2026-05-14 (llm_layer session)_
 
 ## Current Position
 **Phase**: Phase 0 — Foundations
@@ -11,18 +11,18 @@ _Last updated: 2026-05-10_
 - [x] core/logging_setup.py
 - [x] core/config.py
 - [x] core/confidence.py _(exists on disk; not in CLAUDE.md checklist but listed in roadmap Phase 0)_
-- [x] llm/ _(provider.py, claude_provider.py, ollama_provider.py exist on disk; CLAUDE.md marks unchecked — prompts/ still empty)_
+- [x] llm/ _(provider.py, claude_provider.py, ollama_provider.py, openai_provider.py, prompt_loader.py — all async LLMProvider ABC — complete 2026-05-14)_
 - [x] core/audit.py
-- [ ] core/pipeline.py
+- [x] core/pipeline.py
 - [x] storage/schema.sql
 - [x] storage/migrations/
 - [x] storage/db.py
 - [x] storage/audit_log.py
-- [ ] prompts/ (empty)
+- [x] prompts/ _(prompts/test.yaml exists; prompt_loader.py loads eagerly — complete 2026-05-14)_
 - [ ] vault/
 - [x] smoke test
 
-**Next planned work**: `docs/plans/storage_level.md` — all 6 phases complete (2026-05-10). Remaining Phase 0 items: `core/pipeline.py`, `llm/ + prompts/`, `vault/`.
+**Next planned work**: Phase 0 remaining: `vault/`. After that, Phase 1 (Capture + Classify + Search, targeting M1 ~15 May 2026).
 
 ---
 
@@ -85,14 +85,62 @@ _Last updated: 2026-05-10_
 - **Rationale**: Single-writer CLI. Simplicity trumps pooling overhead at this scale.
 - **Constraint for future phases**: Phase 4 (MCP server, long-running process) should revisit this. A daemon with many short-lived tool calls will pay per-call connection overhead. At that point, a thread-local singleton or connection pool becomes relevant. Flag in Phase 4 planning.
 
+### [DECISION-010] `run_pipeline` is async; stages are `async def` top-level functions
+- **Source**: `docs/plans/pipeline.md` — Approach + OQ-P2 resolution
+- **Decision**: `run_pipeline` is an `async def`. Every stage must be a top-level `async def` with a meaningful `__name__`. Bound methods and lambdas must be wrapped.
+- **Alternatives considered**: Sync runner (simpler now, requires rewrite later); `asyncio.gather` for parallel stages (breaks sequential dependency between stages).
+- **Rationale**: Phase 4 MCP daemon serves concurrent requests. With async, while pipeline A awaits an LLM call, the event loop can run pipeline B's CPU-bound stage. Retrofitting async later touches every call site. The async skeleton is free infrastructure investment.
+- **Constraint for future phases**: Phase 1 CLI wraps each Click command with `asyncio.run(_async_fn())` — no `click-anyio` dependency. Phase 4 must address concurrent-run contextvars bleed (OQ-P3 / Q-004).
+
+### [DECISION-011] `run_pipeline` catches `Exception`, not `BaseException`
+- **Source**: `docs/plans/pipeline.md` — OQ-P1 resolution (amended during code review 2026-05-14)
+- **Decision**: `except Exception as exc` — stage bugs are caught and returned as `Failure`; `SystemExit`, `KeyboardInterrupt`, `GeneratorExit` propagate normally.
+- **Alternatives considered**: `BaseException` (plan originally specified this; rejected — swallows signals); `PipelineError` only (too narrow — stages can throw any exception type).
+- **Rationale**: `run_pipeline` guarantees callers always receive a `Result`, never a raw exception. But process-level signals must escape — catching `BaseException` would make Ctrl-C unresponsive.
+- **Constraint for future phases**: Stages must return `Failure` for expected errors. The `except Exception` catch is a safety net for stage *bugs*, not a substitute for proper error handling.
+
+### [DECISION-013] `LLMProvider` ABC: single async `complete(system, user) -> Result[LLMResponse]` method
+- **Source**: `docs/plans/llm_layer.md` — Approach + Phase 3 steps
+- **Decision**: All providers implement one abstract async method. `LLMResponse` is a frozen dataclass (`content: str`, `model: str`, `usage: dict`). Factory is `get_provider(task, config) -> LLMProvider` in `llm/provider.py`.
+- **Alternatives considered**: `embed()` on the ABC (rejected — embeddings are `sentence-transformers` responsibility); sync interface (rejected — blocks event loop, violates DECISION-010); `json_mode` parameter (rejected — JSON formatting belongs in prompt YAML system field).
+- **Rationale**: One method, one contract. Pipelines are decoupled from provider internals. The frozen DTO guarantees `usage` is always a plain dict (JSON-serializable for audit log) — never a raw SDK object.
+- **Constraint for future phases**: Phase 1 pipelines must `await provider.complete(system, user)`. `usage` must be populated via `resp.usage.model_dump()` — never store SDK usage objects directly. Per-prompt `model` / `temperature` overrides are NOT supported by the current ABC signature; extend it when needed.
+
+### [DECISION-014] API keys resolved via `os.environ.get()` only; `cli/main.py` owns `load_dotenv`
+- **Source**: `docs/plans/llm_layer.md` — Phase 4 approach note + post-review fix (2026-05-14)
+- **Decision**: Providers call `os.environ.get(key_name)` and raise `ConfigError` if absent. `load_dotenv` is called once in `cli/main.py` before any imports. `tests/test_llm/conftest.py` loads `.env` once for the test session.
+- **Alternatives considered**: `load_dotenv` inside each provider `__init__` with a hardcoded `Path(__file__).parent.parent / ".env"` — rejected: breaks if provider code is installed as a wheel (path resolves to site-packages).
+- **Rationale**: Library code must not assume where `.env` lives. Application entrypoints (CLI, test session) own environment bootstrap. Providers are portable.
+- **Constraint for future phases**: Any new provider MUST NOT call `load_dotenv`. New CLI subcommands are added to `cli/main.py` which already calls `load_dotenv` at module level. Test files that need API keys must either use `monkeypatch.setenv` or rely on `tests/test_llm/conftest.py`.
+
+### [DECISION-015] All three providers carry `model`, `synthesis_model`, `embedding_model` fields; `SYNTHESIS_TASKS` is shared constant in `llm/provider.py`
+- **Source**: `docs/plans/llm_layer.md` — post-plan extension session (2026-05-14); review finding #5
+- **Decision**: `ClaudeConfig`, `OllamaConfig`, and `OpenAICompatConfig` all have three model fields. `get_provider(task, config)` passes `task` to all three providers. Each provider selects `synthesis_model` if `task in SYNTHESIS_TASKS`, else `model`. `SYNTHESIS_TASKS = frozenset({"synthesis", "documentation"})` lives in `llm/provider.py`.
+- **Alternatives considered**: Only Claude having per-task model selection (original plan); per-provider task routing config.
+- **Rationale**: Single-provider operation: if all tasks are routed to one provider (e.g. full-Ollama mode), the provider must still serve synthesis tasks with a smarter model. Config-only switch — no code change needed.
+- **Constraint for future phases**: New pipeline tasks added to the `Task` type alias must be evaluated for whether they belong in `SYNTHESIS_TASKS`. New providers must accept `task: Task` and apply the same selection logic. `_embedding_model` is stored but not yet routed — Phase 3 retrieval will wire it.
+
+### [DECISION-016] `PROMPTS` dict and Jinja2 `Environment` are module-level singletons; `StrictUndefined` always
+- **Source**: `docs/plans/llm_layer.md` — OQ-L3 resolution + Phase 2 steps; post-review fix #4 (2026-05-14)
+- **Decision**: `PROMPTS: dict[str, Prompt]` loaded eagerly at `llm/prompt_loader.py` import time. `_JINJA_ENV = Environment(undefined=StrictUndefined)` is a module-level singleton (not reconstructed per `render()` call). `Prompt` has no `model` or `temperature` fields — those are deferred until `LLMProvider.complete()` accepts them.
+- **Alternatives considered**: Lazy loading (rejected — OQ-L3 chose eager for fail-fast at startup); per-call `Environment()` construction (rejected — expensive on hot paths); `DebugUndefined` or default `Undefined` (rejected — silent rendering of missing vars sends garbled strings to the LLM).
+- **Rationale**: Fail at startup if a prompt file is missing or malformed, not mid-pipeline. `StrictUndefined` makes missing template variables loud. Singleton `Environment` avoids repeated object construction on hot pipeline paths.
+- **Constraint for future phases**: All AI prompts are YAML files in `prompts/` — never inline f-strings (hook enforced). Phase 1 pipelines call `PROMPTS["name"].render(**vars)` to get `(system_str, user_str)`, then pass those to `provider.complete()`. Per-prompt model/temperature override requires extending `LLMProvider.complete()` signature first.
+
+### [DECISION-012] `PipelineContext.config` uses `TYPE_CHECKING` guard; CONFIG loaded lazily inside `run_pipeline`
+- **Source**: `docs/plans/pipeline.md` — Phase 1 steps + OQ-P5 resolution
+- **Decision**: `from core.config import Config` is gated under `if TYPE_CHECKING`. `CONFIG` singleton is imported inside `run_pipeline` body only when `context=None`. Tests pass `config=MagicMock()` via explicit `PipelineContext`.
+- **Rationale**: `CONFIG` validates vault root at import time. Importing it at module scope in `core/pipeline.py` would make the pipeline unimportable on machines without the vault. Lazy import keeps the module importable in test environments.
+- **Constraint for future phases**: This pattern (lazy CONFIG import inside function body, not module scope) applies to any module that is imported by tests but doesn't require real vault config at import time.
+
 ---
 
 ## Technical Debt
 
 | ID | What | Why deferred | Owned by phase | Source |
 |---|---|---|---|---|
-| TD-001 | `core/pipeline.py` | Unrelated to storage layer; parallel Phase 0 deliverable | Phase 0 | Out of Scope, `plans/storage_level.md` |
-| TD-002 | `llm/prompt_loader.py` and `prompts/` (empty) | Outside storage scope; llm/ providers exist but no prompt loading | Phase 0 | Out of Scope, `plans/storage_level.md` |
+| TD-001 | `core/pipeline.py` | _(delivered 2026-05-14)_ | Phase 0 ✅ | Out of Scope, `plans/storage_level.md` |
+| TD-002 | `llm/prompt_loader.py` and `prompts/` (empty) | _(delivered 2026-05-14)_ | Phase 0 ✅ | Out of Scope, `plans/storage_level.md` |
 | TD-003 | `vault/` (paths, frontmatter, reader, writer) | Outside storage scope | Phase 0 | Out of Scope, `plans/storage_level.md` |
 | TD-004 | `embeddings` table + FTS5 virtual table | No consumer until retrieval layer exists | Phase 3 | Out of Scope, `plans/storage_level.md` |
 | TD-005 | `corrections` enrichment with classifier-specific fields | Placeholder table exists; fields added when self-learning is built | Phase 7 | Out of Scope, `plans/storage_level.md` |
@@ -100,6 +148,10 @@ _Last updated: 2026-05-10_
 | TD-007 | Daemon-mode WAL checkpoint (`wal_autocheckpoint`) | CLI exits cleanly; WAL truncates on close; irrelevant until MCP daemon | Phase 4 | Out of Scope + Open Question Q-003, `plans/storage_level.md` |
 | TD-008 | `documents` columns: `project`, `status`, `key_topics` | Add via migrations when pipelines demand them; not pre-emptively | Phase 2+ | Out of Scope, `plans/storage_level.md` |
 | TD-009 | `updated_by_human` sync between frontmatter and SQLite | SQLite mirror exists for cheap queries; sync logic is vault/writer.py concern | Phase 1 | research/storage_level.md edge cases |
+| TD-010 | Ollama `httpx` async rewrite | `asyncio.to_thread(requests.post)` is sufficient for Phase 0; only worth revisiting if Ollama becomes performance-critical | Phase 3+ | Out of Scope, `plans/llm_layer.md` |
+| TD-011 | Per-prompt `model` and `temperature` overrides | `Prompt` model has no `model`/`temperature` fields — removed as dead weight. Requires extending `LLMProvider.complete()` signature when needed | Phase 1+ | DECISION-016 + review finding #3 |
+| TD-012 | `cli/main.py` commands: capture, classify, search, briefing | Placeholder stubs raise `NotImplementedError`; wired to pipelines as each phase delivers | Phase 1+ | `cli/main.py` created as dotenv owner (DECISION-014) |
+| TD-013 | `_embedding_model` stored on all providers but not yet routed | Field exists for single-provider portability; Phase 3 retrieval wires it to `sentence-transformers` or provider embedding endpoint | Phase 3 | DECISION-015; Out of Scope, `plans/llm_layer.md` |
 
 ---
 
@@ -117,6 +169,10 @@ _Last updated: 2026-05-10_
 - **`CONFIG` validates vault root at import time.** Any code or test that imports `CONFIG` at module level fails if the vault path doesn't exist on disk. Tests must pass explicit paths (e.g. `db_path=tmp_path/...`) to bypass CONFIG, or lazy-import CONFIG inside functions. Do not import CONFIG at module scope in test files. _(Source: plans/storage_level.md Phase 6 Surprises S-001)_
 - **`PRAGMA foreign_keys=ON` on every new connection.** The pragma is connection-scoped; forgetting it silently disables FK enforcement including `ON DELETE CASCADE` on `corrections`.
 - **All schema changes via versioned `.sql` deltas.** No in-code `ALTER TABLE`. Migration runner applies in lexical order and records version in `schema_version`.
+- **CLI commands wrap async pipelines with `asyncio.run()`.** Pattern: `@click.command() def capture(file): asyncio.run(_async_capture(file))`. No `click-anyio` or other async Click adapter. _(Source: plans/pipeline.md OQ-P4)_
+- **`load_dotenv` is called exactly once, in `cli/main.py`, before any other imports.** Provider `__init__` methods call only `os.environ.get()`. Test files use `monkeypatch.setenv` for unit tests and `tests/test_llm/conftest.py` for integration tests. _(Source: DECISION-014)_
+- **All three providers (Claude, Ollama, OpenAI-compat) must support `model`, `synthesis_model`, and `embedding_model` config fields.** New providers follow this pattern. `get_provider(task, config)` passes `task` to all providers. _(Source: DECISION-015)_
+- **Pipelines never call provider `complete()` directly — always `get_provider(task, CONFIG.main).complete(system, user)`.** Factory in `llm/provider.py` is the single dispatch point. _(Source: DECISION-013)_
 
 ---
 
@@ -127,3 +183,4 @@ _Last updated: 2026-05-10_
 | Q-001 | Move/rename detection: integer PK + `content_hash` vs frontmatter `doc_id`. If a note is edited AND moved simultaneously, content_hash–based detection fails. Is this sufficient for Phase 1, or does Phase 1 need to write `doc_id` to frontmatter? | Phase 1 vault indexer | 🔴 Open |
 | Q-002 | Fine-grained AI vs human authorship per section. `updated_by_human` is whole-note only. If MCP tool needs to show "AI wrote this summary, you wrote this conclusion," a separate design (HTML comments or `edits` table) is required. | Phase 7+ | 🔴 Open |
 | Q-003 | `wal_autocheckpoint` tuning. Reference sets to 100 pages; SQLite default is 1000. Worth adding to `_connect()` before Phase 4 MCP (long-running daemon), or accept default for CLI? | Phase 4 | 🔴 Open |
+| Q-004 | Concurrent `run_pipeline` calls in Phase 4 MCP daemon — `clear_contextvars()` in `new_correlation_id()` will bleed across concurrent runs. Needs scoped contextvars or per-run copies. | Phase 4 | 🔴 Open |
