@@ -1,5 +1,5 @@
 # Plan: vault_layer
-_Last updated: 2026-05-14_
+_Last updated: 2026-05-15_
 _Status: [ ] pending_
 
 ## Architecture
@@ -51,7 +51,6 @@ _Status: [ ] pending_
                               ┌─────────────────────────────────┐
                               │ storage/documents.py (NEW)      │
                               │ upsert(WriteOutcome) → Result   │
-                              │ sync_path(vault_path)           │
                               │ get_by_path(vault_path)         │
                               │ all_paths() → [(path, hash)]    │
                               │ delete_by_path(vault_path)      │
@@ -208,6 +207,17 @@ review if needed.
 **Goal**: A typed wrapper around `python-frontmatter` that other modules use instead of
 the library directly.
 
+# RESOLVED: What are source, status, extra, model_config and do all fields get written back?
+# source: a string recording where the note came from — e.g. "email", "web", "pdf", "youtube".
+#   Not the same as WriteSource (the actor making a write). This is a note property, like a URL or origin label.
+# status: lifecycle state string — e.g. "active", "archived", "review". AI or user sets it; pipelines filter on it.
+# extra: catch-all dict for any frontmatter key not explicitly on NoteMetadata. Preserves round-trip fidelity:
+#   if a user wrote `custom_field: 5` in their note, `extra` holds it so dumps() writes it back unchanged.
+# model_config = {"extra": "ignore"}: Pydantic instruction to silently ignore unknown keys at model
+#   construction time. We pre-extract unknowns into extra ourselves in parse(), so Pydantic never sees them.
+# Do all fields get written back? Yes. dumps() serializes all non-None known fields plus everything in extra
+#   back into the YAML frontmatter block. extra keys are merged directly (no nesting).
+
 **Steps**:
 1. Create `vault/frontmatter.py`.
 2. Define `NoteMetadata` (Pydantic `BaseModel`):
@@ -220,9 +230,9 @@ the library directly.
    - `confidence: float | None = Field(default=None, ge=0.0, le=1.0)`
    - `updated_by_human: bool = False`
    - `summary: str | None = None`
-   - `source: str | None = None`
-   - `status: str | None = None`
-   - `extra: dict[str, Any] = Field(default_factory=dict)`
+   - `source: str | None = None`   ← origin of the note (email, web, pdf, youtube, etc.)
+   - `status: str | None = None`   ← lifecycle state (active, archived, review, etc.)
+   - `extra: dict[str, Any] = Field(default_factory=dict)`   ← unknown keys preserved here
    - `model_config = {"extra": "ignore"}` — unknown keys are pre-extracted into `extra` by
      `parse`, never passed to the model.
 3. Add a `field_validator(mode="before")` on every `str | None` field (`type`, `project`,
@@ -275,6 +285,15 @@ the library directly.
 ### Phase 3 — reader.py
 **Goal**: One function that loads a note from disk and returns a hashed, typed `Note`.
 
+# RESOLVED: What is the hash and its purpose?
+# content_hash = SHA-256 hex digest of the note body (body only — not the frontmatter).
+# Purpose: change detection fingerprint. When indexer.detect_changes() runs, it compares each
+#   note's current hash against the stored hash in `documents`. If they differ → the body was
+#   modified → classify it as `modified`. If they match but the path changed → it was moved.
+#   Hashing body-only (not frontmatter) means a pure AI metadata update (e.g. bumping `confidence`)
+#   does not retrigger re-embedding identical content in Phase 3. The hash is the indexer's
+#   source of truth; it is also stored in WriteOutcome so upsert() can persist it to SQLite.
+
 **Steps**:
 1. Create `vault/reader.py`.
 2. Define `Note` as `@dataclass(frozen=True)` with: `path: Path`, `metadata: NoteMetadata`,
@@ -311,13 +330,137 @@ the library directly.
 ### Phase 4 — writer.py (load-bearing)
 **Goal**: Atomic, idempotent vault writes with the `updated_by_human` safety gate.
 
+# RESOLVED: Please draw a diagram of this Phase 4 to help me understand the logic and how things interact
+# Diagrams below show write_note decision flow and move_note flow.
+
+**write_note decision flow**
+
+```
+write_note(path, content, metadata, source)
+         │
+         ▼
+    body = content.rstrip("\n")   ← normalize trailing newline
+         │
+    path.exists()?
+         │
+    ┌────┴────────────────────────────────────────────────────────────┐
+    │ YES                                                             │ NO
+    │                                                                 │
+    │  reader.read_note(path) ──▶ existing Note                       │  seed:
+    │  ◀── Failure? propagate unchanged                               │  created = metadata.created
+    │                                                                 │            or date.today()
+    │  existing.metadata.updated_by_human == True                     │
+    │  AND source == "ai"?                                            │
+    │  ┌── YES ──────┐     ┌── NO ─────────────────────────────────┐  │
+    │  │             │     │                                       │  │
+    │  │  return     │     │  preserve: created ← existing.created │  │
+    │  │  Failure    │     │  set:      updated ← datetime.now()   │  │
+    │  │  rec=False  │     │            updated_by_human           │  │
+    │  │  "note      │     │              ← (source == "human")    │  │
+    │  │   locked"   │     │  keep: extra ← existing.extra         │  │
+    │  └─────────────┘     │            if caller didn't supply    │  │
+    │                      └───────────────────────────────────────┘  │
+    └─────────────────────────────────────────────────────────────────┘
+         │
+         ▼  (merge complete)
+    frontmatter.dumps(merged_metadata, body) → rendered string
+         │
+         ▼
+    tmp = path.parent / f".tmp_{uuid4().hex}.md"   ← dot-prefix → indexer skips
+    write rendered to tmp
+    flush + fsync
+    os.replace(tmp, path)  ← atomic on POSIX/Windows same-fs
+         │
+    Exception? ──▶ tmp.unlink(missing_ok=True) ──▶ return Failure
+         │
+         ▼
+    content_hash = sha256(body.encode()).hexdigest()
+         │
+         ▼
+    return Success(WriteOutcome(vault_path, absolute_path, content_hash, metadata))
+```
+
+**move_note decision flow**
+# QUESTION: What is Errno 18 in the diagram? Also, explain for me the part from `same filesystem` - my understanding is that `same filesystem` here check if the file is in the same place as before? if yes, then it change the location as intended? If no then it create tmp file... err for what? I am still confused
+# COMMENT: Check if the current design has accounted for this scenario: Human could create new note right in the vault, sometimes the new note will be in the inbox folder, sometimes, they will be directly in the correct folder. In the case of inbox folder, AI decision for categorization, and moving files SHOULD still be allowed to go through. In both cases, the new note created will lack of frontmatter or not have any frontmatter at all, then the edits of frontmatter should also be allowed. This scenario show that there are cases that even after human edit, AI can still make limited adjustment to the note, as long as the main content is not touched (collaborative edits of main content between human and AI is out of scope for now)
+```
+move_note(src, dst, source)
+         │
+         ▼
+    reader.read_note(src) ──▶ current Note
+    ◀── Failure? propagate
+         │
+    current.metadata.updated_by_human AND source == "ai"?
+    ┌── YES ──┐       ┌── NO ────────────────────────────────────────────────┐
+    │ Failure │       │                                                      │
+    │ rec=F   │       │  dst.parent.mkdir(parents=True, exist_ok=True)       │
+    └─────────┘       │  bump updated; set updated_by_human ← (source==     │
+                      │  "human"); keep existing body unchanged              │
+                      │                                                      │
+                      │  same filesystem?                                    │
+                      │  ┌── YES ─────────────────────┐  ┌── NO (Errno 18)─┐│
+                      │  │ os.replace(src, dst)        │  │ copy to .tmp_*  ││
+                      │  │ (atomic location change)    │  │ next to dst     ││
+                      │  │ then re-write dst with      │  │ fsync           ││
+                      │  │ merged meta via atomic-     │  │ os.replace(tmp, ││
+                      │  │ write recipe                │  │   dst)          ││
+                      │  └─────────────┬───────────────┘  │ src.unlink()   ││
+                      │                │                   └───────┬────────┘│
+                      │                └──────────────────────────┘         │
+                      │                                                      │
+                      │  return Success(WriteOutcome with dst vault_path)    │
+                      └──────────────────────────────────────────────────────┘
+```
+# QUESTION: Does the user-triggered CLI command means that the human, after editting a file, has to run the CLI command manually or it is autotriggered?
+# RESOLVED: What does WriteSource do, and what does 'ai' or 'human' mean?
+# WriteSource = Literal["ai", "human"] is a type that signals WHO is making THIS EDIT — not who
+#   created the note originally. The caller passes it explicitly on every write_note() or move_note() call.
+#   "ai":    a pipeline is making this change (classifier filed the note, AI summarized it, etc.)
+#   "human": a user-triggered CLI command is making this change (e.g. `kms move`, `kms correct`)
+# It controls two things:
+#   1. Whether to respect the updated_by_human lock: AI writes check the lock and abort if set.
+#      Human writes bypass the lock and always succeed.
+#   2. What value to stamp on updated_by_human in the written frontmatter:
+#      source="ai"    → updated_by_human = False (note stays AI-owned)
+#      source="human" → updated_by_human = True  (note becomes human-owned, future AI writes blocked)
+
+# RESOLVED: What does "if existing.metadata.updated_by_human and source == 'ai'" mean?
+# This is the safety gate — the core trust mechanism of the whole vault layer.
+# updated_by_human=True means: "a human has edited this note and marked it as theirs."
+# source="ai" means: "a pipeline is trying to overwrite it."
+# When both are true: the AI is trying to overwrite human work. Block it. Return Failure(recoverable=False).
+# recoverable=False because no retry will fix this — only a human decision (writing source="human"
+#   or clearing the flag) unlocks the note. The AI must surface a conflict, not silently succeed.
+
+# RESOLVED: What is the purpose of move_note? Why no routing or confidence?
+# move_note() is a low-level atomic filesystem operation: move a .md file from src to dst, atomically,
+#   with the updated_by_human safety check applied. It does NOT decide where to move the note.
+# The routing decision lives in pipelines/classify.py (Phase 2):
+#   1. LLM classifies the note → label + confidence score
+#   2. Pipeline reads thresholds from config → decides target folder (Projects/X, Domain/Y, etc.)
+#   3. Pipeline calls vault.writer.move_note(src=inbox/foo.md, dst=projects/X/foo.md, source="ai")
+# The vault layer is pure mechanics: it does not know what the classification was or why.
+# vault/ = HOW to move safely. pipelines/ = WHERE and WHEN to move.
+
+# COMMENT: I forget to mention, the people using this system are Vietnamese, so they might give Vietnamese file names. Check if the NFC solution is enough to adapt to that, and if other mechanism in the existing codebase need to change to adapt to it.
+# RESOLVED: What does NFC mean?
+# NFC = Unicode Normalization Form C (Canonical Decomposition, followed by Canonical Composition).
+# On macOS (HFS+/APFS), the filesystem sometimes stores filenames with characters in NFD form
+#   (Decomposed) — e.g. the letter "é" stored as two codepoints: "e" + combining accent ́.
+#   When Python reads the path, it may return NFC ("é" as one codepoint: U+00E9).
+# This inconsistency means the same filename can produce two different Python strings depending
+#   on how it was read, making vault_path strings not match between SQLite and a fresh scan →
+#   indexer reports a spurious "deleted + added" for the same note.
+# Fix: always call unicodedata.normalize("NFC", str(path)) before storing or comparing vault_path.
+#   Cheap insurance for macOS vaults with accented filenames.
+
 **Steps**:
 1. Create `vault/writer.py`.
 2. Define `WriteOutcome` as `@dataclass(frozen=True)` with: `vault_path: str` (POSIX,
    relative to vault root), `absolute_path: Path`, `content_hash: str`,
    `metadata: NoteMetadata`. This is what callers feed to
    `storage.documents.upsert` in Phase 5.
-3. Define `WriteSource = Literal["ai", "human"]`.
+3. Define `WriteSource = Literal["ai", "human"]`. See RESOLVED annotation above for full semantics.
 4. `def write_note(path: Path, content: str, metadata: NoteMetadata, source: WriteSource)
    -> Result[WriteOutcome]`:
    - `body = content.rstrip("\n")` (one canonical newline policy — matches reader).
@@ -337,6 +480,7 @@ the library directly.
      - Preserve `extra` from existing if caller didn't provide one
    - Render with `vault.frontmatter.dumps(merged_metadata, body)`.
    - Atomic write:
+   # QUESTION: Where is `rendered` in `f.write(rendered)` comes from?
      ```python
      tmp = path.parent / f".tmp_{uuid4().hex}.md"   # dot-prefix → indexer skips
      with tmp.open("w", encoding="utf-8") as f:
@@ -354,6 +498,7 @@ the library directly.
    - If `current.metadata.updated_by_human` and `source == "ai"`: same `Failure` as write.
    - `dst.parent.mkdir(parents=True, exist_ok=True)`.
    - Bump `updated`, set `updated_by_human ← (source == "human")`.
+   # QUESTION: os.replace can move file on disk by just replacing their path?
    - **Same-filesystem fast path**: `os.replace(src, dst)` atomically, then re-write `dst`
      with merged metadata via the atomic-write recipe above. The two-step is needed because
      `os.replace` cannot update content; only the location.
@@ -361,8 +506,9 @@ the library directly.
      `.tmp_*` next to `dst`, fsync, `os.replace(tmp, dst)`, then `src.unlink()`.
    - Return `Success(WriteOutcome(...))` with `vault_path` reflecting the destination.
 6. Private helper `_to_vault_path(absolute: Path) -> str` — computes
-   `absolute.relative_to(CONFIG.main.vault.root).as_posix()` (NFC normalize via
-   `unicodedata.normalize("NFC", ...)` — OQ-V6 default ON; cheap insurance for macOS).
+   `absolute.relative_to(CONFIG.main.vault.root).as_posix()` then applies
+   `unicodedata.normalize("NFC", ...)` (OQ-V6 default ON; prevents ghost-duplicate rows
+   for macOS-authored accented filenames — see RESOLVED NFC annotation above).
 7. **Do not** call any `storage/` function. Writer is FS-only.
 8. **Do not** fsync the parent directory (OQ-V7 default OFF — developer-grade durability).
 
@@ -406,6 +552,84 @@ the library directly.
 ### Phase 5 — storage/documents.py (SQLite mirror)
 **Goal**: A small storage module that pipelines call after every `write_note` to keep the
 `documents` table in sync with the FS.
+
+# RESOLVED: We already have storage/schema.sql that creates a documents table. Why is this file needed?
+# schema.sql is DDL (Data Definition Language): it defines the TABLE STRUCTURE — columns, types,
+#   constraints, triggers. It is a blueprint. Running schema.sql creates an empty table.
+# storage/documents.py is the DAL (Data Access Layer): it contains the PYTHON CODE that reads
+#   and writes rows in that table — upsert(), get_by_path(), all_paths(), etc.
+# They serve different purposes and are always separate: one is the SQL schema, the other is the
+#   Python interface to it. storage/audit_log.py is the same pattern for the audit_log table.
+# Without documents.py, there is no Python code to call — raw sqlite3 SQL would be scattered
+#   across pipelines and the indexer, violating the storage-layer abstraction.
+
+# RESOLVED: Please draw a diagram of this Phase 5 to help me understand the logic and how things interact
+
+**storage/documents.py — structure and data flow**
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  storage/documents.py   (data access layer for `documents` table)       │
+│  No business logic — pure SQL + type conversion only.                   │
+│                                                                         │
+│  Inputs from vault layer:                                               │
+│  WriteOutcome(vault_path, absolute_path, content_hash, metadata)        │
+│       │                                                                 │
+│       ▼ upsert(outcome, db_path) → Result[int]                          │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │ INSERT OR REPLACE INTO documents                                │    │
+│  │   (vault_path, title, content_hash, updated_by_human,          │    │
+│  │    created_at, updated_at, note_type, confidence, summary)      │    │
+│  │ title: outcome.metadata.extra.get("title") or stem(vault_path) │    │
+│  │ Returns rowid                                                   │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                                                                         │
+│  get_by_path(vault_path, db_path) → Result[DocumentRow | None]          │
+│  ┌─────────────────────────────────┐                                    │
+│  │ SELECT * FROM documents         │──▶ DocumentRow (frozen dataclass)  │
+│  │ WHERE vault_path = ?            │    or None if not found            │
+│  └─────────────────────────────────┘                                    │
+│                                                                         │
+│  all_paths(db_path) → Result[list[tuple[str, str]]]                     │
+│  ┌─────────────────────────────────────────────┐                        │
+│  │ SELECT vault_path, content_hash             │──▶ list[(path, hash)] │
+│  │ FROM documents                              │    used by indexer     │
+│  └─────────────────────────────────────────────┘    for diffing        │
+│                                                                         │
+│  delete_by_path(vault_path, db_path) → Result[int]                      │
+│  ┌─────────────────────────────────────────────┐                        │
+│  │ DELETE FROM documents WHERE vault_path = ?  │                        │
+│  └─────────────────────────────────────────────┘                        │
+│                                                                         │
+│  rename(old, new, db_path) → Result[int]                                │
+│  ┌─────────────────────────────────────────────┐                        │
+│  │ UPDATE documents SET vault_path = ?         │──▶ preserves .id      │
+│  │ WHERE vault_path = ?                        │    (DECISION-001)     │
+│  └─────────────────────────────────────────────┘                        │
+│                                                                         │
+│  All functions wrap sqlite3.Error → Failure(recoverable=False,          │
+│    context={"vault_path": ..., "op": "upsert"|"get"|...})               │
+└───────────────────────────────────┬─────────────────────────────────────┘
+                                    │ uses get_connection()
+                                    ▼
+                        ┌──────────────────────────┐
+                        │ storage/db.py (exists)   │
+                        │ get_connection()         │
+                        │ documents table          │
+                        │ (schema via schema.sql)  │
+                        └──────────────────────────┘
+
+  Who calls what:
+  ┌──────────────────────────────────────────────────────────┐
+  │ pipelines/capture.py (Phase 1) calls:                    │
+  │   writer.write_note(...) → WriteOutcome                  │
+  │   documents.upsert(outcome)        ← one extra line      │
+  │                                                          │
+  │ indexer.detect_changes() calls:                          │
+  │   documents.all_paths()            ← for diffing         │
+  │   (then caller applies: upsert / delete_by_path / rename)│
+  └──────────────────────────────────────────────────────────┘
+```
 
 **Steps**:
 1. Create `storage/documents.py`. This is a **storage-layer** file (sibling of
@@ -457,8 +681,120 @@ the library directly.
 ---
 
 ### Phase 6 — indexer.py
+# QUESTION: Does indexer only cover for .md note?
 **Goal**: Filesystem scan + diff against the SQLite mirror, emitting a four-set
 `ChangeSummary`.
+
+# RESOLVED: Please draw a diagram of this Phase 6 to help me understand the logic and how things interact
+
+**scan_vault flow**
+
+```
+scan_vault(root=None)
+         │
+         │ if root is None: lazy-import CONFIG, use CONFIG.main.vault.root
+         ▼
+    Walk root recursively (os.walk or Path.iterdir)
+         │
+    For each directory encountered:
+    ┌────┴──────────────────────────────────────────────────────┐
+    │ skip if dir name in IGNORE_DIRS                           │
+    │   {".git", ".obsidian", ".trash", ".stversions",          │
+    │    "node_modules", "_assets", "_system"}                  │
+    │ skip if dir name starts with "."  (catches .tmp_* dirs)   │
+    │ skip if dir is a symlink (loop protection)                 │
+    └────┬──────────────────────────────────────────────────────┘
+         │
+    For each file in allowed directories:
+    ┌────┴──────────────────────────────────────────────────────┐
+    │ skip if name in IGNORE_FILES {".DS_Store", "Thumbs.db"}   │
+    │ skip if name contains ".sync-conflict-"                   │
+    │ skip if extension is not ".md" (case-insensitive)         │
+    │ skip if file is a symlink                                  │
+    └────┬──────────────────────────────────────────────────────┘
+         │
+    reader.read_note(path)
+         │
+    ┌────┴────────────────────────────────────────┐
+    │ Success → build VaultEntry:                 │
+    │   path        = absolute Path              │
+    │   vault_path  = NFC(path.relative_to(root))│
+    │   content_hash = from Note                 │
+    │   metadata     = from Note                 │
+    │                                             │
+    │ Failure → append to errors[], skip file,   │
+    │   continue scan (don't abort full scan)    │
+    └────┬────────────────────────────────────────┘
+         │ (after all files processed)
+    ┌────┴────────────────────────────────────────┐
+    │ if errors non-empty:                        │
+    │   log WARNING: "N files skipped: [paths]"  │
+    └────┬────────────────────────────────────────┘
+         │
+    return Success([VaultEntry, ...])   ← partial results are useful
+```
+
+**detect_changes flow**
+
+```
+detect_changes(current: list[VaultEntry], db_path=None)
+         │
+         ▼
+    storage.documents.all_paths(db_path)
+    → Result[list[(vault_path, content_hash)]]
+    ◀── Failure? propagate
+         │
+         ▼
+    Build lookup maps:
+      current_by_path: dict[vault_path → VaultEntry]
+      db_by_path:      dict[vault_path → content_hash]
+         │
+         ▼  First pass — three sets
+    ┌──────────────────────────────────────────────────────┐
+    │  added_raw  = {e for e in current                    │
+    │                if e.vault_path not in db_by_path}    │
+    │                                                      │
+    │  deleted_raw = {p for p in db_by_path                │
+    │                 if p not in current_by_path}         │
+    │                                                      │
+    │  modified   = {e for e in current                    │
+    │                if e.vault_path in db_by_path         │
+    │                and e.content_hash !=                 │
+    │                    db_by_path[e.vault_path]}         │
+    └────────────────────────┬─────────────────────────────┘
+                             │
+                             ▼  Move detection (DECISION-001)
+    ┌──────────────────────────────────────────────────────────┐
+    │ For each entry in added_raw:                             │
+    │   candidates = [p for p in deleted_raw                  │
+    │                 if db_by_path[p] == entry.content_hash] │
+    │                                                          │
+    │   exactly 1 candidate?                                   │
+    │   ┌── YES ────────────────────┐  ┌── NO (0 or 2+) ─────┐│
+    │   │ moved.append(            │  │ entry stays in       ││
+    │   │   (candidate, entry))    │  │ added_raw            ││
+    │   │ added_raw.remove(entry)  │  └──────────────────────┘│
+    │   │ deleted_raw.remove(cand) │                          │
+    │   └───────────────────────────┘                          │
+    └──────────────────────────────────────────────────────────┘
+                             │
+                             ▼
+    log INFO: "Scan complete: X added, Y modified, Z deleted, W moved (total N)"
+                             │
+                             ▼
+    return Success(ChangeSummary(
+      added    = list(added_raw),
+      modified = list(modified),
+      deleted  = list(deleted_raw),
+      moved    = list(moved)      ← list[tuple[str, VaultEntry]]
+    ))
+
+    NOTE: indexer does NOT write to SQLite.
+    The caller (a Phase 1+ pipeline) decides what to apply:
+      upsert(outcome) for added/modified
+      delete_by_path(path) for deleted
+      rename(old, new) for moved
+```
 
 **Steps**:
 1. Create `vault/indexer.py`.
@@ -476,13 +812,7 @@ the library directly.
      `(old_vault_path, new_entry)`.
 4. `def scan_vault(root: Path | None = None) -> Result[list[VaultEntry]]`:
    - Lazy-import `CONFIG` when `root is None`.
-   - Walk `root` recursively. Skip:
-     - Any directory in `IGNORE_DIRS`.
-     - Any directory whose name starts with `.` (catches `.tmp_*` writer artifacts).
-     - Any file in `IGNORE_FILES`.
-     - Any file containing `.sync-conflict-` in its name.
-     - Any non-`.md` file (case-insensitive).
-     - Any symlink (check `entry.is_symlink()` before recursing).
+   - Walk `root` recursively. Skip per the diagram above.
    - For each remaining `.md`, call `vault.reader.read_note(path)`. On `Failure`, append
      the error to a per-call `errors` list, skip the file, continue scanning (do not abort
      a full scan because one note has malformed YAML).
@@ -491,23 +821,13 @@ the library directly.
      `Success` — the scan is informational and partial results are useful.
 5. `def detect_changes(current: list[VaultEntry], db_path: Path | None = None) ->
    Result[ChangeSummary]`:
-   - `storage.documents.all_paths(db_path)` → `Result[list[(vault_path, content_hash)]]`.
-     Propagate `Failure`.
-   - Build sets: `current_by_path`, `db_by_path` (dict of `vault_path → content_hash`).
-   - First pass:
-     - `added_raw`  = entries in current not in db.
-     - `deleted_raw` = paths in db not in current.
-     - `modified`   = entries in both where hashes differ.
-   - Move detection (DECISION-001):
-     - For each `entry` in `added_raw`, look for a path in `deleted_raw` whose
-       hash equals `entry.content_hash`. If exactly one match:
-       move it to `moved` as `(deleted_path, entry)`, remove from both `added_raw` and
-       `deleted_raw`. If zero or multiple matches: leave in `added_raw`.
-   - Final lists: `added = added_raw`, `deleted = deleted_raw`, plus `modified` and
-     `moved`.
-   - Log: `"Scan complete: X added, Y modified, Z deleted, W moved (total N)"` at INFO.
+   - `storage.documents.all_paths(db_path)` → propagate `Failure`.
+   - First pass: compute `added_raw`, `deleted_raw`, `modified` per diagram.
+   - Move detection (DECISION-001): per diagram — only collapse to `moved` when exactly
+     one hash match exists to avoid ambiguous multi-copy scenarios.
+   - Log INFO summary. Return `Success(ChangeSummary(...))`.
 6. The indexer **does not write** to `documents`. It returns a `ChangeSummary`; the caller
-   (a Phase 1+ pipeline) decides what to apply (`upsert`/`delete_by_path`/`rename`).
+   decides what to apply.
 
 **Files to modify**:
 - `vault/indexer.py` — new.
