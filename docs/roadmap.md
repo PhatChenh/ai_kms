@@ -45,15 +45,29 @@ Build everything downstream depends on. Never skip. Every later phase imports fr
 
 Drop file into `inbox/` → AI writes summary + metadata back into frontmatter. No classification yet.
 
+**Accepted drop types:** `.md` files, PDF, DOCX. **No video files.** YouTube/website content
+enters the vault as a `.md` note containing the link — not as a media file. Summarizing the
+linked YT/web content is a later enhancement, not a Phase 1 video handler.
+
+**Two input shapes, two flows:**
+- **`.md` drop** → AI writes summary + metadata into the note's own frontmatter, in place.
+- **non-md drop (PDF, DOCX)** → AI creates a sibling `.md` summary note (body carries an
+  Obsidian `[[wikilink]]` to the source + a `source_file` frontmatter field), then the source
+  binary is moved to the `attachment/` folder via `vault.writer.move_attachment`. The `.md`
+  sibling is what gets classified and searched; the binary is reference-only.
+
 - `handlers/base.py` + `registry.py` (self-registering ABC)
-- **Two handlers only to start:** `markdown_handler.py`, `pdf_handler.py`
-- `pipelines/capture.py` — extract → summarize → metadata → store (four pure stages, no bundling)
+- **Handlers, in build order:** `markdown_handler.py`, `pdf_handler.py`, `docx_handler.py`
+- `pipelines/capture.py` — extract → summarize → metadata → store (four pure stages, no
+  bundling). The non-md branch adds: create sibling `.md` + `move_attachment` source → `attachment/`.
 - `prompts/summarize.yaml`, `prompts/extract_metadata.yaml`
 - CLI: `kms capture <file>`
 - Every capture writes to `audit_log`
-- Add YouTube, web, email, docx, chat handlers **only after** the pipeline proves itself with two.
+- `attachment/` is the single home for all non-md source files.
+- Add web/YT-link summarization, email, chat handlers **only after** the pipeline proves
+  itself with markdown + pdf + docx.
 
-> **Rule:** One handler working end-to-end before adding the second. Markdown first, PDF second.
+> **Rule:** One handler working end-to-end before adding the next. Markdown → PDF → DOCX.
 
 ---
 

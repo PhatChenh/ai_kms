@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Skill(research)",
-      "Skill(research:*)"
+      "Skill(research:*)",
+      "Skill(superpowers:brainstorming)",
+      "Skill(superpowers:brainstorming:*)"
     ]
   }
 }
