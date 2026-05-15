@@ -1,4 +1,4 @@
----
+# Discussions: vault_layer
 
 ## Phase 0 — Planning
 _Completed: 2026-05-14_
