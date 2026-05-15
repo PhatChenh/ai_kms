@@ -78,6 +78,7 @@ class VaultConfig(BaseModel):
     synthesis_dir:     str = "Synthesis"
     briefings_dir:     str = "Briefings"
     archive_dir:       str = "Archive"
+    attachment_dir:    str = "attachment"
 
     # ── derived path helpers ──────────────────────────────────────────────
     # Always use these; never build paths by string concatenation elsewhere.
@@ -95,6 +96,8 @@ class VaultConfig(BaseModel):
     def briefings_path(self)     -> Path: return self.root / self.briefings_dir
     @property
     def archive_path(self)       -> Path: return self.root / self.archive_dir
+    @property
+    def attachment_path(self)    -> Path: return self.root / self.attachment_dir
 
 
 class DatabaseConfig(BaseModel):

@@ -152,6 +152,7 @@ _Last updated: 2026-05-14 (llm_layer session)_
 | TD-011 | Per-prompt `model` and `temperature` overrides | `Prompt` model has no `model`/`temperature` fields — removed as dead weight. Requires extending `LLMProvider.complete()` signature when needed | Phase 1+ | DECISION-016 + review finding #3 |
 | TD-012 | `cli/main.py` commands: capture, classify, search, briefing | Placeholder stubs raise `NotImplementedError`; wired to pipelines as each phase delivers | Phase 1+ | `cli/main.py` created as dotenv owner (DECISION-014) |
 | TD-013 | `_embedding_model` stored on all providers but not yet routed | Field exists for single-provider portability; Phase 3 retrieval wires it to `sentence-transformers` or provider embedding endpoint | Phase 3 | DECISION-015; Out of Scope, `plans/llm_layer.md` |
+| TD-014 | `write_note` cannot explicitly clear a known field (e.g. `tags=[]`) | Option B merge: empty/None caller value → keep existing. A pipeline that wants to clear a field has no clean path. Fix: replace `NoteMetadata` parameter with a `NoteMetadataUpdate` dataclass where every field has a third `UNSET` sentinel state; `write_note` only writes fields that are not `UNSET`. Deferred: Phase 1 pipelines only add data, never clear fields. **⚠️ USER FLAG: current solution is not satisfying. When any Phase 1+ pipeline touches `write_note` signature or field-clearing, STOP and surface this to the user BEFORE implementing. Do not silently extend Option B — demand a proper design discussion first.** | Phase 1+ | `plans/vault_layer.md` Phase 4 Option B note |
 
 ---
 

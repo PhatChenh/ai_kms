@@ -350,6 +350,10 @@ class TestVaultConfig:
     def test_archive_path_is_root_plus_archive_dir(self, vault, tmp_path):
         assert vault.archive_path == tmp_path / "Archive"
 
+    def test_attachment_path_derives_from_root(self, vault, tmp_path):
+        """attachment_path = root / attachment_dir (default 'attachment')."""
+        assert vault.attachment_path == tmp_path / "attachment"
+
     # ── custom dir names are honoured ─────────────────────────────────────────
 
     def test_custom_inbox_dir_reflected_in_property(self, tmp_path):
