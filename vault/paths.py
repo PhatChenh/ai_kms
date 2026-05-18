@@ -34,6 +34,11 @@ def project_materials(name: str) -> Path:
     return d
 
 
+def project_index(name: str) -> Path:
+    """Return Projects/<name>/CLAUDE.md path; ensure parent dir exists. Does not create the file."""
+    return project_dir(name) / "CLAUDE.md"
+
+
 def domain_dir(name: str) -> Path:
     """Return Domain/<name>/ and ensure it exists."""
     from core.config import CONFIG
@@ -48,6 +53,11 @@ def domain_notes(name: str) -> Path:
     d = CONFIG.main.vault.domain_path / name / "notes"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def domain_index(name: str) -> Path:
+    """Return Domain/<name>/CLAUDE.md path; ensure parent dir exists. Does not create the file."""
+    return domain_dir(name) / "CLAUDE.md"
 
 
 def documentation(project: str) -> Path:

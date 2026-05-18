@@ -56,6 +56,14 @@ linked YT/web content is a later enhancement, not a Phase 1 video handler.
   binary is moved to the `attachment/` folder via `vault.writer.move_attachment`. The `.md`
   sibling is what gets classified and searched; the binary is reference-only.
 
+> **Body-preservation discipline (capture pipeline):** `vault/writer.py:write_note`
+> replaces the *entire* note body — it does not merge or append. Only frontmatter is
+> merged. The `.md`-drop flow MUST pass the original note body unchanged as `content`;
+> the AI summary goes into the `summary` frontmatter field, never the body. A pipeline
+> that passes the summary as `content` silently wipes the user's note.
+> **Acceptance test:** drop a `.md` with a known body → run capture → assert the body is
+> byte-identical and the `summary` frontmatter field is populated.
+
 - `handlers/base.py` + `registry.py` (self-registering ABC)
 - **Handlers, in build order:** `markdown_handler.py`, `pdf_handler.py`, `docx_handler.py`
 - `pipelines/capture.py` — extract → summarize → metadata → store (four pure stages, no

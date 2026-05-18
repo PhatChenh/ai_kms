@@ -1,6 +1,6 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-05-14 (llm_layer session)_
+_Last updated: 2026-05-18 (vault_layer review session)_
 
 ## Current Position
 **Phase**: Phase 0 — Foundations
@@ -153,6 +153,7 @@ _Last updated: 2026-05-14 (llm_layer session)_
 | TD-012 | `cli/main.py` commands: capture, classify, search, briefing | Placeholder stubs raise `NotImplementedError`; wired to pipelines as each phase delivers | Phase 1+ | `cli/main.py` created as dotenv owner (DECISION-014) |
 | TD-013 | `_embedding_model` stored on all providers but not yet routed | Field exists for single-provider portability; Phase 3 retrieval wires it to `sentence-transformers` or provider embedding endpoint | Phase 3 | DECISION-015; Out of Scope, `plans/llm_layer.md` |
 | TD-014 | `write_note` cannot explicitly clear a known field (e.g. `tags=[]`) | Option B merge: empty/None caller value → keep existing. A pipeline that wants to clear a field has no clean path. Fix: replace `NoteMetadata` parameter with a `NoteMetadataUpdate` dataclass where every field has a third `UNSET` sentinel state; `write_note` only writes fields that are not `UNSET`. Deferred: Phase 1 pipelines only add data, never clear fields. **⚠️ USER FLAG: current solution is not satisfying. When any Phase 1+ pipeline touches `write_note` signature or field-clearing, STOP and surface this to the user BEFORE implementing. Do not silently extend Option B — demand a proper design discussion first.** | Phase 1+ | `plans/vault_layer.md` Phase 4 Option B note |
+| TD-015 | `CLAUDE.md` co-authoring needs body section-merge, not just a watcher | `CLAUDE.md` (project/domain index, formerly `project_index.md` / `domain_index.md`) holds an AI-maintained index section AND a human-authored context section in one body. `write_note` replaces the *whole* body — no section merge — and `updated_by_human` is a whole-note gate (DECISION-002). So the Phase 9 watcher cannot just flip `updated_by_human`; it needs a section-aware body merge (e.g. `<!-- AI-INDEX -->...<!-- /AI-INDEX -->` delimiters) so AI index updates do not clobber human context edits. **Interim rule (Option A, decided 2026-05-18):** AI always writes `CLAUDE.md` with `actor="ai"`; `updated_by_human` stays `False` (do NOT set it `True` — that hard-blocks all AI writes); accept that human context edits to `CLAUDE.md` CAN be overwritten by AI index writes until the section-merge lands. The capture/classify pipelines never index `CLAUDE.md` (`indexer.IGNORE_FILES`). | Phase 9 (watcher / co-author) | `plans/vault_layer.md` OQ-V8; review session 2026-05-18 |
 
 ---
 

@@ -103,3 +103,83 @@ _Key concept: sentinel value — distinguishing "not provided" from "explicitly 
 **A:** Yes — in STATE.md under Technical Debt. TD entries record: what the gap is, why it is deferred, what the known fix is, and which phase owns it. A `⚠️ USER FLAG` annotation in the TD entry tells Claude Code to surface the issue loudly before any future phase extends the workaround silently.
 
 _Key concept: TD entries as cross-session design memory with escalation flags_
+
+---
+
+## Review Session — CLAUDE.md rename + vault layer audit
+_Completed: 2026-05-18_
+
+Context: vault layer fully implemented. This session reviewed `writer.py` /
+`indexer.py` / `frontmatter.py` and assessed the impact of renaming the
+`project_index.md` / `domain_index.md` navigation files to `CLAUDE.md` (so they
+double as project/domain instructions for Claude products).
+
+### Exchanges
+
+**Q:** Does `write_note` let the AI edit only the frontmatter, or the note body too?
+
+**A:** `write_note` is a whole-file replace, not a frontmatter stamper. Two different merge behaviours live in one function: **metadata is merged** (`_merge_metadata`, Option B — caller's fields layered over existing), but **body is not merged — it is a total overwrite**. Whatever string the caller passes as `content` becomes the entire body; the old body is discarded. There is no body-aware editing primitive in the vault layer.
+```python
+def write_note(path, content, metadata, actor):
+    body = content.rstrip("\n")          # caller's content = the WHOLE new body
+    merged = _merge_metadata(...)        # metadata merged (Option B)
+    rendered = dumps(merged, body)       # old body gone
+```
+_Key concept: write_note — body is whole-replace, metadata is merged_
+
+**Q:** Why was the inner `try/except` block in `move_note` deleted? I expected more code added, not removed.
+
+**A:** Only the **inner nested** `try/except OSError` (the EXDEV cross-filesystem branch) was removed; the outer `try...except Exception → Failure` stayed. The EXDEV branch existed because the old code did `os.replace(src, dst)` directly — src and dst can be on different filesystems, which raises `OSError errno 18 (EXDEV)`. The new code never replaces src→dst directly: `_atomic_write` writes a tmp file **in `dst.parent`**, then `os.replace(tmp, dst)`. tmp and dst are always in the same directory = same filesystem → `os.replace` cannot raise EXDEV. The branch became dead code. The fix was structural (collapse two steps into one atomic step), not additive — correct fixes can be *less* code.
+_Key concept: EXDEV avoided by writing the tmp file in the destination directory_
+
+**Q:** Explain the same-filesystem partial-write window in the old `move_note` in detail.
+
+**A:** The old same-fs path was two separate operations: `os.replace(src, dst)` (move the file — dst now has the *original* content), then `_atomic_write(dst, rendered)` (rewrite with merged metadata). A crash or disk error **between** the two left src already gone, dst present but with stale un-merged metadata, and the function returning `Failure(recoverable=False)`. The caller sees `Failure`, believes the move failed, but the file *is* at dst and src is gone — state contradicts the return value, and no retry is possible. The fix writes merged content to a tmp and `os.replace`s it into dst as one atomic step, unlinking src only after dst is fully written — so any failure leaves src intact and retryable.
+_Key concept: multi-step file mutation creates a crash window; collapse to one atomic step_
+
+**Q:** What is the `post = _fm.Post(...)` line in `frontmatter.py`? Is it scaffolding for a later stage?
+
+**A:** It is dead code. `post` is assigned and never read — the function builds the YAML header manually below (`yaml.dump` with a custom block-style dumper). The line is a leftover from an earlier approach that used `python-frontmatter`'s own `dumps()`; when that was replaced (to force Obsidian-compatible block-style lists) the `_fm.Post` construction should have been deleted and was not. Nothing later reads it — safe to remove.
+_Key concept: identifying dead code vs future scaffolding — trace whether the symbol is ever read_
+
+**Q:** `write_note` always emits a YAML frontmatter block — why, and what does that mean for `CLAUDE.md`?
+
+**A:** `_merge_metadata` unconditionally sets three fields — `created`, `updated`, `updated_by_human`. `dumps` does `model_dump(exclude_none=True)`; those three are never `None`, so the rendered dict is always non-empty and the `---` block is always emitted. Any file written via `write_note` therefore gets machine frontmatter. For `CLAUDE.md` (an instructions/index file) that means a Properties panel of meaningless metadata in Obsidian and a YAML block at the top of the file Claude products read as instructions — noise, not breakage.
+_Key concept: write_note unconditionally emits frontmatter — every written file is treated as a note_
+
+**Q:** Can `updated_by_human` just be set `True` on `CLAUDE.md`, since the field becomes redundant once the co-author solution lands?
+
+**A:** No — `updated_by_human` is an active gate, not a passive tag. `write_note` checks `if existing.updated_by_human and actor == "ai": return Failure(recoverable=False)`. Setting it `True` permanently locks the AI out of the file — which kills "AI maintains the index" (Option A). The gate is binary and whole-note: **no value lets both AI and human write** — `True` blocks AI, `False` allows AI. That is exactly the limitation the future co-author solution exists to fix. For Option A the field must stay `False`, which is its natural state for `actor="ai"` writes (`_merge_metadata` sets `updated_by_human = (actor == "human")`).
+```python
+if existing_note.metadata.updated_by_human and actor == "ai":
+    return Failure(error="note locked by human edit", recoverable=False, ...)
+```
+_Key concept: updated_by_human is an active write-gate; True = AI locked out, not a cosmetic flag_
+
+**Q:** Why add `project_index(name)` / `domain_index(name)` helpers to `paths.py` instead of letting callers build the path?
+
+**A:** `paths.py` had `project_dir(name)` but nothing returning the index file itself, so every pipeline touching the index would hardcode the `"CLAUDE.md"` string literal. Scattered literals mean a future rename is a hunt-every-file change. A helper puts the filename in one place — callers do `project_index(name)`, never type `"CLAUDE.md"` — so a rename is a one-line edit. Same single-source-of-truth principle the codebase applies to prompts and thresholds.
+```python
+def project_index(name: str) -> Path:
+    """Return Projects/<name>/CLAUDE.md path."""
+    return project_dir(name) / "CLAUDE.md"
+```
+_Key concept: single source of truth for a constant — wrap a magic filename in a helper_
+
+**Q:** The indexer indexes every `.md` file — should `CLAUDE.md` be treated as a captured document?
+
+**A:** No. `scan_vault` indexes every `.md`, so `CLAUDE.md` would land in the `documents` table, FTS5 search, and the capture/classify pipelines — but it is a navigation index and instructions file, not a captured note. Adding it to `indexer.IGNORE_FILES` excludes it from the documents mirror, search, and capture, while leaving AI co-authoring via `vault/writer.py` untouched. The ignore-set affects only the indexer/capture path — it has no effect on `write_note`, which is a separate decision.
+```python
+IGNORE_FILES = frozenset({".DS_Store", "Thumbs.db", "CLAUDE.md"})
+```
+_Key concept: indexer IGNORE_FILES — separating captured notes from structural/index files_
+
+**Q:** Whole-body replace seems dangerous for Phase 1/2 — when the AI summarizes a dropped `.md`, could the system wipe the original body and replace it with just the summary?
+
+**A:** Not in the designed flow. Roadmap Phase 1 specifies: a `.md` drop → AI writes the summary into the **`summary` frontmatter field**, in place — the body stays the original content. The capture pipeline reads the drop, keeps `note.content`, and passes it back to `write_note` as `content` unchanged; only the metadata gains `summary`. The wipe happens only if a pipeline is miscoded to pass the summary string as `content`. `write_note` cannot defend against this — `content` is an opaque string with no signal distinguishing "summary" from "full body". The mitigation is a Phase-1 discipline plus an acceptance test (drop a `.md` with a known body → run capture → assert the body is byte-identical and `summary` is populated), not a vault-layer change.
+_Key concept: capture flow puts the summary in frontmatter, not the body — the original note is preserved_
+
+**Q:** `CLAUDE.md` mixes an AI-maintained index with human-authored context in one file — does the whole-note gate handle that?
+
+**A:** It does not, and that is tracked debt (TD-015). `updated_by_human` is whole-note (DECISION-002) and `write_note` replaces the whole body, so the gate cannot distinguish an AI index section from a human context section living in the same body. The future watcher must do more than flip `updated_by_human` — it needs a section-aware body merge (e.g. `<!-- AI-INDEX -->...<!-- /AI-INDEX -->` delimiters) so AI index updates do not clobber human context edits. Interim rule (Option A): AI writes `CLAUDE.md` with `actor="ai"`, the flag stays `False`, and human context edits can be overwritten until the section-merge lands.
+_Key concept: whole-note authorship gate cannot express a co-authored file with distinct AI/human sections_
