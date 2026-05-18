@@ -193,9 +193,10 @@ def move_note(
     """
     Move a note atomically from src to dst, respecting the updated_by_human gate.
 
-    Same-filesystem: os.replace(src, dst) + atomic metadata rewrite on dst.
-    Cross-filesystem (Errno 18 / EXDEV): write rendered content to tmp next to dst,
-    fsync, os.replace(tmp, dst), then unlink src.
+    Writes merged content to dst atomically (tmp + fsync + os.replace), then
+    unlinks src. dst is fully written before src is removed, so any failure
+    leaves src intact and the move is safely retryable. Works across filesystems
+    because the tmp file always lives in dst's own directory.
 
     Args:
         src:   Source path (must exist and be readable).
@@ -227,25 +228,11 @@ def move_note(
     rendered = dumps(merged, current.content)
 
     try:
-        try:
-            # Same-filesystem: atomic rename then rewrite merged metadata
-            os.replace(src, dst)
-            _atomic_write(dst, rendered)
-        except OSError as exc:
-            if exc.errno != 18:  # EXDEV = cross-device link
-                raise
-            # Cross-filesystem: write to tmp next to dst, then remove src
-            tmp = dst.parent / f".tmp_{uuid4().hex}{dst.suffix}"
-            try:
-                with tmp.open("w", encoding="utf-8") as fh:
-                    fh.write(rendered)
-                    fh.flush()
-                    os.fsync(fh.fileno())
-                os.replace(tmp, dst)
-            except Exception:
-                tmp.unlink(missing_ok=True)
-                raise
-            src.unlink()
+        # Write merged content to dst atomically, then drop src. dst is fully
+        # written before src is unlinked, so a failure leaves src intact and the
+        # caller can retry — no window where dst holds stale, un-merged metadata.
+        _atomic_write(dst, rendered)
+        src.unlink()
     except Exception as exc:
         return Failure(
             error=f"move failed: {exc}",

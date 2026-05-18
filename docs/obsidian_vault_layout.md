@@ -7,11 +7,11 @@ Vault/
 ├── inbox/                      ← single drop zone
 ├── Projects/                   ← active work + its materials
 │   └── Movies Q2 Strategy/
-│       ├── project_index.md    ← AI-maintained index with link directly to the document, user primary view
+│       ├── CLAUDE.md            ← AI-maintained index with link directly to the document, user primary view (also the project instructions/context for Claude products)
 │       ├── materials/                ← captures, emails, transcripts moved from inbox after categorizatoin by AI + notes from users. AI will use information in this folder as the sources for their responses
 ├── Domain/             ← durable knowledge per domain
 │   ├── Movies/
-│   │   ├── domain_index.md           ← Basic context of the business line + index
+│   │   ├── CLAUDE.md                  ← Basic context of the business line + index (also the domain instructions/context for Claude products)
 │   │   ├── context.yaml        ← people, metrics, vocabulary
 │   │   └── notes/              ← important materials, synthesize notes on active and past projects, notes on people, way of working, etc.
 │   ├── Game/
@@ -33,16 +33,16 @@ Vault/
 	- For the .md file: summarize the content of the non-md file (MUST HAVE link to the source material, using Obsidian link convention of brackets), rename (if appropriate, and make sure .md file and the source material have corresponding names - could be exact naming or not, but regardless should have some convention to easily identify and detect connection between them), categorize, add frontmatter, and move
 	- for the non-md file: rename (if appropriate), and move to **attachment**
 
-**Projects**: current active projects of each **Domain**. Each project get its own folder, within each folder will have `project_index.md` to help navigating all the notes and material related to the project contained in the subfolder `materials`.
+**Projects**: current active projects of each **Domain**. Each project get its own folder, within each folder will have `CLAUDE.md` to help navigating all the notes and material related to the project contained in the subfolder `materials`.
 - For AI: notes in `materials` will be the input to the model when answering or discussing with human, and will be the key ingredients for writing related synthesizing report in **Domain**, **Documentation** or **Synthesis** folders
-- For user: these notes will also be the thinking space for human. To navigate the notes, user will use the `project_index.md`. The index's content would be a table or list of material notes' titles, summaries of what it is, date created/added, etc. If user need a scratchpad, they could write inside the note in `material` folder, and the index would be updated to include links to those notes
-- Note on the `project_index.md`: Could be maintain by AI, or could be done using Dataview, and AI just need to update the right metadata for each note
+- For user: these notes will also be the thinking space for human. To navigate the notes, user will use the `CLAUDE.md`. The index's content would be a table or list of material notes' titles, summaries of what it is, date created/added, etc. If user need a scratchpad, they could write inside the note in `material` folder, and the index would be updated to include links to those notes
+- Note on the `CLAUDE.md`: Could be maintain by AI, or could be done using Dataview, and AI just need to update the right metadata for each note
 
 **Domain**: contains all the domain-knowledge and long-term areas that users need to fulfill in their job. This could be:
 - The business lines they are working on: Like Game, Movies, etc.
 - The work-aspects that they want to improve: People development, Negotiation competencies
 Each domain has its own folder, and each will have:
-- `domain_index.md`: the basic context of the domain and index for navigating notes in the domain
+- `CLAUDE.md`: the basic context of the domain and index for navigating notes in the domain
 - `context.yaml`: basic information like, PIC, metrics, vocabulary
 - `notes` folder: contains important materials or domain-wide knowledge (industry report), synthesized report or reflection of current or past project, or the developing of the business domain, etc. This folder is the final destination of notes in **Documentation** once the project is not active anymore
 

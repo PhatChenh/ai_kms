@@ -142,7 +142,6 @@ def dumps(metadata: NoteMetadata, body: str) -> str:
 
     _BlockDumper.add_representer(list, _list_representer)
 
-    post = _fm.Post(content=body, **d)
     # python-frontmatter's dumps() uses yaml.dump internally.
     # We need allow_unicode=True (default) and block lists.
     # Rebuild the YAML header ourselves to control dumper.

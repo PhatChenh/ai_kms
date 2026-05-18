@@ -45,7 +45,10 @@ IGNORE_DIRS = frozenset(
         "_system",
     }
 )
-IGNORE_FILES = frozenset({".DS_Store", "Thumbs.db"})
+# CLAUDE.md is a project/domain index + instructions file, co-authored by AI
+# and human. It is not a captured note — exclude it from the documents mirror,
+# FTS5 search, and the capture/classify pipelines.
+IGNORE_FILES = frozenset({".DS_Store", "Thumbs.db", "CLAUDE.md"})
 
 
 @dataclass(frozen=True)
