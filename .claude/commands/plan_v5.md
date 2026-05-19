@@ -6,6 +6,9 @@ argument-hint: <feature>
 
 # Planning Task
 
+> The global HITL behavioral contract in CLAUDE.md applies in full.
+> The specific rules below govern the planning workflow only.
+
 Your ONLY job in this session is to produce a written plan. Do NOT write or modify any code.
 
 ## Input
@@ -13,6 +16,8 @@ Your ONLY job in this session is to produce a written plan. Do NOT write or modi
 Feature to plan: $ARGUMENTS
 
 The feature name is used as the filename slug.
+
+---
 
 ## Step 1 — Load all inputs
 
@@ -45,6 +50,29 @@ grep -n "<file path" repomix-output.xml | grep -i <relevant-keyword>
 ```
 Do not read this file in full. Only pull the specific blocks you need.
 
+---
+
+## Step 1b — Surface ambiguities before doing any work  
+
+After reading all inputs, before any annotation work or architecture drawing:
+
+Identify every open question or ambiguity in the spec/research. For each one that has 2 or more reasonable answers, call `AskUserQuestion` with:
+- A one-line description of what the decision is
+- 2–4 options, each with a one-line tradeoff
+- Your recommendation first, labeled "(Recommended)"
+
+**Do not proceed to Step 2 until every blocking ambiguity is resolved by the human.**
+
+If no blocking ambiguities exist, state: "No blocking ambiguities found — proceeding to annotations."
+
+Example triggers for Step 1b:
+- The spec mentions two storage strategies without picking one
+- The research file found 2 valid patterns in the codebase that are mutually exclusive
+- STATE.md has an open question tagged as blocking this feature
+- The scope boundary is unclear (e.g., does this feature include the UI layer or not?)
+
+---
+
 ## Step 2 — Handle human annotations
 
 If `docs/plans/$FEATURE.md` already exists, scan it for any lines starting
@@ -61,21 +89,10 @@ understanding leads to wrong revisions.
 If any annotation is ambiguous or you cannot determine the human's intent:
 
 - Do NOT revise the plan yet — not even the items you do understand.
-- Output a clarification request listing every unclear item:
-
-```
-⚠️ Need clarification before revising:
-
-Items I understand:
-- #COMMENT on Phase 2: [restate what you think they want]
-- #QUESTION on Phase 3: [restate the question and your answer]
-
-Items I need clarified:
-- #COMMENT on Phase 1: "[quote the annotation]" — do you mean [interpretation A] or [interpretation B]?
-- #QUESTION on Phase 4: "[quote the annotation]" — I can't determine this without knowing [X]. What's your preference?
-
-Please clarify and run /plan $FEATURE again.
-```
+- Call `AskUserQuestion` for each unclear annotation with:  
+  - The quoted annotation text
+  - 2–3 interpretations as options
+  - Your best-guess interpretation labeled "(Recommended)"
 
 Then STOP. Do not partially revise.
 
@@ -88,18 +105,16 @@ For each `# COMMENT:` that suggests a design change:
 2. If verifiable against the codebase, grep `repomix-output.xml` to
    confirm the suggestion is technically sound.
 3. If it contradicts a prior architecture decision in `STATE.md`, do not
-   silently adopt it — flag the conflict:
+   silently adopt it — call `AskUserQuestion` with:  
 
 ```
 ⚠️ Conflict: Your comment on Phase 2 suggests [X], but STATE.md
 records an architecture decision for [Y] (decided on <date>).
-
-Options:
-A) Revise the plan to follow [X] — this overrides the prior decision
-B) Keep [Y] — I'll note why in the plan
-
-Which do you prefer?
 ```
+
+Options to present:
+- A) Revise the plan to follow [X] — this overrides the prior decision
+- B) Keep [Y] — I'll note why in the plan
 
 Then STOP and wait.
 
@@ -116,7 +131,7 @@ compliance. Push back with technical reasoning when:
 
 How to push back:
 - State the technical concern, not an opinion
-- Offer an alternative
+- Offer an alternative via `AskUserQuestion`  
 - Let the human decide
 
 ```
@@ -142,6 +157,8 @@ Instead:
 After addressing each annotation, change its prefix:
 - `# QUESTION:` → `# RESOLVED:` with your answer on the next line
 - `# COMMENT:` → `# RESOLVED:` with a note on what changed
+
+---
 
 ## Step 3 — Draw the architecture
 
@@ -175,12 +192,6 @@ include three things, in order:
 3. 2–3 key public methods or operations — never full signatures, never
    private helpers, never every method on the class
 
-The point of this rule: an architecture diagram is for reasoning about
-structure, not replacing a class diagram. Full signatures and exhaustive
-method lists add noise at this level — IDEs already generate that view
-better than you can draw it. Stop at "enough to know what to call into
-this component for."
-
 ```
 ┌──────────────────┐     ┌────────────────────┐     ┌──────────────┐
 │  Watcher         │────▶│  Pipeline          │────▶│  Storage     │
@@ -198,23 +209,13 @@ this component for."
                           └──────────────────┘
 ```
 
-Exceptions to the method-list rule:
-- Adjacent context components (existing modules shown for orientation,
-  future components shown for forward-compatibility) may omit the
-  method list — the focus is what's being built, not what's pointed at.
-- Single-condition arrow labels like `confidence < 0.60` above are
-  fine. Multiple decision points belong in an activity diagram.
-
 **Data flow diagram** — How does data move through the system?
 Use when the feature is a pipeline or transformation chain and the
 human needs to see inputs, outputs, and intermediate states.
 
 Label every arrow with the **domain type** that flows through it — the
 Pydantic model name, dataclass, or `Result[T, E]` — not a Python
-primitive. `RawCapture` is correct; `dict` is not. `Result[Summary,
-ExtractionError]` is correct; `tuple` is not. The whole point of
-typing arrows is to catch shape mismatches in the picture before they
-become bugs in the code, and a label of "dict" catches nothing.
+primitive. `RawCapture` is correct; `dict` is not.
 
 ```
 raw email ──▶ extract() ──▶ RawCapture ──▶ summarize() ──▶ Summary
@@ -226,8 +227,6 @@ raw email ──▶ extract() ──▶ RawCapture ──▶ summarize() ──�
 ```
 
 **Layer diagram** — What sits on top of what?
-Use when the feature touches multiple architectural layers and the
-human needs to see the dependency direction.
 
 ```
 ┌─────────────────────────────────┐
@@ -240,8 +239,6 @@ human needs to see the dependency direction.
 ```
 
 **Sequence diagram** — What happens in what order?
-Use when the feature involves multiple actors or async steps and the
-human needs to see the timeline.
 
 ```
 Human          Watcher        Pipeline        Storage
@@ -257,17 +254,7 @@ Human          Watcher        Pipeline        Storage
   │  ◀── notify ──│               │               │
 ```
 
-**Activity / decision-flow diagram** — What's the decision logic at
-this point? Use when the feature has branching, confidence-gated
-routing, or multiple conditional paths and the human needs to see
-what happens under what condition.
-
-This is distinct from a sequence diagram (which shows order across
-actors) and a state diagram (which shows an entity's lifecycle).
-Reach for an activity diagram whenever a single operation's outcome
-depends on multiple thresholds, rules, or conditions. The moment you
-catch yourself wanting to stack multiple `if X then Y else Z` labels
-onto a component diagram's arrows, draw this instead.
+**Activity / decision-flow diagram** — What's the decision logic?
 
 ```
             ┌─────────────────┐
@@ -293,40 +280,10 @@ onto a component diagram's arrows, draw this instead.
                    └──────────┘  └──────────┘
 ```
 
-**State diagram** — What states can an entity be in?
-Use when the feature manages a lifecycle (e.g., a note moving through
-inbox → classified → promoted → archived).
-
-```
-                 ┌──────────┐
-    drop ───────▶│  inbox   │
-                 └────┬─────┘
-                      │ classify (≥0.85)
-                      ▼
-                 ┌──────────┐  human edit   ┌──────────┐
-                 │ classified│─────────────▶│  locked   │
-                 └────┬─────┘              └──────────┘
-                      │ promote
-                      ▼
-                 ┌──────────┐
-                 │ promoted  │
-                 └────┬─────┘
-                      │ 90 days inactive
-                      ▼
-                 ┌──────────┐
-                 │ archived  │
-                 └──────────┘
-```
-
 ### 3b. Show existing context, not just the new feature
 
-The diagram must show how the new feature connects to what already exists.
-Draw existing components as boxes with a note like `(exists)`. The human
-needs to see the integration surface, not just the new parts in isolation.
-
-If the roadmap shows future features that will depend on what's being
-built now, include them as dashed or annotated boxes so the human can
-verify the current design won't block them:
+Draw existing components as boxes with a note like `(exists)`. Include
+future features that will depend on what's being built as dashed boxes.
 
 ```
 ┌─────────────┐     ┌──────────────┐     ┌ ─ ─ ─ ─ ─ ─ ┐
@@ -339,45 +296,33 @@ verify the current design won't block them:
 
 Unlabeled arrows are ambiguous. Every connection must say what flows
 through it — a function call, a data type, an event, a file path.
-An arrow without a label forces the reader to guess, and guessing
-is where wrong mental models start.
 
 ### 3d. Scale to complexity
 
-Simple features (one new module, clear data path) → one diagram, 5–10
-lines. Complex features (multiple modules, branching logic, integration
-with existing systems) → 2–3 diagrams of different types — pair a
-component diagram with an activity diagram when routing matters, or
-with a sequence diagram when ordering matters.
+Simple features → one diagram, 5–10 lines.
+Complex features → 2–3 diagrams of different types.
+Do not draw diagrams for decoration.
 
-Do not draw diagrams for decoration. If a feature is a single function
-with no integration surface, a one-line description is enough:
-`config.yaml → load_config() → Config object (Pydantic)`. That is
-itself a diagram.
+### 3e. Present and wait — using AskUserQuestion  
 
-### 3e. Present and wait
-
-Output the diagram(s) BEFORE writing the plan. The human reviews the
-architecture first. If the mental model is wrong, the plan built on it
-will be wrong too.
+Output the diagram(s), then call `AskUserQuestion` with:  
 
 ```
-📐 Architecture for "$FEATURE":
-
-[diagram(s)]
-
-Does this match your mental model? If anything looks wrong — missing
-connections, wrong data flow, components in the wrong layer — say so
-before I write the plan.
+📐 Architecture for "$FEATURE" — does this match your mental model?
 ```
 
-Wait for the human to confirm or correct. If they correct, redraw and
-present again. Only proceed to Step 4 when the human confirms the
-diagram is accurate.
+Options:
+- A) Yes, this is correct — proceed to writing the plan (Recommended)
+- B) [specific thing looks wrong] — describe the correction
+- C) I need to see a different diagram type first
 
-On revision runs (when addressing `# COMMENT:` annotations that change
-the architecture), update the diagram and present the diff: what changed
-and why. Do not skip this step just because a diagram already exists.
+Do not proceed to Step 4 until the human selects option A or provides
+a correction. If they provide a correction: redraw, present again,
+repeat the `AskUserQuestion` call. Do not skip this gate on revision
+runs — if a `# COMMENT:` annotation changed the architecture, update
+the diagram and gate again.
+
+---
 
 ## Step 4 — Write the plan
 
@@ -391,9 +336,7 @@ _Status: [ ] pending | [~] in progress | [x] done_
 ## Architecture
 
 [Paste the confirmed diagram(s) from Step 3 here, inside a fenced
-code block. This is the canonical visual reference for the feature.
-Anyone reading the plan should be able to understand the structure
-without reading the phases.]
+code block.]
 
 ## Approach
 [2–3 sentences on the overall implementation strategy. Why this approach, not another.]
@@ -412,7 +355,7 @@ without reading the phases.]
 - `path/to/file.py` — [what changes]
 
 **Test criteria**:
-- [ ] [Specific, runnable verification — not vague. E.g. "run X and assert Y"]
+- [ ] [Specific, runnable verification]
 - [ ] [Another check]
 
 **Status**: [ ] pending
@@ -423,7 +366,6 @@ without reading the phases.]
 [same structure]
 
 ---
-[continue for all phases]
 
 ## Open Questions
 [Any decisions not yet made — things the human needs to decide before implementation]
@@ -439,7 +381,22 @@ without reading the phases.]
 - Tests come BEFORE the next phase starts — never at the end
 - If a phase feels too large, split it
 
-## Step 5 — Confirm
+---
+
+## Step 5 — Verification
+
+After writing the plan, critically review it:
+
+1. Identify potential problems (missing steps, untestable phases, scope creep, dependency gaps)
+2. Verify whether each problem is real or a false alarm
+3. For each real problem that requires a design decision, call `AskUserQuestion` with the options — do not silently resolve it
+4. Verify that every file, method, or dependency referenced in the plan actually exists. If something critical is missing, flag it before writing
+
+Only revise the plan after the human responds to any open questions raised in this step.
+
+---
+
+## Step 6 — Confirm
 
 After writing the file, output exactly:
 

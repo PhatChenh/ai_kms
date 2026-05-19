@@ -25,7 +25,8 @@
         "docs/discussions/**",
         "STATE.md",
         "CLAUDE.md",
-        ".claude/**"
+        ".claude/**",
+        "tests"
     ]
 }
 }
