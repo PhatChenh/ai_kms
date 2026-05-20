@@ -501,6 +501,41 @@ class TestApiKeys:
 #              OllamaConfig, MCPConfig, SelfLearningConfig
 # ===========================================================================
 
+
+# ===========================================================================
+# Section 7b — CaptureConfig
+# ===========================================================================
+
+class TestCaptureConfig:
+    """CaptureConfig defaults and validation."""
+
+    def test_default_cooldown_seconds_is_60(self):
+        from core.config import CaptureConfig
+        c = CaptureConfig()
+        assert c.cooldown_seconds == 60
+
+    def test_default_max_urls_per_note_is_3(self):
+        from core.config import CaptureConfig
+        c = CaptureConfig()
+        assert c.max_urls_per_note == 3
+
+    def test_cooldown_seconds_rejects_negative(self):
+        from core.config import CaptureConfig
+        with pytest.raises(ValidationError):
+            CaptureConfig(cooldown_seconds=-1)
+
+    def test_max_urls_per_note_rejects_negative(self):
+        from core.config import CaptureConfig
+        with pytest.raises(ValidationError):
+            CaptureConfig(max_urls_per_note=-1)
+
+    def test_main_config_has_capture_field(self, vault_dir: Path):
+        cfg = MainConfig(vault={"root": str(vault_dir)})
+        from core.config import CaptureConfig
+        assert isinstance(cfg.capture, CaptureConfig)
+        assert cfg.capture.cooldown_seconds == 60
+        assert cfg.capture.max_urls_per_note == 3
+
 class TestRouting:
 
     def test_empty_pipelines_dict_is_the_default(self):

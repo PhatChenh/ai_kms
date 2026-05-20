@@ -33,7 +33,18 @@ def cli() -> None:
 @click.argument("file", type=click.Path(exists=True))
 def capture(file: str) -> None:
     """Run the capture pipeline on a single file."""
-    raise NotImplementedError("Phase 1 — not yet built")
+    import asyncio
+    from pathlib import Path
+    from core.result import Success, Failure
+    from pipelines.capture import capture_file
+
+    result = asyncio.run(capture_file(Path(file)))
+    match result:
+        case Success(value=v):
+            click.echo(f"OK: {v}")
+        case Failure(error=e):
+            click.echo(f"FAILED: {e}", err=True)
+            raise SystemExit(1)
 
 
 @cli.command()

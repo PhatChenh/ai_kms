@@ -387,10 +387,11 @@ code block.]
 
 After writing the plan, critically review it:
 
-1. Identify potential problems (missing steps, untestable phases, scope creep, dependency gaps)
+1. Identify potential problems (missing steps, untestable phases, scope creep, dependency gaps), check if edge cases outlined in `docs/research/$FEATURE.md` have been accounted for, and if there is any unintentional violation of cross-phase constraints listed in `STATE.md`
 2. Verify whether each problem is real or a false alarm
 3. For each real problem that requires a design decision, call `AskUserQuestion` with the options — do not silently resolve it
 4. Verify that every file, method, or dependency referenced in the plan actually exists. If something critical is missing, flag it before writing
+5. Review all the Technical Debts recorded in `STATE.md` and see if the current plan should address any of them. If there is a potential task emerge, call `AskUserQuestion` with the options to also include that in the plan. If user confirm, adjust the plan accordingly
 
 Only revise the plan after the human responds to any open questions raised in this step.
 

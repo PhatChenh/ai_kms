@@ -27,3 +27,32 @@ def test_render_missing_variable_raises_undefined_error() -> None:
 def test_prompts_missing_key_raises_key_error() -> None:
     with pytest.raises(KeyError):
         _ = PROMPTS["nonexistent"]
+
+
+def test_summarize_prompt_exists_in_prompts() -> None:
+    assert "summarize" in PROMPTS
+
+
+def test_summarize_render_injects_text_into_user_message() -> None:
+    _, user = PROMPTS["summarize"].render(text="hello")
+    assert "hello" in user
+
+
+def test_summarize_render_returns_nonempty_system_message() -> None:
+    system, _ = PROMPTS["summarize"].render(text="any content")
+    assert len(system) > 0
+
+
+def test_extract_metadata_prompt_exists_in_prompts() -> None:
+    assert "extract_metadata" in PROMPTS
+
+
+def test_extract_metadata_render_injects_text_and_summary() -> None:
+    _, user = PROMPTS["extract_metadata"].render(text="t", summary="s")
+    assert "t" in user
+    assert "s" in user
+
+
+def test_extract_metadata_render_returns_nonempty_system_message() -> None:
+    system, _ = PROMPTS["extract_metadata"].render(text="t", summary="s")
+    assert len(system) > 0

@@ -1,3 +1,6 @@
+capture:
+  cooldown_seconds: 0 # original: 60, change for testing
+  max_urls_per_note: 3
 claude:
   max_tokens: 1024
   model: claude-haiku-4-5-20251001
@@ -7,6 +10,12 @@ claude:
 database:
   path: ./data/kb.db
 env: dev
+handlers:
+  max_file_size_bytes: 52428800       # 50 MB — PDF/DOCX hard cap
+  max_web_fetch_bytes: 10485760       # 10 MB — web body hard cap
+  web_fetch_timeout_seconds: 30
+  dns_resolve_timeout_seconds: 5
+  max_redirects: 5
 logging:
   console: true
   file: logs/app.log
@@ -33,7 +42,7 @@ ollama:
 para_context_path: /Users/phatchenh/Library/Mobile Documents/iCloud~md~obsidian/Documents/Claude
   Brain/para-context.yaml
 providers:
-  capture: claude
+  capture: openai # originally claude, changed to use Fireworks via openai_compat provider
   classify: claude
   embeddings: ollama
   self_learn: claude

@@ -1,28 +1,39 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-05-20 (vault_layer finalization)_
+_Last updated: 2026-05-20 (Phase 0 complete; Phase 1 checklist created + handlers done)_
 
 ## Current Position
-**Phase**: Phase 0 — Foundations
+**Phase**: Phase 1 — Capture ✅ **Phase 0 complete as of 2026-05-20**
 
-**Checklist**:
+**Phase 0 Final Checklist** _(CLOSED)_:
 - [x] core/exceptions.py
 - [x] core/result.py
 - [x] core/logging_setup.py
 - [x] core/config.py
-- [x] core/confidence.py _(exists on disk; not in CLAUDE.md checklist but listed in roadmap Phase 0)_
-- [x] llm/ _(provider.py, claude_provider.py, ollama_provider.py, openai_provider.py, prompt_loader.py — all async LLMProvider ABC — complete 2026-05-14)_
-- [x] core/audit.py
+- [x] core/confidence.py
 - [x] core/pipeline.py
-- [x] storage/schema.sql
-- [x] storage/migrations/
-- [x] storage/db.py
-- [x] storage/audit_log.py
-- [x] prompts/ _(prompts/test.yaml exists; prompt_loader.py loads eagerly — complete 2026-05-14)_
-- [ ] vault/
+- [x] core/audit.py
+- [x] llm/ (all providers + prompt_loader.py)
+- [x] prompts/ (scaffolding + test.yaml)
+- [x] storage/schema.sql, migrations/, db.py, audit_log.py
+- [x] vault/ (paths.py, frontmatter.py, reader.py, writer.py — complete 2026-05-20)
 - [x] smoke test
 
-**Next planned work**: Phase 0 remaining: `vault/`. After that, Phase 1 (Capture + Classify + Search, targeting M1 ~15 May 2026).
+**Phase 1 — Capture Checklist** _(In progress — targeting M1 ~15 May 2026)_:
+- [x] handlers/base.py (BaseHandler ABC, registry pattern)
+- [x] handlers/__init__.py (HandlerRegistry export + auto-discovery)
+- [x] handlers/markdown_handler.py (extract summary + metadata from .md)
+- [x] handlers/pdf_handler.py (PDF text extraction → summary)
+- [x] handlers/docx_handler.py (DOCX text extraction → summary)
+- [x] handlers/url_fetcher.py (fetch web content; integrated into pipeline stages)
+- [ ] pipelines/capture.py (extract → summarize → extract_metadata → store; 4 pure stages)
+- [ ] prompts/summarize.yaml (AI summarization prompt)
+- [ ] prompts/extract_metadata.yaml (AI metadata extraction prompt)
+- [ ] CLI: `kms capture <file>` (Click command + asyncio.run wrapper)
+- [ ] Phase 1 integration test (end-to-end: .md drop → parsed → upsert → audit)
+- [ ] audit_log wired: every capture writes decision + confidence + source note IDs
+
+**Next planned work**: Wire handlers → capture pipeline → audit log. Then classify (Phase 2).
 
 ---
 
@@ -164,8 +175,10 @@ _Last updated: 2026-05-20 (vault_layer finalization)_
 | TD-011 | Per-prompt `model` and `temperature` overrides | `Prompt` model has no `model`/`temperature` fields — removed as dead weight. Requires extending `LLMProvider.complete()` signature when needed | Phase 1+ | DECISION-016 + review finding #3 |
 | TD-012 | `cli/main.py` commands: capture, classify, search, briefing | Placeholder stubs raise `NotImplementedError`; wired to pipelines as each phase delivers | Phase 1+ | `cli/main.py` created as dotenv owner (DECISION-014) |
 | TD-013 | `_embedding_model` stored on all providers but not yet routed | Field exists for single-provider portability; Phase 3 retrieval wires it to `sentence-transformers` or provider embedding endpoint | Phase 3 | DECISION-015; Out of Scope, `plans/llm_layer.md` |
-| TD-014 | `write_note` cannot explicitly clear a known field (e.g. `tags=[]`) | Option B merge: empty/None caller value → keep existing. A pipeline that wants to clear a field has no clean path. Fix: replace `NoteMetadata` parameter with a `NoteMetadataUpdate` dataclass where every field has a third `UNSET` sentinel state; `write_note` only writes fields that are not `UNSET`. Deferred: Phase 1 pipelines only add data, never clear fields. **⚠️ USER FLAG: current solution is not satisfying. When any Phase 1+ pipeline touches `write_note` signature or field-clearing, STOP and surface this to the user BEFORE implementing. Do not silently extend Option B — demand a proper design discussion first.** | Phase 1+ | `plans/vault_layer.md` Phase 4 Option B note |
+| TD-014 | ~~`write_note` cannot explicitly clear a known field~~ | **RESOLVED 2026-05-20**: Removed Option B merge from `vault/writer.py`. `write_note` now writes exactly what the caller passes. Pipelines must `read_note` first if they want to preserve existing fields. Only `created` is preserved automatically as a factual timestamp invariant. See cross-phase constraint below. | ✅ Resolved | `plans/vault_layer.md` Phase 4 Option B note |
 | TD-015 | `CLAUDE.md` co-authoring needs body section-merge, not just a watcher | `CLAUDE.md` (project/domain index, formerly `project_index.md` / `domain_index.md`) holds an AI-maintained index section AND a human-authored context section in one body. `write_note` replaces the *whole* body — no section merge — and `updated_by_human` is a whole-note gate (DECISION-002). So the Phase 9 watcher cannot just flip `updated_by_human`; it needs a section-aware body merge (e.g. `<!-- AI-INDEX -->...<!-- /AI-INDEX -->` delimiters) so AI index updates do not clobber human context edits. **Interim rule (Option A, decided 2026-05-18):** AI always writes `CLAUDE.md` with `actor="ai"`; `updated_by_human` stays `False` (do NOT set it `True` — that hard-blocks all AI writes); accept that human context edits to `CLAUDE.md` CAN be overwritten by AI index writes until the section-merge lands. The capture/classify pipelines never index `CLAUDE.md` (`indexer.IGNORE_FILES`). | Phase 9 (watcher / co-author) | `plans/vault_layer.md` OQ-V8; review session 2026-05-18 |
+| TD-016 | User explicit URL flagging in `enrich_urls` | User marks URLs as crucial via frontmatter `fetch_urls: [url1, url2]` list or inline `#fetch` tag on a URL line. These bypass the structural gate and are always fetched regardless of body length or url count. Implementation: `enrich_urls` reads `fetch_urls` from `RawContent` frontmatter (requires extending `RawContent` or passing note metadata separately) and merges with gate-selected URLs. No changes to stages 3-5. Isolated in `_build_gate` extension point in `enrich_urls`. | Phase 1+ (post-watcher) | `docs/research/capture_pipeline.md` Wishlist A |
+| TD-017 | AI URL triage replacing structural heuristic gate | Before fetching, LLM classifies each URL as `primary \| citation \| skip` using `prompts/url_triage.yaml`. Only `primary` URLs are fetched. Replaces `_should_enrich` structural heuristic with `_ai_triage_urls()` call inside `_build_gate`. Requires: new `prompts/url_triage.yaml`, `_ai_triage_urls(urls, body) → list[str]` helper, LLM call inside `enrich_urls` (adds latency). Gate isolation in `_build_gate` means stages 3-5 need no changes. | Phase 2+ | `docs/research/capture_pipeline.md` Wishlist B |
 
 ---
 
@@ -180,6 +193,7 @@ _Last updated: 2026-05-20 (vault_layer finalization)_
 - **`mcp_server/tools.py` is logic-free.** `if`, `elif`, `for`, `while` at statement level is a hard-block hook violation. Tools call pipelines; pipelines do the work.
 - **Never add an MCP tool before its pipeline exists and is tested.** A stub tool that calls nothing misleads the demo.
 - **Schedulers come last in each phase.** Build manual CLI first, automate second.
+- **`write_note` is a pure writer — pipeline owns the merge.** `write_note` writes exactly what the caller passes. To preserve any existing field (tags, project, summary, etc.), the calling pipeline MUST call `read_note` first and re-pass existing values explicitly. The only exception: `created` is always preserved as a factual timestamp invariant. A pipeline that calls `write_note` with `NoteMetadata()` (all defaults) will wipe all existing metadata. _(Source: TD-014 resolved 2026-05-20)_
 - **`CONFIG` validates vault root at import time.** Any code or test that imports `CONFIG` at module level fails if the vault path doesn't exist on disk. Tests must pass explicit paths (e.g. `db_path=tmp_path/...`) to bypass CONFIG, or lazy-import CONFIG inside functions. Do not import CONFIG at module scope in test files. _(Source: plans/storage_level.md Phase 6 Surprises S-001)_
 - **`PRAGMA foreign_keys=ON` on every new connection.** The pragma is connection-scoped; forgetting it silently disables FK enforcement including `ON DELETE CASCADE` on `corrections`.
 - **All schema changes via versioned `.sql` deltas.** No in-code `ALTER TABLE`. Migration runner applies in lexical order and records version in `schema_version`.

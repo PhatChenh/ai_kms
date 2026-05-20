@@ -8,20 +8,18 @@ Rules enforced here:
 - Atomic writes: tmp file in same dir → fsync → os.replace. No partial writes exposed.
 - NFC normalisation on vault_path strings prevents ghost-duplicate SQLite rows on macOS.
 - FS-only: no storage/ imports. Callers (pipelines) call storage.documents.upsert(outcome).
+- Pipeline-level merge: write_note writes exactly what the caller passes. To preserve
+  existing fields, callers must read_note first. Only `created` is preserved automatically
+  as a factual timestamp invariant (see _merge_metadata).
 
 move_attachment is for non-md binaries only. .md notes always go through write_note /
 move_note. Binaries carry no frontmatter and no updated_by_human gate.
-
-See docs/plans/vault_layer.md Phase 4 for design diagrams and Option B merge rules.
-TD-014 in STATE.md tracks the known limitation: callers cannot explicitly clear a known
-field (e.g. reset tags to []) without a sentinel or NoteMetadataUpdate redesign.
 """
 
 from __future__ import annotations
 
 import hashlib
 import os
-import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -30,6 +28,7 @@ from uuid import uuid4
 
 from core.result import Failure, Result, Success
 from vault.frontmatter import NoteMetadata, dumps
+from vault.paths import to_vault_path
 from vault.reader import read_note, Note
 
 WriteActor = Literal["ai", "human"]
@@ -45,57 +44,43 @@ class WriteOutcome:
     metadata: NoteMetadata
 
 
-def _to_vault_path(absolute: Path) -> str:
-    """Compute NFC-normalised POSIX vault_path relative to vault root."""
-    from core.config import CONFIG
-    rel = absolute.relative_to(CONFIG.main.vault.root).as_posix()
-    return unicodedata.normalize("NFC", rel)
-
-
 def _merge_metadata(
     incoming: NoteMetadata,
     existing: NoteMetadata | None,
     actor: WriteActor,
 ) -> NoteMetadata:
     """
-    Merge caller metadata with existing note metadata (Option B rules).
+    Apply invariant timestamps to caller-supplied metadata before writing.
 
-    Option B: for each known field, use the caller's value if explicitly supplied
-    (non-None for Optional fields, non-empty for list fields); otherwise fall back to
-    the existing note's value. This prevents AI writes from silently clearing
-    human-set fields when the pipeline only sets a subset of fields.
+    Pipeline-level merge contract: callers own all field decisions. To preserve
+    existing field values, the caller must read_note first and pass those values
+    explicitly. The only exception is `created` — once set it must never be lost,
+    regardless of what the caller passes.
 
     Args:
-        incoming: Metadata supplied by the caller.
+        incoming: Metadata supplied by the caller (authoritative for all fields).
         existing: Metadata from the note currently on disk (None for new notes).
         actor:    "ai" or "human" — controls updated_by_human stamp.
 
     Returns:
-        Merged NoteMetadata ready to write.
+        NoteMetadata with timestamps applied, ready to write.
     """
     ex = existing
-
-    def _opt(new, old):
-        """Return new if not None, else fall back to old."""
-        return new if new is not None else old
-
+    created = (ex.created if ex and ex.created else None) or incoming.created or date.today()
     return NoteMetadata(
-        # created: always preserve the earliest known date; seed with today for new notes
-        created=(ex.created if ex else None) or incoming.created or date.today(),
+        created=created,
         updated=datetime.now(timezone.utc),
         updated_by_human=(actor == "human"),
-        type=_opt(incoming.type, ex.type if ex else None),
-        # tags: keep existing if caller passes empty list (Option B for list fields)
-        tags=incoming.tags if incoming.tags else (ex.tags if ex else []),
-        project=_opt(incoming.project, ex.project if ex else None),
-        domain=_opt(incoming.domain, ex.domain if ex else None),
-        confidence=_opt(incoming.confidence, ex.confidence if ex else None),
-        summary=_opt(incoming.summary, ex.summary if ex else None),
-        source=_opt(incoming.source, ex.source if ex else None),
-        source_file=_opt(incoming.source_file, ex.source_file if ex else None),
-        status=_opt(incoming.status, ex.status if ex else None),
-        # extra: keep existing unknown keys if caller didn't supply any
-        extra=incoming.extra if incoming.extra else (ex.extra if ex else {}),
+        type=incoming.type,
+        tags=incoming.tags,
+        project=incoming.project,
+        domain=incoming.domain,
+        confidence=incoming.confidence,
+        summary=incoming.summary,
+        source=incoming.source,
+        source_file=incoming.source_file,
+        status=incoming.status,
+        extra=incoming.extra,
     )
 
 
@@ -155,7 +140,7 @@ def write_note(
             return Failure(
                 error="note locked by human edit",
                 recoverable=False,
-                context={"path": str(path), "vault_path": _to_vault_path(path)},
+                context={"path": str(path), "vault_path": to_vault_path(path)},
             )
 
     merged = _merge_metadata(
@@ -177,7 +162,7 @@ def write_note(
     content_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
     return Success(
         WriteOutcome(
-            vault_path=_to_vault_path(path),
+            vault_path=to_vault_path(path),
             absolute_path=path,
             content_hash=content_hash,
             metadata=merged,
@@ -243,7 +228,7 @@ def move_note(
     content_hash = hashlib.sha256(current.content.encode("utf-8")).hexdigest()
     return Success(
         WriteOutcome(
-            vault_path=_to_vault_path(dst),
+            vault_path=to_vault_path(dst),
             absolute_path=dst,
             content_hash=content_hash,
             metadata=merged,
