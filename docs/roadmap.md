@@ -91,6 +91,8 @@ Move notes from `inbox/` → `Domain/`, `Projects/`, `Archive/` based on confide
 - Confidence gates: ≥0.85 auto-move | 0.60–0.85 stay in inbox, suggest categorization, but flag for human review | <0.60 flag as clueless and need human manual review
 - Every decision → `audit_log` with: timestamp, source note, decision, confidence score, reasoning
 
+> **Tag taxonomy enforcement (TD-019):** `pipelines/classify.py` MUST call `validate_tags` from `core/tags.py` on all AI-generated tags before writing. Tag violations are logged as `TAG_VIOLATION` audit entries — not silently dropped. `core/tags.py` is shared infrastructure built in Phase 1 (capture pipeline); classify just wires it in. Do not skip this step.
+
 > **Do not proceed** to Phase 3 until you can drop a test note into inbox and watch it land in the right folder with an audit entry.
 
 ---
@@ -227,3 +229,4 @@ Low urgency. No stakeholder is waiting for this. Ship it when the deadline press
 - **MCP tools are thin wrappers.** If you find yourself writing logic inside `mcp_server/tools.py`, stop. That logic belongs in a pipeline. The tool just calls the pipeline.
 - **Never add an MCP tool before its pipeline exists and is tested.** A stub tool is a lie.
 - **Scope the MVP hard.** Three MCP tools for the boss demo. Resist the urge to add more before M2.
+- **Every tag-generating pipeline MUST call `validate_tags` from `core/tags.py`.** This applies to capture (Phase 1), classify (Phase 2), promotion (Phase 5), and synthesis (Phase 9). Violations are logged as `TAG_VIOLATION` audit entries — never silently accepted. `NoteMetadata` field validators do NOT enforce the taxonomy (DECISION-019); the pipeline is the only enforcement point. A pipeline that skips `validate_tags` will silently pollute the taxonomy.
