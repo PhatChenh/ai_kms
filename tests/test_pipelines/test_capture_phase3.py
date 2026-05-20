@@ -1,4 +1,4 @@
-"""Phase 3 tests for pipelines/capture.py — store (rename + non-md) + stability gate."""
+"""Phase 3 + Phase 8 tests for pipelines/capture.py."""
 
 from __future__ import annotations
 
@@ -36,6 +36,7 @@ def _make_metadata_result(raw: RawContent, ai_title: str, vault_root: Path):
         summary="A test summary.",
         ai_title=ai_title,
         ai_type="note",
+        ai_domain=None,
         ai_tags=["test"],
         decision=decision,
     )
@@ -318,3 +319,173 @@ async def test_capture_file_accepts_old_enough_file(vault_root, pipeline_ctx, mo
     result = await capture_file(md_file, context=pipeline_ctx)
 
     assert isinstance(result, Success)
+
+
+# ===========================================================================
+# Phase 8 — scan_capture
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_scan_capture_inbox_drop_returns_success(
+    vault_root, db_path, pipeline_ctx, monkeypatch
+):
+    """scan_capture with one new .md in inbox/ returns Success([WriteOutcome])."""
+    from pipelines.capture import scan_capture
+    from vault.writer import WriteOutcome
+    from llm.provider import LLMResponse
+
+    md_file = vault_root / "inbox" / "scan-note.md"
+    md_file.write_text("# Scan Note\n\nBody text here.", encoding="utf-8")
+
+    mtime = md_file.stat().st_mtime
+    monkeypatch.setattr("pipelines.capture.time", MagicMock(time=lambda: mtime + 120))
+
+    mock_provider = AsyncMock()
+    mock_provider.complete.side_effect = [
+        Success(LLMResponse(content="Summary.", model="test", usage={})),
+        Success(LLMResponse(
+            content='{"title": "scan-note", "tags": ["type/capture"]}',
+            model="test",
+            usage={},
+        )),
+    ]
+    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+
+    result = await scan_capture(root=vault_root, db_path=db_path)
+
+    assert isinstance(result, Success)
+    assert len(result.value) == 1
+    assert isinstance(result.value[0], WriteOutcome)
+
+
+@pytest.mark.asyncio
+async def test_scan_capture_non_inbox_drop_returns_success(
+    vault_root, db_path, pipeline_ctx, monkeypatch
+):
+    """scan_capture with one new .md in Projects/foo/ returns Success([WriteOutcome])."""
+    from pipelines.capture import scan_capture
+    from vault.writer import WriteOutcome
+    from llm.provider import LLMResponse
+
+    proj_dir = vault_root / "Projects" / "foo"
+    proj_dir.mkdir(parents=True, exist_ok=True)
+    md_file = proj_dir / "project-note.md"
+    md_file.write_text("# Project Note\n\nContent here.", encoding="utf-8")
+
+    mtime = md_file.stat().st_mtime
+    monkeypatch.setattr("pipelines.capture.time", MagicMock(time=lambda: mtime + 120))
+
+    mock_provider = AsyncMock()
+    mock_provider.complete.side_effect = [
+        Success(LLMResponse(content="Summary.", model="test", usage={})),
+        Success(LLMResponse(
+            content='{"title": "project-note", "tags": ["type/capture"]}',
+            model="test",
+            usage={},
+        )),
+    ]
+    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+
+    result = await scan_capture(root=vault_root, db_path=db_path)
+
+    assert isinstance(result, Success)
+    assert len(result.value) == 1
+    assert isinstance(result.value[0], WriteOutcome)
+
+
+@pytest.mark.asyncio
+async def test_scan_capture_zero_new_files_returns_empty(
+    vault_root, db_path, pipeline_ctx
+):
+    """scan_capture with no new .md files returns Success([])."""
+    from pipelines.capture import scan_capture
+
+    result = await scan_capture(root=vault_root, db_path=db_path)
+
+    assert isinstance(result, Success)
+    assert result.value == []
+
+
+@pytest.mark.asyncio
+async def test_scan_capture_skips_files_failing_stability_gate(
+    vault_root, db_path, pipeline_ctx, monkeypatch
+):
+    """scan_capture skips files that fail the stability gate (recoverable Failure)."""
+    from pipelines.capture import scan_capture
+
+    md_file = vault_root / "inbox" / "fresh.md"
+    md_file.write_text("# Fresh\n\nBody.", encoding="utf-8")
+
+    # time.time() returns mtime + 10 → age = 10s < 60s cooldown → gate fires
+    monkeypatch.setattr(
+        "pipelines.capture.time",
+        MagicMock(time=lambda: md_file.stat().st_mtime + 10),
+    )
+
+    result = await scan_capture(root=vault_root, db_path=db_path)
+
+    assert isinstance(result, Success)
+    assert result.value == []  # file skipped, not captured
+
+
+@pytest.mark.asyncio
+async def test_scan_capture_continues_after_fatal_failure(
+    vault_root, db_path, pipeline_ctx, monkeypatch
+):
+    """scan_capture logs WARNING but continues when one file fails fatally."""
+    from pipelines.capture import scan_capture
+
+    fail_file = vault_root / "inbox" / "fail-note.md"
+    fail_file.write_text("# Fail\n\nBody.", encoding="utf-8")
+    ok_file = vault_root / "inbox" / "ok-note.md"
+    ok_file.write_text("# OK\n\nBody.", encoding="utf-8")
+
+    async def patched_capture_file(path, context=None):
+        if "fail-note" in path.name:
+            return Failure(error="fatal error", recoverable=False, context={})
+        return Success(MagicMock())
+
+    monkeypatch.setattr("pipelines.capture.capture_file", patched_capture_file)
+
+    result = await scan_capture(root=vault_root, db_path=db_path)
+
+    assert isinstance(result, Success)
+    assert len(result.value) == 1  # only ok-note.md captured
+
+
+@pytest.mark.asyncio
+async def test_scan_capture_does_not_recapture_modified_files(
+    vault_root, db_path, pipeline_ctx, monkeypatch
+):
+    """modified entries (in db + on disk, different hash) are not re-captured."""
+    import hashlib
+    import unicodedata
+    from pipelines.capture import scan_capture
+    from vault.writer import WriteOutcome
+    from vault.frontmatter import NoteMetadata
+    import storage.documents as documents_mod
+
+    original_content = "# Known\n\nOriginal content.\n"
+    md_file = vault_root / "inbox" / "known.md"
+    md_file.write_text(original_content, encoding="utf-8")
+
+    # Seed the documents table with the original hash
+    original_hash = hashlib.sha256(
+        unicodedata.normalize("NFC", original_content).encode("utf-8")
+    ).hexdigest()
+    seed_outcome = WriteOutcome(
+        vault_path="inbox/known.md",
+        absolute_path=md_file,
+        content_hash=original_hash,
+        metadata=NoteMetadata(),
+    )
+    documents_mod.upsert(seed_outcome, db_path=db_path)
+
+    # Modify the file → different hash → detect_changes sees it as "modified"
+    md_file.write_text("# Known\n\nModified content.\n", encoding="utf-8")
+
+    result = await scan_capture(root=vault_root, db_path=db_path)
+
+    assert isinstance(result, Success)
+    assert result.value == []  # modified → not in added → not re-captured

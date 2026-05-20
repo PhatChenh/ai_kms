@@ -1,6 +1,6 @@
 # Plan: Capture Pipeline
-_Last updated: 2026-05-20_
-_Status: [~] in progress — Phase 4 done; Phases 5-7 (tag taxonomy) pending_
+_Last updated: 2026-05-21_
+_Status: [~] in progress — Phases 1-8 done; Phase 9 pending_
 
 ## Architecture
 
@@ -56,14 +56,15 @@ Result[RawContent(text=augmented?, source_path=UNCHANGED, is_md)]
   ▼ Stage 3: summarize     [PROMPTS["summarize"].render(text=...)]
 Result[SummarizeResult(raw: RawContent, summary: str)]
   │
-  ▼ Stage 4: metadata      [PROMPTS["extract_metadata"].render(text,summary)]
-  │          + audit.write(decision, pipeline="capture", stage="metadata",
-  │                        outcome="CAPTURED", db_path)
-Result[MetadataResult(raw, summary, ai_title, ai_type, ai_tags, decision)]
+  ▼ Stage 4: metadata      [PROMPTS["extract_metadata"].render(text,summary,domain_list)]
+  │          + validate_tags(ai_tags, taxonomy)   ← Obsidian format check + taxonomy
+  │          + audit.write(outcome="CAPTURED")
+  │          + audit.write(outcome="TAG_VIOLATION") if violations
+Result[MetadataResult(raw, summary, ai_title, ai_type, ai_domain, ai_tags, decision)]
   │
   ▼ Stage 5: store
   ├─ is_md=True  ─▶ read_note(source_path)  [original body, not RawContent.text]
-  │                 NoteMetadata(summary, type, tags, confidence)
+  │                 NoteMetadata(summary, type, domain, tags, confidence)
   │                 rename? → move_note + documents.delete_by_path + documents.upsert
   │                 no rename → write_note + documents.upsert
   │
@@ -324,7 +325,14 @@ points, where context may be None). Never import `CONFIG` at module scope in
 ---
 
 ### Phase 5 — Tag Taxonomy Core
-**Goal**: Define the taxonomy vocabulary in config, build the `TagTaxonomy` dataclass and `validate_tags` function, and write tests against pure logic — no vault or pipeline dependency yet.
+**Goal**: Define the taxonomy vocabulary in config, build the `TagTaxonomy` dataclass and `validate_tags` function (including Obsidian format rules), and write tests against pure logic — no vault or pipeline dependency yet.
+
+**Obsidian tag format rules** (enforced by `_is_valid_obsidian_tag` before taxonomy checks):
+- Allowed chars: letters, digits, `_`, `-`, `/` (for nested tags), accepted Unicode including emoji
+- No spaces or ASCII punctuation outside `[_-/]` (e.g. no `:`, `.`, `!`, `@`, `#`, `"`, etc.)
+- Each segment between `/` must contain at least one non-digit character (e.g. `1984` invalid, `y1984` valid)
+- No empty segments (no double slashes, no leading/trailing slashes)
+- Tags are case-insensitive in Obsidian; stored as-is (casing preserved)
 
 **Steps**:
 1. Create `config/tags.yaml`:
@@ -341,73 +349,16 @@ points, where context may be None). Never import `CONFIG` at module scope in
      - transcript
      - capture
    ```
-2. Create `core/tags.py`:
-   ```python
-   from __future__ import annotations
-   from dataclasses import dataclass
-   from pathlib import Path
-   import yaml
-
-   @dataclass(frozen=True)
-   class TagTaxonomy:
-       allowed_types: frozenset[str]   # from config/tags.yaml
-       valid_domains: frozenset[str]   # from vault Domain/ folder scan
-
-   def validate_tags(
-       tags: list[str],
-       taxonomy: TagTaxonomy,
-   ) -> tuple[list[str], list[str]]:
-       """Return (valid_tags, violations). Violations are human-readable strings."""
-       valid: list[str] = []
-       violations: list[str] = []
-       type_tags_seen = 0
-
-       for tag in tags:
-           if tag.startswith("type/"):
-               value = tag[len("type/"):]
-               if value in taxonomy.allowed_types:
-                   valid.append(tag)
-                   type_tags_seen += 1
-               else:
-                   violations.append(f"unknown type tag: {tag!r}")
-           elif tag.startswith("domain/"):
-               value = tag[len("domain/"):]
-               if value in taxonomy.valid_domains:
-                   valid.append(tag)
-               else:
-                   violations.append(f"unknown domain tag: {tag!r} — not in Domain/ folders")
-           elif "/" in tag:
-               violations.append(f"free tag has namespace prefix: {tag!r} — stripped")
-           else:
-               valid.append(tag)
-
-       if type_tags_seen == 0:
-           violations.append("no type/ tag found — AI must assign exactly one")
-       elif type_tags_seen > 1:
-           violations.append(f"multiple type/ tags found ({type_tags_seen}) — only first kept")
-           # De-duplicate: keep first type/ tag, drop the rest
-           seen_type = False
-           deduped: list[str] = []
-           for tag in valid:
-               if tag.startswith("type/"):
-                   if not seen_type:
-                       deduped.append(tag)
-                       seen_type = True
-               else:
-                   deduped.append(tag)
-           valid = deduped
-
-       return valid, violations
-
-
-   def load_taxonomy(tags_yaml_path: Path, valid_domains: frozenset[str]) -> TagTaxonomy:
-       """Load static vocabulary from tags.yaml; accept pre-scanned domain set."""
-       raw = yaml.safe_load(tags_yaml_path.read_text())
-       return TagTaxonomy(
-           allowed_types=frozenset(raw.get("allowed_types", [])),
-           valid_domains=valid_domains,
-       )
-   ```
+2. Create `core/tags.py` with:
+   - `TagTaxonomy` frozen dataclass (`allowed_types`, `valid_domains`)
+   - `_is_valid_obsidian_tag(tag: str) -> bool` — enforces Obsidian format rules before taxonomy checks
+   - `validate_tags(tags, taxonomy) -> (valid, violations)` — runs format check first, then taxonomy checks:
+     - Invalid Obsidian format → dropped with violation, skip remaining checks for that tag
+     - `type/<value>`: must be in `taxonomy.allowed_types`
+     - `domain/<value>`: must be in `taxonomy.valid_domains`
+     - `<ns>/<value>` (other namespace): violation — free tags must not have prefix
+     - After loop: exactly-one-type-tag enforcement (zero → violation; many → keep first, violation)
+   - `load_taxonomy(tags_yaml_path, valid_domains) -> TagTaxonomy` — loads from YAML, takes pre-scanned domains as param (no vault I/O here)
 3. `load_taxonomy` takes `valid_domains` as a parameter — it does NOT scan the vault itself. That scan is in Phase 6 (`vault/paths.py`). This keeps `core/tags.py` dependency-free.
 
 **Files to modify**:
@@ -424,8 +375,14 @@ points, where context may be None). Never import `CONFIG` at module scope in
 - [ ] `validate_tags(["type/report", "type/article", "free-tag"], taxonomy)` → violation "multiple type/ tags", only first type/ kept
 - [ ] `validate_tags` with empty `valid_domains` → any `domain/x` tag is a violation
 - [ ] `load_taxonomy(tags_yaml_path, frozenset(["finance"]))` returns `TagTaxonomy` with `allowed_types` from file and `valid_domains={"finance"}`
+- [ ] `validate_tags(["has space"], taxonomy)` → violation for invalid Obsidian format, tag dropped
+- [ ] `validate_tags(["1984"], taxonomy)` → violation (all-numeric segment), tag dropped
+- [ ] `validate_tags(["y1984", "kebab-case", "snake_case"], taxonomy)` → no format violation (beyond type/ check)
 
-**Status**: [ ] pending
+**Status**: [x] done
+
+**Completed**: 2026-05-20
+**Notes**: `config/tags.yaml` created with 8 allowed_types. `core/tags.py` created with `TagTaxonomy` frozen dataclass, `_is_valid_obsidian_tag` (enforces Obsidian format: no spaces, no invalid punctuation, no all-numeric segments, no empty segments), `validate_tags`, and `load_taxonomy`. Format check runs before taxonomy checks — invalid-format tags are dropped before type/domain lookup. No vault or pipeline dependencies. 452 tests pass.
 
 ---
 
@@ -495,7 +452,10 @@ points, where context may be None). Never import `CONFIG` at module scope in
 - [ ] `PipelineContext` with explicit `taxonomy=TagTaxonomy(...)` passes the taxonomy to stages via `ctx.taxonomy`
 - [ ] `capture_file(path, context=explicit_ctx)` does NOT scan Domain/ folder (no vault I/O for domain loading when context already set)
 
-**Status**: [ ] pending
+**Status**: [x] done
+
+**Completed**: 2026-05-20
+**Notes**: `load_valid_domains(vault_root)` added to `vault/paths.py` — no CONFIG dependency, takes vault root as explicit arg. `PipelineContext` extended with `taxonomy: TagTaxonomy | None = None` field; `TYPE_CHECKING` import of `TagTaxonomy` added to `core/pipeline.py`. `capture_file` in `pipelines/capture.py` extended: when `context is None`, lazy-imports CONFIG, scans Domain/ once, builds taxonomy, constructs full `PipelineContext` with taxonomy before calling `run_pipeline`. When context is provided explicitly, no Domain/ scan occurs. `new_correlation_id` import added to `pipelines/capture.py`. 427 tests pass (no regressions).
 
 ---
 
@@ -642,7 +602,10 @@ points, where context may be None). Never import `CONFIG` at module scope in
 - [ ] `_parse_metadata_json('{"title":"T","type":"report","tags":["type/report"]}')` → strips `type` key, returns `{"title": "T", "tags": ["type/report"]}`
 - [ ] All existing Phase 2 + Phase 4 tests pass after fixture update
 
-**Status**: [ ] pending
+**Status**: [x] done
+
+**Completed**: 2026-05-20
+**Notes**: `prompts/extract_metadata.yaml` rewritten with 3-layer taxonomy instructions and `domain_list` variable. `MetadataResult` extended with `ai_domain: str | None`. `_parse_metadata_json` strips legacy `type` key. `metadata` stage injects `domain_list`, runs `validate_tags` when `ctx.taxonomy` is set, writes second `TAG_VIOLATION` audit entry on violations (non-fatal), derives `ai_type`/`ai_domain` from tags. `store` passes `ai_domain` to `NoteMetadata`. All existing Phase 2/3/4 test fixtures updated (remove `"type"` key from LLM responses, add `ai_domain=None` to `MetadataResult` constructors, add `domain_list` to prompt render calls). `test_llm/test_prompt_loader.py` updated. 439 tests pass, 14 skipped.
 
 ---
 
@@ -711,10 +674,18 @@ points, where context may be None). Never import `CONFIG` at module scope in
 - [ ] `scan_capture` logs WARNING but continues when one file fails fatally
 - [ ] `modified` entries are not re-captured (documents row unchanged)
 
-**Status**: [ ] pending
+**Status**: [x] done
 
+**Completed**: 2026-05-20
+**Notes**: `scan_capture(root, db_path)` added to `pipelines/capture.py` — scans vault via `scan_vault`, diffs against DB via `detect_changes`, captures only `summary.added` entries (modified/deleted ignored). Taxonomy loaded once before the loop. `capture_file` called with explicit `PipelineContext` per file so stability gate uses mock config in tests. `kms capture` CLI updated: `file` arg now optional, `--scan` flag added, `UsageError` raised when neither provided. 6 new tests in `test_capture_phase3.py`. 458 tests pass, 1 skipped (Ollama integration).
+
+# COMMENT: need scan to also detect non md files if that non md file not in attachment (override DECISION-018)
 ---
 
+# COMMENT: scan_capture only processes summary.added. Deletions detected by detect_changes (summary.deleted) are silently ignored — DB accumulates stale rows. summary.moved is also unhandled — scan_capture doesn't call documents.delete_by_path(old_path) + upsert(new_path) for move pairs either. Both are known gaps. The store stage handles deletion/rename within a single capture_file call (when AI renames a note), but the batch scan doesn't reconcile the DB with reality. A vault maintenance command (prune stale rows, sync moves) would need to be a separate phase — not scoped to Phase 8 or 9. => This could be implement, but need to define clearly what we should do in each case of the changes (added, modified, deleted, moved)
+
+# COMMENT: watcher need to trigger update tags if a file change, because user could edit a file, then leave, then the first capture trigger, and then user continue edit. The last_updated and summary and tags need to be updated every time user make edits. Ask Claude if this one should be fix now or defer until co-authoring is implemented
+# COMMENT: Another thing to implement is the Claude Code as a provider. All of this system is benched on that thing, and we yet to build that.
 ### Phase 9 — Watcher
 **Goal**: `kms watch` monitors the **entire vault root** (not just inbox) and calls `capture_file` on any new drop in any non-ignored folder, with debounce to coalesce rapid filesystem events.
 

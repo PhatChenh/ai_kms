@@ -32,6 +32,7 @@ from core.result import Failure, Result, Success
 
 if TYPE_CHECKING:
     from core.config import MainConfig
+    from core.tags import TagTaxonomy
 
 logger = structlog.get_logger(__name__)
 
@@ -51,11 +52,13 @@ class PipelineContext:
         config:         Validated project config. Tests may pass MagicMock().
         correlation_id: UUID stamped on every log line and audit entry in this run.
         db_path:        SQLite path override for tests. None → stages read from config.
+        taxonomy:       Tag taxonomy for validation. None = skip validation.
     """
 
     config: "MainConfig"
     correlation_id: str
     db_path: Path | None = field(default=None)
+    taxonomy: "TagTaxonomy | None" = field(default=None)
 
 
 # ---------------------------------------------------------------------------

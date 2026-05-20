@@ -133,6 +133,32 @@ async def test_raising_stage_returns_failure_not_exception(ctx):
     assert "unexpected" in result.error
 
 
+class TestPipelineContextTaxonomy:
+    def test_taxonomy_none_is_accepted(self, db) -> None:
+        ctx = PipelineContext(
+            config=MagicMock(),
+            correlation_id="x",
+            db_path=db,
+            taxonomy=None,
+        )
+        assert ctx.taxonomy is None
+
+    def test_explicit_taxonomy_accessible_on_ctx(self, db) -> None:
+        from core.tags import TagTaxonomy
+        taxonomy = TagTaxonomy(
+            allowed_types=frozenset(["report"]),
+            valid_domains=frozenset(["finance"]),
+        )
+        ctx = PipelineContext(
+            config=MagicMock(),
+            correlation_id="x",
+            db_path=db,
+            taxonomy=taxonomy,
+        )
+        assert ctx.taxonomy is taxonomy
+        assert ctx.taxonomy.valid_domains == frozenset(["finance"])
+
+
 @pytest.mark.asyncio
 async def test_no_explicit_context_generates_correlation_id(monkeypatch):
     """run_pipeline without context auto-generates a correlation_id in contextvars."""
