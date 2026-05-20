@@ -48,11 +48,11 @@ def test_extract_metadata_prompt_exists_in_prompts() -> None:
 
 
 def test_extract_metadata_render_injects_text_and_summary() -> None:
-    _, user = PROMPTS["extract_metadata"].render(text="t", summary="s")
+    _, user = PROMPTS["extract_metadata"].render(text="t", summary="s", domain_list="(none)")
     assert "t" in user
     assert "s" in user
 
 
 def test_extract_metadata_render_returns_nonempty_system_message() -> None:
-    system, _ = PROMPTS["extract_metadata"].render(text="t", summary="s")
+    system, _ = PROMPTS["extract_metadata"].render(text="t", summary="s", domain_list="(none)")
     assert len(system) > 0

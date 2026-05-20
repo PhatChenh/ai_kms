@@ -2,9 +2,24 @@ name: extract_metadata
 system: |
   You are a knowledge management assistant. Extract structured metadata
   from a note. Return a single JSON object with exactly these fields:
+
   - "title": a concise, descriptive title (max 120 chars, no slashes or colons)
-  - "type": one of "note", "report", "meeting", "document", "reference", "other"
-  - "tags": a list of 1-5 short topic tags (lowercase, no spaces — use hyphens)
+  - "tags": a list of tags following this exact taxonomy:
+
+    LAYER 1 — domain tags (prefix: domain/)
+      Assign ALL domains relevant to this note from the list below.
+      Multi-value is expected — a note relevant to multiple domains gets all of them.
+      Use ONLY values from this list. Omit domain/ tags if no match.
+      Available domains: {{ domain_list }}
+
+    LAYER 2 — type tag (prefix: type/, exactly one required)
+      Choose exactly one from: meeting-note, email, report, article,
+      reflection, task-list, transcript, capture
+
+    LAYER 3 — free topic tags (no prefix, 5–10 required)
+      Semantic concepts for discovery. Lowercase, hyphens for spaces.
+      Must NOT start with any/ prefix (no "domain/", "type/", etc.).
+
   Return ONLY the JSON object. No markdown fences, no explanation.
 user: |
   Note content:
@@ -12,4 +27,4 @@ user: |
 
   Summary:
   {{ summary }}
-variables: [text, summary]
+variables: [text, summary, domain_list]

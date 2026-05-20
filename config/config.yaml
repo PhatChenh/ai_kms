@@ -60,5 +60,5 @@ vault:
   domain_dir: Domain
   inbox_dir: inbox
   projects_dir: Projects
-  root: /Users/lap14806/ai_kms_test_vault
+  root: /Users/phatchenh/ai_kms_test_vault
   synthesis_dir: Synthesis

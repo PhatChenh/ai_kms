@@ -19,6 +19,25 @@ from datetime import date
 from pathlib import Path
 
 
+def load_valid_domains(vault_root: Path) -> frozenset[str]:
+    """Return folder names directly under vault_root/Domain/ as the valid domain set.
+
+    Args:
+        vault_root: Absolute path to the vault root directory.
+
+    Returns:
+        Frozenset of domain folder names. Empty frozenset if Domain/ does not exist.
+        Hidden folders (dotfiles) are excluded.
+    """
+    domain_dir = vault_root / "Domain"
+    if not domain_dir.is_dir():
+        return frozenset()
+    return frozenset(
+        p.name for p in domain_dir.iterdir()
+        if p.is_dir() and not p.name.startswith(".")
+    )
+
+
 def to_vault_path(absolute: Path) -> str:
     """
     Convert an absolute vault file path to an NFC-normalised POSIX vault-relative string.

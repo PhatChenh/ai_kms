@@ -19,6 +19,7 @@ from vault.paths import (
     documentation,
     domain_dir,
     domain_notes,
+    load_valid_domains,
     project_dir,
     project_materials,
     synthesis_week,
@@ -104,6 +105,33 @@ class TestToVaultPath:
         from vault.paths import to_vault_path
         result = to_vault_path(vault_root / "Projects" / "x.md")
         assert "\\" not in result
+
+
+class TestLoadValidDomains:
+    def test_returns_domain_folder_names(self, tmp_path: Path) -> None:
+        vault_root = tmp_path / "vault"
+        domain_dir = vault_root / "Domain"
+        domain_dir.mkdir(parents=True)
+        (domain_dir / "finance").mkdir()
+        (domain_dir / "strategy").mkdir()
+        result = load_valid_domains(vault_root)
+        assert result == frozenset(["finance", "strategy"])
+
+    def test_returns_empty_frozenset_when_domain_folder_absent(self, tmp_path: Path) -> None:
+        vault_root = tmp_path / "vault"
+        vault_root.mkdir()
+        result = load_valid_domains(vault_root)
+        assert result == frozenset()
+
+    def test_excludes_hidden_folders(self, tmp_path: Path) -> None:
+        vault_root = tmp_path / "vault"
+        domain_dir = vault_root / "Domain"
+        domain_dir.mkdir(parents=True)
+        (domain_dir / "finance").mkdir()
+        (domain_dir / ".obsidian").mkdir()
+        result = load_valid_domains(vault_root)
+        assert ".obsidian" not in result
+        assert "finance" in result
 
 
 class TestIdempotent:

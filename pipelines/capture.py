@@ -29,11 +29,13 @@ from vault.paths import to_vault_path
 from vault.reader import read_note
 from vault.writer import WriteOutcome, move_attachment, move_note, write_note
 import core.audit as audit
+from core.logging_setup import new_correlation_id
+from core.tags import validate_tags
 import storage.documents as documents
 
 logger = structlog.get_logger(__name__)
 
-__all__ = ["capture_file"]
+__all__ = ["capture_file", "scan_capture"]
 
 # ---------------------------------------------------------------------------
 # Private intermediate dataclasses (not exported)
@@ -52,6 +54,7 @@ class MetadataResult:
     summary: str
     ai_title: str
     ai_type: str | None
+    ai_domain: str | None
     ai_tags: list[str]
     decision: AIDecision
 
@@ -114,10 +117,8 @@ def _parse_metadata_json(content: str, source_stem: str = "") -> dict | Failure:
         logger.warning("metadata.tags_coerced", got=type(raw_tags).__name__)
         tags = []
 
-    raw_type = parsed.get("type")
-    note_type: str | None = str(raw_type) if raw_type is not None else None
-
-    return {"title": title, "type": note_type, "tags": tags}
+    # Strip legacy "type" key — type is now derived from type/<name> tag
+    return {"title": title, "tags": tags}
 
 
 # ---------------------------------------------------------------------------
@@ -177,8 +178,13 @@ async def summarize(raw: RawContent, ctx: PipelineContext) -> Result[SummarizeRe
 async def metadata(sr: SummarizeResult, ctx: PipelineContext) -> Result[MetadataResult]:
     """Stage 4: extract structured metadata via LLM and write an audit_log row."""
     provider = get_provider("capture", ctx.config)
+    domain_list = (
+        ", ".join(sorted(ctx.taxonomy.valid_domains))
+        if ctx.taxonomy and ctx.taxonomy.valid_domains
+        else "(none — no Domain/ folders configured)"
+    )
     system, user = PROMPTS["extract_metadata"].render(
-        text=sr.raw.text, summary=sr.summary
+        text=sr.raw.text, summary=sr.summary, domain_list=domain_list
     )
     match await provider.complete(system, user):
         case Failure() as f:
@@ -188,6 +194,18 @@ async def metadata(sr: SummarizeResult, ctx: PipelineContext) -> Result[Metadata
             parsed = _parse_metadata_json(resp.content, source_stem=source_stem)
             if isinstance(parsed, Failure):
                 return parsed
+
+            ai_tags: list[str] = parsed.get("tags", [])
+            violations: list[str] = []
+            if ctx.taxonomy is not None:
+                ai_tags, violations = validate_tags(ai_tags, ctx.taxonomy)
+
+            ai_type = next(
+                (t[len("type/"):] for t in ai_tags if t.startswith("type/")), None
+            )
+            ai_domain = next(
+                (t[len("domain/"):] for t in ai_tags if t.startswith("domain/")), None
+            )
 
             source_id = to_vault_path(sr.raw.source_path)
             decision = AIDecision(
@@ -206,16 +224,38 @@ async def metadata(sr: SummarizeResult, ctx: PipelineContext) -> Result[Metadata
                 case Failure() as f:
                     return f
                 case Success():
-                    return Success(
-                        MetadataResult(
-                            raw=sr.raw,
-                            summary=sr.summary,
-                            ai_title=parsed["title"],
-                            ai_type=parsed["type"],
-                            ai_tags=parsed["tags"],
-                            decision=decision,
-                        )
-                    )
+                    pass
+
+            if violations:
+                viol_decision = AIDecision(
+                    action="capture:tag_violation",
+                    confidence=1.0,
+                    reasoning=f"Dropped {len(violations)} tag(s): {violations}",
+                    source_ids=[source_id],
+                )
+                match audit.write(
+                    viol_decision,
+                    pipeline="capture",
+                    stage="metadata",
+                    outcome="TAG_VIOLATION",
+                    db_path=ctx.db_path,
+                ):
+                    case Failure():
+                        logger.warning("tag_violation.audit_failed", violations=violations)
+                    case Success():
+                        pass
+
+            return Success(
+                MetadataResult(
+                    raw=sr.raw,
+                    summary=sr.summary,
+                    ai_title=parsed["title"],
+                    ai_type=ai_type,
+                    ai_domain=ai_domain,
+                    ai_tags=ai_tags,
+                    decision=decision,
+                )
+            )
 
 
 def _find_rename_dst(parent: Path, sanitized_stem: str) -> Path | None:
@@ -239,6 +279,7 @@ async def store(mr: MetadataResult, ctx: PipelineContext) -> Result[WriteOutcome
     note_meta = NoteMetadata(
         summary=mr.summary,
         type=mr.ai_type,
+        domain=mr.ai_domain,
         tags=mr.ai_tags,
         confidence=mr.decision.confidence,
     )
@@ -380,8 +421,36 @@ async def capture_file(
         cooldown = context.config.capture.cooldown_seconds
     else:
         from core.config import CONFIG  # lazy — avoids module-scope vault validation
+        from core.tags import load_taxonomy
+        from vault.paths import load_valid_domains
 
         cooldown = CONFIG.main.capture.cooldown_seconds  # type: ignore[attr-defined]
+
+        age = time.time() - path.stat().st_mtime
+        if age < cooldown:
+            return Failure(
+                error=f"file too recent (age={age:.1f}s < cooldown={cooldown}s); retry later",
+                recoverable=True,
+                context={"path": str(path), "age_seconds": age, "cooldown_seconds": cooldown},
+            )
+
+        valid_domains = load_valid_domains(CONFIG.main.vault.root)  # type: ignore[attr-defined]
+        taxonomy = load_taxonomy(
+            Path(__file__).parent.parent / "config" / "tags.yaml",
+            valid_domains,
+        )
+        context = PipelineContext(
+            config=CONFIG.main,  # type: ignore[attr-defined]
+            db_path=CONFIG.main.database.path,  # type: ignore[attr-defined]
+            correlation_id=new_correlation_id(),
+            taxonomy=taxonomy,
+        )
+        return await run_pipeline(
+            "capture",
+            [extract, enrich_urls, summarize, metadata, store],  # type: ignore[list-item]
+            path,
+            context=context,
+        )
 
     age = time.time() - path.stat().st_mtime
     if age < cooldown:
@@ -397,3 +466,62 @@ async def capture_file(
         path,
         context=context,
     )
+
+
+async def scan_capture(
+    root: Path | None = None,
+    db_path: Path | None = None,
+) -> Result[list[WriteOutcome]]:
+    """Scan vault for un-indexed .md files and run capture_file on each added note.
+
+    Args:
+        root:    Vault root. None → lazy-imports CONFIG.
+        db_path: SQLite path. None → lazy-imports CONFIG.
+
+    Returns:
+        Success([WriteOutcome, ...]) — one per successfully captured file.
+        Failure if scan_vault itself fails (I/O error, permission denied).
+        Modified files are not re-captured; only files absent from the index are processed.
+    """
+    from core.config import CONFIG  # lazy — avoids module-scope vault validation
+    from core.tags import load_taxonomy
+    from vault.indexer import detect_changes, scan_vault
+    from vault.paths import load_valid_domains
+
+    _root: Path = root or CONFIG.main.vault.root  # type: ignore[attr-defined]
+    _db_path: Path = db_path or CONFIG.main.database.path  # type: ignore[attr-defined]
+
+    valid_domains = load_valid_domains(_root)
+    taxonomy = load_taxonomy(
+        Path(__file__).parent.parent / "config" / "tags.yaml",
+        valid_domains,
+    )
+
+    match scan_vault(_root):
+        case Failure() as f:
+            return f
+        case Success(value=entries):
+            match detect_changes(entries, db_path=_db_path):
+                case Failure() as f:
+                    return f
+                case Success(value=summary):
+                    pass
+            outcomes: list[WriteOutcome] = []
+            for entry in summary.added:
+                path = _root / entry.vault_path
+                ctx = PipelineContext(
+                    config=CONFIG.main,  # type: ignore[attr-defined]
+                    db_path=_db_path,
+                    correlation_id=new_correlation_id(),
+                    taxonomy=taxonomy,
+                )
+                match await capture_file(path, context=ctx):
+                    case Success(value=v):
+                        outcomes.append(v)
+                    case Failure(error=e, recoverable=True):
+                        logger.info("scan_capture.skip", path=str(path), reason=e)
+                    case Failure() as f:
+                        logger.warning(
+                            "scan_capture.failed", path=str(path), error=f.error
+                        )
+            return Success(outcomes)
