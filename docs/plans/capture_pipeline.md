@@ -1,6 +1,6 @@
 # Plan: Capture Pipeline
 _Last updated: 2026-05-20_
-_Status: [~] in progress — Phase 4 done_
+_Status: [~] in progress — Phase 4 done; Phases 5-7 (tag taxonomy) pending_
 
 ## Architecture
 
@@ -105,7 +105,7 @@ is a pure top-level `async def` returning `Result[T]`; `run_pipeline` chains
 them and halts on the first `Failure`. The stability gate (mtime cooldown) runs
 before `run_pipeline` as a pre-flight check inside `capture_file`. Config and
 prompts are established first (Phase 1) so later phases can test with real
-config values. The watcher (Phase 6) is the automation layer added last per
+config values. The watcher (Phase 9) is the automation layer added last per
 the "schedulers come last" constraint.
 
 **Config access rule**: Stage functions receive `ctx: PipelineContext`; within
@@ -282,7 +282,7 @@ points, where context may be None). Never import `CONFIG` at module scope in
 ---
 
 ### Phase 4 — CLI wiring + integration test
-**Goal**: `kms capture <file>` runs the full pipeline; an end-to-end integration test confirms audit_log and documents rows are written. No `--scan` yet (added in Phase 5).
+**Goal**: `kms capture <file>` runs the full pipeline; an end-to-end integration test confirms audit_log and documents rows are written. No `--scan` yet (added in Phase 8).
 
 **Steps**:
 1. Replace the `capture` Click command stub in `cli/main.py` (currently raises `NotImplementedError`):
@@ -323,16 +323,353 @@ points, where context may be None). Never import `CONFIG` at module scope in
 
 ---
 
-### Phase 5 — scan_capture + --scan flag
+### Phase 5 — Tag Taxonomy Core
+**Goal**: Define the taxonomy vocabulary in config, build the `TagTaxonomy` dataclass and `validate_tags` function, and write tests against pure logic — no vault or pipeline dependency yet.
+
+**Steps**:
+1. Create `config/tags.yaml`:
+   ```yaml
+   # Controlled vocabulary for type/ tags.
+   # domain/ values are loaded at runtime from vault/Domain/ folder names.
+   allowed_types:
+     - meeting-note
+     - email
+     - report
+     - article
+     - reflection
+     - task-list
+     - transcript
+     - capture
+   ```
+2. Create `core/tags.py`:
+   ```python
+   from __future__ import annotations
+   from dataclasses import dataclass
+   from pathlib import Path
+   import yaml
+
+   @dataclass(frozen=True)
+   class TagTaxonomy:
+       allowed_types: frozenset[str]   # from config/tags.yaml
+       valid_domains: frozenset[str]   # from vault Domain/ folder scan
+
+   def validate_tags(
+       tags: list[str],
+       taxonomy: TagTaxonomy,
+   ) -> tuple[list[str], list[str]]:
+       """Return (valid_tags, violations). Violations are human-readable strings."""
+       valid: list[str] = []
+       violations: list[str] = []
+       type_tags_seen = 0
+
+       for tag in tags:
+           if tag.startswith("type/"):
+               value = tag[len("type/"):]
+               if value in taxonomy.allowed_types:
+                   valid.append(tag)
+                   type_tags_seen += 1
+               else:
+                   violations.append(f"unknown type tag: {tag!r}")
+           elif tag.startswith("domain/"):
+               value = tag[len("domain/"):]
+               if value in taxonomy.valid_domains:
+                   valid.append(tag)
+               else:
+                   violations.append(f"unknown domain tag: {tag!r} — not in Domain/ folders")
+           elif "/" in tag:
+               violations.append(f"free tag has namespace prefix: {tag!r} — stripped")
+           else:
+               valid.append(tag)
+
+       if type_tags_seen == 0:
+           violations.append("no type/ tag found — AI must assign exactly one")
+       elif type_tags_seen > 1:
+           violations.append(f"multiple type/ tags found ({type_tags_seen}) — only first kept")
+           # De-duplicate: keep first type/ tag, drop the rest
+           seen_type = False
+           deduped: list[str] = []
+           for tag in valid:
+               if tag.startswith("type/"):
+                   if not seen_type:
+                       deduped.append(tag)
+                       seen_type = True
+               else:
+                   deduped.append(tag)
+           valid = deduped
+
+       return valid, violations
+
+
+   def load_taxonomy(tags_yaml_path: Path, valid_domains: frozenset[str]) -> TagTaxonomy:
+       """Load static vocabulary from tags.yaml; accept pre-scanned domain set."""
+       raw = yaml.safe_load(tags_yaml_path.read_text())
+       return TagTaxonomy(
+           allowed_types=frozenset(raw.get("allowed_types", [])),
+           valid_domains=valid_domains,
+       )
+   ```
+3. `load_taxonomy` takes `valid_domains` as a parameter — it does NOT scan the vault itself. That scan is in Phase 6 (`vault/paths.py`). This keeps `core/tags.py` dependency-free.
+
+**Files to modify**:
+- `config/tags.yaml` — new file
+- `core/tags.py` — new file
+
+**Test criteria**:
+- [ ] `config/tags.yaml` is valid YAML and `allowed_types` list has exactly 8 values
+- [ ] `validate_tags(["type/report", "domain/finance", "quarterly-kpi"], taxonomy)` → no violations, all three tags valid
+- [ ] `validate_tags(["type/bad-value"], taxonomy)` → violation for unknown type, tag dropped
+- [ ] `validate_tags(["domain/nonexistent"], taxonomy)` → violation for unknown domain, tag dropped
+- [ ] `validate_tags(["status/active"], taxonomy)` → violation for namespaced free tag, tag dropped
+- [ ] `validate_tags([], taxonomy)` → violation "no type/ tag found"
+- [ ] `validate_tags(["type/report", "type/article", "free-tag"], taxonomy)` → violation "multiple type/ tags", only first type/ kept
+- [ ] `validate_tags` with empty `valid_domains` → any `domain/x` tag is a violation
+- [ ] `load_taxonomy(tags_yaml_path, frozenset(["finance"]))` returns `TagTaxonomy` with `allowed_types` from file and `valid_domains={"finance"}`
+
+**Status**: [ ] pending
+
+---
+
+### Phase 6 — Domain Loader + Context Extension
+**Goal**: Scan vault's `Domain/` folder at pipeline startup to populate valid domains; wire `TagTaxonomy` into `PipelineContext` so all stages receive it.
+
+**Steps**:
+1. Add `load_valid_domains(vault_root: Path) -> frozenset[str]` to `vault/paths.py`:
+   ```python
+   def load_valid_domains(vault_root: Path) -> frozenset[str]:
+       """Return folder names directly under vault_root/Domain/ as the valid domain set.
+       Returns empty frozenset if Domain/ does not exist (no hard failure).
+       Hidden folders (dotfiles) are excluded.
+       """
+       domain_dir = vault_root / "Domain"
+       if not domain_dir.is_dir():
+           return frozenset()
+       return frozenset(
+           p.name for p in domain_dir.iterdir()
+           if p.is_dir() and not p.name.startswith(".")
+       )
+   ```
+2. Extend `PipelineContext` in `core/pipeline.py`:
+   ```python
+   @dataclass
+   class PipelineContext:
+       config: MainConfig
+       correlation_id: str
+       db_path: Path
+       taxonomy: TagTaxonomy | None = None   # None = taxonomy validation skipped
+   ```
+   Import guard: `from core.tags import TagTaxonomy` under `if TYPE_CHECKING` to keep the same lazy-import discipline as `MainConfig`.
+3. Extend `capture_file` in `pipelines/capture.py` — build taxonomy before calling `run_pipeline`:
+   ```python
+   async def capture_file(path: Path, context: PipelineContext | None = None) -> Result[WriteOutcome]:
+       import time
+       from core.config import CONFIG  # lazy
+       # ... existing stability gate ...
+       if context is None:
+           from core.tags import load_taxonomy
+           from vault.paths import load_valid_domains
+           valid_domains = load_valid_domains(CONFIG.main.vault.root)
+           taxonomy = load_taxonomy(
+               Path(__file__).parent.parent / "config" / "tags.yaml",
+               valid_domains,
+           )
+           context = PipelineContext(
+               config=CONFIG.main,
+               db_path=CONFIG.main.db.path,
+               correlation_id=new_correlation_id(),
+               taxonomy=taxonomy,
+           )
+       return await run_pipeline("capture", [extract, enrich_urls, summarize, metadata, store], path, context=context)
+   ```
+   When `context` is passed explicitly (tests, `scan_capture`), taxonomy comes from the caller — no vault scan per file.
+
+**Files to modify**:
+- `vault/paths.py` — add `load_valid_domains`
+- `core/pipeline.py` — add `taxonomy` field to `PipelineContext`; `TYPE_CHECKING` import of `TagTaxonomy`
+- `pipelines/capture.py` — extend `capture_file` to build context with taxonomy when none provided
+
+**Test criteria**:
+- [ ] `load_valid_domains(vault_root)` returns folder names from `vault_root/Domain/` as a frozenset
+- [ ] `load_valid_domains(vault_root)` returns `frozenset()` when `Domain/` does not exist
+- [ ] `load_valid_domains(vault_root)` excludes hidden folders (e.g. `.obsidian`)
+- [ ] `PipelineContext(config=mock, correlation_id="x", db_path=tmp, taxonomy=None)` — `taxonomy=None` is accepted (validation skip)
+- [ ] `PipelineContext` with explicit `taxonomy=TagTaxonomy(...)` passes the taxonomy to stages via `ctx.taxonomy`
+- [ ] `capture_file(path, context=explicit_ctx)` does NOT scan Domain/ folder (no vault I/O for domain loading when context already set)
+
+**Status**: [ ] pending
+
+---
+
+### Phase 7 — Prompt Rewrite + Pipeline Validation + Derivation
+**Goal**: The AI receives explicit taxonomy instructions and returns tags in the new format; the `metadata` stage validates, audits violations, and derives `ai_type`/`ai_domain`; `store` passes both derived fields to `NoteMetadata`.
+
+**Steps**:
+1. Rewrite `prompts/extract_metadata.yaml`:
+   ```yaml
+   name: extract_metadata
+   system: |
+     You are a knowledge management assistant. Extract structured metadata
+     from a note. Return a single JSON object with exactly these fields:
+
+     - "title": a concise, descriptive title (max 120 chars, no slashes or colons)
+     - "tags": a list of tags following this exact taxonomy:
+
+       LAYER 1 — domain tags (prefix: domain/)
+         Assign ALL domains relevant to this note from the list below.
+         Multi-value is expected — a note relevant to multiple domains gets all of them.
+         Use ONLY values from this list. Omit domain/ tags if no match.
+         Available domains: {{ domain_list }}
+
+       LAYER 2 — type tag (prefix: type/, exactly one required)
+         Choose exactly one from: meeting-note, email, report, article,
+         reflection, task-list, transcript, capture
+
+       LAYER 3 — free topic tags (no prefix, 5–10 required)
+         Semantic concepts for discovery. Lowercase, hyphens for spaces.
+         Must NOT start with any/ prefix (no "domain/", "type/", etc.).
+
+     Return ONLY the JSON object. No markdown fences, no explanation.
+   user: |
+     Note content:
+     {{ text }}
+
+     Summary:
+     {{ summary }}
+   variables: [text, summary, domain_list]
+   ```
+   Note: `domain_list` renders as a comma-separated string (e.g. `"finance, strategy, ops"`).
+   When `valid_domains` is empty, `domain_list` renders as `"(none — no Domain/ folders configured)"`.
+
+2. Update `metadata` stage in `pipelines/capture.py`:
+   a. Render prompt with `domain_list` injected:
+      ```python
+      domain_list = (
+          ", ".join(sorted(ctx.taxonomy.valid_domains))
+          if ctx.taxonomy and ctx.taxonomy.valid_domains
+          else "(none — no Domain/ folders configured)"
+      )
+      system, user = PROMPTS["extract_metadata"].render(
+          text=sr.raw.text, summary=sr.summary, domain_list=domain_list
+      )
+      ```
+   b. After `_parse_metadata_json` succeeds, run tag validation if taxonomy is set:
+      ```python
+      ai_tags = parsed.get("tags", [])
+      violations: list[str] = []
+      if ctx.taxonomy is not None:
+          ai_tags, violations = validate_tags(ai_tags, ctx.taxonomy)
+      ```
+   c. Build and write main `CAPTURED` audit entry (same as before).
+   d. If violations exist, write a second `TAG_VIOLATION` audit entry:
+      ```python
+      if violations:
+          viol_decision = AIDecision(
+              action="capture:tag_violation",
+              confidence=1.0,   # deterministic check — always 100% accurate
+              reasoning=f"Dropped {len(violations)} tag(s): {violations}",
+              source_ids=[source_id],
+          )
+          match audit.write(viol_decision, pipeline="capture", stage="metadata",
+                            outcome="TAG_VIOLATION", db_path=ctx.db_path):
+              case Failure():
+                  logger.warning("tag_violation.audit_failed", violations=violations)
+              case Success():
+                  pass  # violation logged
+          # TAG_VIOLATION audit failure is NON-FATAL — continue pipeline
+      ```
+   e. Derive `ai_type` and `ai_domain` from validated tags:
+      ```python
+      ai_type = next(
+          (t[len("type/"):] for t in ai_tags if t.startswith("type/")), None
+      )
+      ai_domain = next(
+          (t[len("domain/"):] for t in ai_tags if t.startswith("domain/")), None
+      )
+      ```
+   f. Return `MetadataResult` — add `ai_domain` field:
+      ```python
+      return Success(MetadataResult(
+          raw=sr.raw,
+          summary=sr.summary,
+          ai_title=parsed["title"],
+          ai_type=ai_type,        # derived from type/<name> tag
+          ai_domain=ai_domain,    # derived from first domain/<name> tag (NEW)
+          ai_tags=ai_tags,
+          decision=decision,
+      ))
+      ```
+
+3. Add `ai_domain: str | None` field to `MetadataResult` frozen dataclass in `capture.py`.
+
+4. Update `_parse_metadata_json` — remove `type` key handling (no longer in JSON schema):
+   - Strip `"type"` key from parsed dict before returning (AI may still output it from old training; strip defensively)
+   - `tags` must be a list of strings — same coercion as before
+   - Return `{"title": clean_title, "tags": clean_tags}` (no `type` key)
+
+5. Update `_store_md` and `_store_nonmd` in `store` stage — pass `ai_domain` to `NoteMetadata`:
+   ```python
+   NoteMetadata(
+       summary=mr.summary,
+       type=mr.ai_type,       # derived from type/<name> tag
+       domain=mr.ai_domain,   # derived from first domain/<name> tag (NEW)
+       tags=mr.ai_tags,
+       confidence=mr.decision.confidence,
+   )
+   ```
+
+6. Update existing test fixtures — all mocked LLM responses for the `extract_metadata` prompt must change from old format `{"type": "report", "tags": [...]}` to new format `{"tags": ["type/report", "domain/...", ...]}`. Files to update:
+   - `tests/test_pipelines/test_capture.py` (Phase 2 unit tests)
+   - `tests/test_pipelines/test_capture_integration.py` (Phase 4 integration tests)
+
+**Files to modify**:
+- `prompts/extract_metadata.yaml` — rewrite (add `domain_list` variable, new taxonomy instructions, remove `type` field)
+- `pipelines/capture.py` — `MetadataResult` (add `ai_domain`), `_parse_metadata_json` (strip `type`), `metadata` stage (inject domain_list, validate tags, two audit calls, derive ai_type/ai_domain), `_store_md` + `_store_nonmd` (pass ai_domain)
+- `tests/test_pipelines/test_capture.py` — update mocked LLM responses to new JSON format
+- `tests/test_pipelines/test_capture_integration.py` — update mocked LLM responses
+
+**Test criteria**:
+- [ ] `PROMPTS["extract_metadata"].render(text="t", summary="s", domain_list="finance, ops")` — rendered user string contains "finance, ops"
+- [ ] `PROMPTS["extract_metadata"].render(text="t", summary="s", domain_list="(none — no Domain/ folders configured)")` — renders without error
+- [ ] `metadata` stage with `taxonomy=None` in context: no tag validation called, tags stored as-is (backward-compat)
+- [ ] `metadata` stage with valid taxonomy: `validate_tags` called; valid tags kept; violations produce second `audit_log` row with `outcome="TAG_VIOLATION"`
+- [ ] `metadata` stage with zero violations: exactly one `audit_log` row (`outcome="CAPTURED"`)
+- [ ] `metadata` stage with violations: exactly two `audit_log` rows (`CAPTURED` + `TAG_VIOLATION`)
+- [ ] `TAG_VIOLATION` audit write failure is non-fatal — pipeline continues and returns `Success`
+- [ ] `MetadataResult.ai_type == "report"` when `ai_tags` contains `"type/report"`
+- [ ] `MetadataResult.ai_type is None` when no `type/` tag in `ai_tags`
+- [ ] `MetadataResult.ai_domain == "finance"` when `ai_tags` contains `"domain/finance"`
+- [ ] `MetadataResult.ai_domain is None` when no `domain/` tag in `ai_tags`
+- [ ] `NoteMetadata.domain` in written note matches `mr.ai_domain` (not None when domain/ tag present)
+- [ ] `_parse_metadata_json('{"title":"T","type":"report","tags":["type/report"]}')` → strips `type` key, returns `{"title": "T", "tags": ["type/report"]}`
+- [ ] All existing Phase 2 + Phase 4 tests pass after fixture update
+
+**Status**: [ ] pending
+
+---
+
+### Phase 8 — scan_capture + --scan flag
 **Goal**: `scan_capture` is implemented and `kms capture --scan` is wired; un-indexed `.md` files detected by `detect_changes` are processed.
+
+**Note**: Phase 8 requires Phase 6 (Domain Loader) to be complete first — `scan_capture` must load taxonomy ONCE before the loop and pass via explicit `PipelineContext` to avoid re-scanning `Domain/` for every file.
 
 **Steps**:
 1. Add `scan_capture(root: Path | None = None, db_path: Path | None = None) -> Result[list[WriteOutcome]]` to `pipelines/capture.py`:
    ```python
    async def scan_capture(root=None, db_path=None):
        from core.config import CONFIG  # lazy
+       from core.tags import load_taxonomy
+       from vault.paths import load_valid_domains
+       from core.logging_setup import new_correlation_id
+
        root = root or CONFIG.main.vault.root
        db_path = db_path or CONFIG.main.db.path
+
+       # Load taxonomy once for the entire scan (not per-file)
+       valid_domains = load_valid_domains(root)
+       taxonomy = load_taxonomy(
+           Path(__file__).parent.parent / "config" / "tags.yaml",
+           valid_domains,
+       )
+
        match scan_vault(root):
            case Failure() as f: return f
            case Success(value=entries):
@@ -340,7 +677,13 @@ points, where context may be None). Never import `CONFIG` at module scope in
                outcomes = []
                for entry in summary.added:
                    path = root / entry.vault_path
-                   match await capture_file(path):
+                   ctx = PipelineContext(
+                       config=CONFIG.main,
+                       db_path=db_path,
+                       correlation_id=new_correlation_id(),
+                       taxonomy=taxonomy,    # pre-loaded taxonomy
+                   )
+                   match await capture_file(path, context=ctx):
                        case Success(value=v): outcomes.append(v)
                        case Failure(error=e, recoverable=True):
                            logger.info("scan_capture.skip", path=str(path), reason=e)
@@ -372,7 +715,7 @@ points, where context may be None). Never import `CONFIG` at module scope in
 
 ---
 
-### Phase 6 — Watcher
+### Phase 9 — Watcher
 **Goal**: `kms watch` monitors the **entire vault root** (not just inbox) and calls `capture_file` on any new drop in any non-ignored folder, with debounce to coalesce rapid filesystem events.
 
 **Steps**:
@@ -404,13 +747,32 @@ points, where context may be None). Never import `CONFIG` at module scope in
        import asyncio
        from pathlib import Path
        from core.config import CONFIG  # lazy — cli/main.py already called load_dotenv
+       from core.tags import load_taxonomy
+       from core.pipeline import PipelineContext
+       from core.logging_setup import new_correlation_id
+       from vault.paths import load_valid_domains
        from vault.watcher import VaultWatcher
        from pipelines.capture import capture_file, scan_capture
 
-       def on_drop(path: Path):
-           asyncio.run(capture_file(path))  # each drop runs its own event loop
-
        root = CONFIG.main.vault.root
+       db_path = CONFIG.main.db.path
+
+       # Load taxonomy once at watcher startup
+       valid_domains = load_valid_domains(root)
+       taxonomy = load_taxonomy(
+           Path(__file__).parent.parent / "config" / "tags.yaml",
+           valid_domains,
+       )
+
+       def on_drop(path: Path) -> None:
+           ctx = PipelineContext(
+               config=CONFIG.main,
+               db_path=db_path,
+               correlation_id=new_correlation_id(),
+               taxonomy=taxonomy,    # pre-loaded taxonomy
+           )
+           asyncio.run(capture_file(path, context=ctx))
+
        asyncio.run(scan_capture())  # reconcile files that landed while watcher was down
        watcher = VaultWatcher(root, callback=on_drop)
        watcher.start()
@@ -422,6 +784,7 @@ points, where context may be None). Never import `CONFIG` at module scope in
            watcher.stop()
            watcher.join()
    ```
+   **Note on domain refresh**: The taxonomy is loaded once at `kms watch` startup. New Domain/ folders added while the watcher runs are NOT detected until the watcher is restarted. This is acceptable for Phase 9 — document in `kms watch --help` text.
 
 **Files to modify**:
 - `pyproject.toml` — add `watchdog>=4.0`
@@ -447,9 +810,11 @@ points, where context may be None). Never import `CONFIG` at module scope in
 | # | Question | Blocks | Status |
 |---|---|---|---|
 | OQ-C1 | Where to expose `to_vault_path` | Phase 1 | ✅ Resolved: move to `vault/paths.py` as public function |
-| OQ-C2 | `documents.upsert` changes integer id on rename. Safe for Phase 1 (no FK from audit_log). Phase 7 corrections FK may orphan if note was renamed post-capture. | Phase 7 | Document in TD-C2; defer. |
+| OQ-C2 | `documents.upsert` changes integer id on rename. Safe for Phase 1 (no FK from audit_log). Roadmap Phase 7 (self-learning) corrections FK may orphan if note was renamed post-capture. | Roadmap Phase 7 | Document in TD-C2; defer. |
 | OQ-C4 | `scan_capture` processes `added` only; modified notes not re-captured. | Phase 1 scope | Accept for Phase 1. Note in CLI `--scan` help text. |
 | OQ-C5 | **⚠️ TD-014 flag** — Phase 2 calls `write_note` with AI-filled `NoteMetadata`. Option B merge in `_merge_metadata` treats empty/None caller values as "keep existing." For capture: `tags=[]` (JSON parse fallback) correctly preserves existing tags. But the user has flagged this: _"STOP and surface to user BEFORE implementing."_ Recommended resolution: for Phase 1, `_parse_metadata_json` returns `tags=["unclassified"]` as fallback instead of `tags=[]` — avoids the Option B ambiguity entirely. Confirm before Phase 2 implementation begins. | Phase 2 impl | 🔴 Must confirm before /implement |
+| OQ-C6 | `kms watch` loads taxonomy at startup; new Domain/ folders added while the watcher runs are invisible until restart. Is this acceptable for Phase 9, or does the watcher need periodic taxonomy refresh (e.g. re-scan Domain/ every N minutes)? | Phase 9 | 🟡 Accept for Phase 9. Document in watch help text. Revisit if users report stale domain lists. |
+| OQ-C7 | When `validate_tags` finds no `type/` tag (zero-type violation), the pipeline continues with `ai_type=None` and writes a note with `type=None` in frontmatter. Is that acceptable, or should zero-type be a recoverable Failure that re-prompts the LLM once? | Phase 7 | 🟡 Accept None for Phase 7 — retrying LLM adds latency and complexity. FLAG in audit log (violation entry covers it). |
 
 ## Out of Scope
 
@@ -459,4 +824,7 @@ points, where context may be None). Never import `CONFIG` at module scope in
 - User explicit URL flagging via frontmatter `fetch_urls:` list — TD-016, Phase 1+ (post-watcher)
 - FTS5 indexing — Phase 3 (retrieval layer)
 - MCP tools for capture — no tool before pipeline is tested (cross-phase constraint)
-- Per-section authorship tracking — TD-006, Phase 7+
+- Per-section authorship tracking — TD-006, roadmap Phase 7+
+- **Taxonomy enforcement in classify pipeline** — Phase 2 (classify) will also generate tags; it must apply the same `validate_tags` logic from `core/tags.py`. That wiring belongs in the classify plan, not here. `core/tags.py` is shared infrastructure.
+- **Periodic taxonomy refresh in watcher** — watcher loads domains once at startup; Domain/ folder changes while watcher runs are not detected (OQ-C6). Dynamic refresh deferred post-Phase 9.
+- **LLM retry on zero-type violation** — if AI returns no `type/` tag, pipeline continues with `ai_type=None` and logs TAG_VIOLATION. Retry logic (re-prompt once) is deferred (OQ-C7).
