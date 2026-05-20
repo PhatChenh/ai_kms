@@ -112,14 +112,25 @@ if confidence > 0.85:   # hardcoded threshold — hook will block this
 ```
 
 **4. Handler Registry — new source = new file only**
+
+`BaseHandler` + `HandlerRegistry` are scoped to **filesystem drops only** — the
+interface takes `Path` and dispatches by file extension. URLs / YouTube /
+Slack / email are NOT registry handlers; they are inline pipeline stages
+that augment a filesystem drop (see `handlers/url_fetcher.py` for the
+canonical pattern and rationale).
+
 ```python
-# Good — drop a new file, register, done
+# Good — drop a new file-format handler, register, done
 @HandlerRegistry.register
-class YouTubeHandler(BaseHandler):
-    def can_handle(self, source: str) -> bool: ...
-    def extract(self, source: str) -> Result[RawContent]: ...
+class EpubHandler(BaseHandler):
+    def can_handle(self, path: Path) -> bool:
+        return path.suffix.lower() == ".epub"
+    def extract(self, path: Path) -> Result[RawContent]: ...
 
 # Bad — adding a new elif to a central dispatch function
+# Bad — registering a UrlHandler / YouTubeHandler (those are pipeline
+#       stages, not registry handlers — would scope-conflict with
+#       MarkdownHandler for notes containing both prose and links)
 ```
 
 **5. Prompts as Config — never hardcode prompts**

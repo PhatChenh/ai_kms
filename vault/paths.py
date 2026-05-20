@@ -14,8 +14,25 @@ sub-paths that require a name or date argument.
 
 from __future__ import annotations
 
+import unicodedata
 from datetime import date
 from pathlib import Path
+
+
+def to_vault_path(absolute: Path) -> str:
+    """
+    Convert an absolute vault file path to an NFC-normalised POSIX vault-relative string.
+
+    Args:
+        absolute: Absolute path to a file inside the vault root.
+
+    Returns:
+        POSIX-style path relative to the vault root, NFC-normalised for consistent
+        SQLite storage on macOS (which uses NFD internally for filenames).
+    """
+    from core.config import CONFIG
+    rel = absolute.relative_to(CONFIG.main.vault.root).as_posix()
+    return unicodedata.normalize("NFC", rel)
 
 
 def project_dir(name: str) -> Path:

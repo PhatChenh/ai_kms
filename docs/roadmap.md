@@ -81,6 +81,7 @@ linked YT/web content is a later enhancement, not a Phase 1 video handler.
 
 ## Phase 2 — Classify + Route _(Roadmap Feature 2)_
 
+### **IMPORTANT NOTE**: The AI need to decide to move the note in WHICH subfolder inside `Domain/`, `Projects/`, `Archive/` - not just the big one, but actually the subfolders. This would require the AI to understand what projects/domains the users is working on, and which it should put the file to
 
 Move notes from `inbox/` → `Domain/`, `Projects/`, `Archive/` based on confidence gates.
 

@@ -181,6 +181,26 @@ class LoggingConfig(BaseModel):
     console: bool     = True
 
 
+class HandlersConfig(BaseModel):
+    """Limits applied by handlers/* for filesystem and web extraction.
+
+    All values are hard caps; exceeding them returns Failure(recoverable=False).
+    Adjust in config/config.yaml under `handlers:`.
+    """
+    max_file_size_bytes:       int = Field(50 * 1024 * 1024, ge=1)   # 50 MB
+    max_web_fetch_bytes:       int = Field(10 * 1024 * 1024, ge=1)   # 10 MB
+    web_fetch_timeout_seconds: int = Field(30, ge=1)
+    dns_resolve_timeout_seconds: int = Field(5, ge=1)
+    max_redirects:             int = Field(5, ge=0)
+
+
+class CaptureConfig(BaseModel):
+    """Tunable parameters for the capture pipeline. Adjust in config/config.yaml."""
+
+    cooldown_seconds: int = Field(60, ge=0)
+    max_urls_per_note: int = Field(3, ge=0)
+
+
 class MainConfig(BaseModel):
     """
     Composite model for config/config.yaml.
@@ -196,6 +216,8 @@ class MainConfig(BaseModel):
     mcp:              MCPConfig           = Field(default_factory=MCPConfig)
     self_learning:    SelfLearningConfig  = Field(default_factory=SelfLearningConfig)
     logging:          LoggingConfig       = Field(default_factory=LoggingConfig)
+    handlers:         HandlersConfig      = Field(default_factory=HandlersConfig)
+    capture:          CaptureConfig       = Field(default_factory=CaptureConfig)
     env:              Env                 = "dev"
 
     @model_validator(mode="after")

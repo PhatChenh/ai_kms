@@ -31,7 +31,7 @@ from core.logging_setup import new_correlation_id
 from core.result import Failure, Result, Success
 
 if TYPE_CHECKING:
-    from core.config import Config
+    from core.config import MainConfig
 
 logger = structlog.get_logger(__name__)
 
@@ -53,7 +53,7 @@ class PipelineContext:
         db_path:        SQLite path override for tests. None → stages read from config.
     """
 
-    config: "Config"
+    config: "MainConfig"
     correlation_id: str
     db_path: Path | None = field(default=None)
 
@@ -104,7 +104,7 @@ async def run_pipeline(
         from core.config import CONFIG
 
         cid = new_correlation_id()
-        context = PipelineContext(config=CONFIG, correlation_id=cid)
+        context = PipelineContext(config=CONFIG.main, correlation_id=cid)
     else:
         bind_contextvars(correlation_id=context.correlation_id)
 

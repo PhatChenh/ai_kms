@@ -79,6 +79,33 @@ class TestSynthesisWeek:
         assert result.name == "2026-W17.md"
 
 
+class TestToVaultPath:
+    """to_vault_path converts absolute path to NFC-normalised POSIX vault-relative string."""
+
+    def test_returns_posix_relative_path(self, vault_root: Path):
+        from vault.paths import to_vault_path
+        result = to_vault_path(vault_root / "inbox" / "note.md")
+        assert result == "inbox/note.md"
+
+    def test_nested_path_includes_full_relative_segments(self, vault_root: Path):
+        from vault.paths import to_vault_path
+        result = to_vault_path(vault_root / "Projects" / "foo" / "bar.md")
+        assert result == "Projects/foo/bar.md"
+
+    def test_result_is_nfc_normalised(self, vault_root: Path):
+        import unicodedata
+        from vault.paths import to_vault_path
+        # NFD Vietnamese name (decomposed) — macOS stores filenames this way
+        nfd_name = unicodedata.normalize("NFD", "nôi-dung.md")
+        result = to_vault_path(vault_root / "inbox" / nfd_name)
+        assert result == unicodedata.normalize("NFC", f"inbox/{nfd_name}")
+
+    def test_result_uses_forward_slashes(self, vault_root: Path):
+        from vault.paths import to_vault_path
+        result = to_vault_path(vault_root / "Projects" / "x.md")
+        assert "\\" not in result
+
+
 class TestIdempotent:
     def test_helpers_idempotent(self, vault_root: Path):
         for _ in range(2):

@@ -7,9 +7,13 @@ summarise stage, which handles the no-content case.
 TD-H1: Table cell text is not extracted. python-docx exposes doc.tables but
 iterating them is deferred to Phase 3+. Document the limitation here so the
 LLM stage can flag notes with tables as potentially incomplete.
+
+Files larger than CONFIG.main.handlers.max_file_size_bytes are rejected before
+any parse work to keep a single drop from OOMing the capture process.
 """
 from pathlib import Path
 
+import structlog
 from docx import Document
 
 from handlers.base import BaseHandler, RawContent
@@ -17,6 +21,8 @@ from handlers.registry import HandlerRegistry
 from core.result import Failure, Result, Success
 
 __all__ = ["DocxHandler"]
+
+logger = structlog.get_logger(__name__)
 
 
 @HandlerRegistry.register
@@ -28,36 +34,46 @@ class DocxHandler(BaseHandler):
     """
 
     def can_handle(self, path: Path) -> bool:
-        """Return True for .docx files (case-insensitive).
-
-        Args:
-            path: Path to the dropped file.
-
-        Returns:
-            True if the file extension is .docx regardless of case.
-        """
         return path.suffix.lower() == ".docx"
 
     def extract(self, path: Path) -> Result[RawContent]:
-        """Extract paragraph text from a DOCX file.
+        # Lazy import — see handlers/pdf_handler.py for rationale.
+        from core.config import CONFIG
 
-        Args:
-            path: Path to the .docx file.
+        max_bytes = CONFIG.main.handlers.max_file_size_bytes
 
-        Returns:
-            Success(RawContent) with paragraph text joined by newlines, is_md=False.
-            Empty DOCX returns Success with text="" (not Failure).
-            Failure(recoverable=False) if python-docx raises any exception
-            (corrupt file, missing file, not a DOCX, etc.).
-        """
+        try:
+            size = path.stat().st_size
+        except OSError as exc:
+            logger.warning("docx.stat.failed", path=str(path), error=str(exc))
+            return Failure(
+                error=f"DOCX stat failed: {exc}",
+                recoverable=False,
+                context={"path": str(path)},
+            )
+
+        if size > max_bytes:
+            logger.warning(
+                "docx.too_large", path=str(path), size=size, limit=max_bytes
+            )
+            return Failure(
+                error=f"DOCX too large: {size} > {max_bytes} bytes",
+                recoverable=False,
+                context={"path": str(path), "size": size, "limit": max_bytes},
+            )
+
         try:
             doc = Document(str(path))
             text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
         except Exception as exc:
+            logger.warning("docx.read.failed", path=str(path), error=str(exc))
             return Failure(
                 error=f"DOCX read failed: {exc}",
                 recoverable=False,
                 context={"path": str(path)},
             )
 
+        logger.info(
+            "docx.extract.ok", path=str(path), chars=len(text), bytes=size
+        )
         return Success(RawContent(text=text, source_path=path, is_md=False))

@@ -225,15 +225,39 @@ def test_move_note_blocked_when_locked(vault_root):
     assert src.read_bytes() == src_bytes
 
 
+def test_overwrite_with_empty_tags_clears_tags(vault_root):
+    """Pipeline-level merge: tags=[] on second write clears tags; no Option B fallback."""
+    from vault.writer import write_note
+
+    path = vault_root / "inbox" / "note.md"
+    write_note(path, "body", NoteMetadata(tags=["meeting", "q2"]), actor="ai")
+    result = write_note(path, "body", NoteMetadata(tags=[]), actor="ai")
+
+    assert isinstance(result, Success)
+    assert result.value.metadata.tags == []
+
+
+def test_overwrite_with_none_project_clears_project(vault_root):
+    """Pipeline-level merge: project=None on second write clears project."""
+    from vault.writer import write_note
+
+    path = vault_root / "inbox" / "note.md"
+    write_note(path, "body", NoteMetadata(project="Alpha"), actor="ai")
+    result = write_note(path, "body", NoteMetadata(project=None), actor="ai")
+
+    assert isinstance(result, Success)
+    assert result.value.metadata.project is None
+
+
 def test_unicode_normalization_on_vault_path(vault_root):
     """vault_path returned by write_note is NFC even when the path has NFD characters."""
-    from vault.writer import _to_vault_path
+    from vault.paths import to_vault_path
 
     # Construct path with NFD 'é' (e + combining accent)
     nfd_name = "caf́e.md"
     nfd_path = vault_root / "inbox" / nfd_name
 
-    result = _to_vault_path(nfd_path)
+    result = to_vault_path(nfd_path)
 
     nfc_expected = unicodedata.normalize("NFC", f"inbox/{nfd_name}")
     assert result == nfc_expected
