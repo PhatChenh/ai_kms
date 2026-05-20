@@ -1,6 +1,6 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-05-18 (vault_layer review session)_
+_Last updated: 2026-05-20 (vault_layer finalization)_
 
 ## Current Position
 **Phase**: Phase 0 — Foundations
@@ -133,6 +133,18 @@ _Last updated: 2026-05-18 (vault_layer review session)_
 - **Rationale**: `CONFIG` validates vault root at import time. Importing it at module scope in `core/pipeline.py` would make the pipeline unimportable on machines without the vault. Lazy import keeps the module importable in test environments.
 - **Constraint for future phases**: This pattern (lazy CONFIG import inside function body, not module scope) applies to any module that is imported by tests but doesn't require real vault config at import time.
 
+### [DECISION-017] Vietnamese filename normalization via Unicode NFC
+- **Source**: `docs/plans/vault_layer.md` — Phase 4 (writer.py) OQ-V6 resolution
+- **Decision**: Apply `unicodedata.normalize("NFC", ...)` to `vault_path` strings before storing in SQLite and before comparing paths from filesystem scans.
+- **Rationale**: macOS stores filenames in NFD (decomposed form); Python may read them as NFD strings. Vietnamese filenames use tonal diacritics (ă, â, đ, ê, ô, ơ, ư + combining tone marks). Without NFC, the same filename can produce two different Python strings depending on how it was read, causing indexer to report spurious "deleted + added" for the same note.
+- **Constraint for future phases**: `vault/writer.py` applies NFC in `_to_vault_path()` before returning `vault_path` in `WriteOutcome`. `vault/indexer.py` applies NFC in `scan_vault()` when computing `VaultEntry.vault_path`. This ensures storage and retrieval use the same normalized form.
+
+### [DECISION-018] Indexer scans only .md files, not binary attachments
+- **Source**: `docs/plans/vault_layer.md` — Phase 6 (indexer.py) design decision
+- **Decision**: `scan_vault()` skips any file that is not `.md` (case-insensitive). Binary files in the vault (PDFs, images, etc.) are not indexed.
+- **Rationale**: (1) The vault contains attachments alongside notes, but attachments are not knowledge artifacts — they have no frontmatter, no body to classify, no hash to track. (2) The `documents` table schema is designed for markdown: vault_path, content_hash, frontmatter fields. Indexing a binary file there is incoherent. (3) PDFs/emails/web articles enter the system as INPUT via handlers (e.g. PDFHandler), not as vault notes. They get captured, summarized, and written as .md. The original attachment is not indexed — its derived note is.
+- **Constraint for future phases**: If a future phase needs to track attachments (e.g. for de-duplication), that would require a separate `attachments` table and a different indexer — not an extension of the markdown indexer. Attachment moves are handled separately by `vault/writer.move_attachment()`, which takes no `updated_by_human` gate and returns `Result[Path]` (not `WriteOutcome`).
+
 ---
 
 ## Technical Debt
@@ -186,3 +198,4 @@ _Last updated: 2026-05-18 (vault_layer review session)_
 | Q-002 | Fine-grained AI vs human authorship per section. `updated_by_human` is whole-note only. If MCP tool needs to show "AI wrote this summary, you wrote this conclusion," a separate design (HTML comments or `edits` table) is required. | Phase 7+ | 🔴 Open |
 | Q-003 | `wal_autocheckpoint` tuning. Reference sets to 100 pages; SQLite default is 1000. Worth adding to `_connect()` before Phase 4 MCP (long-running daemon), or accept default for CLI? | Phase 4 | 🔴 Open |
 | Q-004 | Concurrent `run_pipeline` calls in Phase 4 MCP daemon — `clear_contextvars()` in `new_correlation_id()` will bleed across concurrent runs. Needs scoped contextvars or per-run copies. | Phase 4 | 🔴 Open |
+| Q-005 | Phase 9 watcher design for `updated_by_human` locking strategy. DECISION-002 specifies whole-note lock: if `updated_by_human=True`, no AI writes allowed at all (including metadata-only edits). When Phase 9 watcher detects a human body edit and sets `updated_by_human=True`, should the AI still be allowed to update frontmatter (metadata-only writes) if the body is unchanged, or keep the whole-note lock? | Phase 9 (watcher) | 🔴 Open |
