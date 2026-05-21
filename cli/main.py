@@ -8,6 +8,7 @@ keys come from.
 
 from pathlib import Path
 
+import yaml
 from dotenv import load_dotenv
 
 # Load .env before importing anything that reads environment variables.
@@ -17,7 +18,19 @@ load_dotenv(Path(__file__).parent.parent / ".env", override=False)
 import click  # noqa: E402 — must be after dotenv load
 from core.logging_setup import setup_logging  # noqa: E402
 
-setup_logging(log_level="DEBUG", dev_mode=True)
+# Read logging settings directly from config.yaml — avoids full CONFIG load
+# (which validates vault root) before logging is ready.
+_log_cfg: dict = {}
+try:
+    with open(Path(__file__).parent.parent / "config" / "config.yaml", encoding="utf-8") as _f:
+        _log_cfg = (yaml.safe_load(_f) or {}).get("logging", {})
+except Exception:
+    pass
+
+setup_logging(
+    log_level=str(_log_cfg.get("level", "INFO")),
+    dev_mode=bool(_log_cfg.get("console", True)),
+)
 
 # ---------------------------------------------------------------------------
 # CLI group
