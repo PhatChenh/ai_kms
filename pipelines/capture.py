@@ -472,16 +472,23 @@ async def scan_capture(
     root: Path | None = None,
     db_path: Path | None = None,
 ) -> Result[list[WriteOutcome]]:
-    """Scan vault for un-indexed .md files and run capture_file on each added note.
+    """Scan vault and reconcile all four change types from detect_changes.
+
+    Change types handled:
+    - added:    new .md notes → full capture pipeline
+    - modified: changed .md notes → full re-capture (fresh summary + frontmatter)
+    - deleted:  notes removed from disk → documents row removed
+    - moved:    notes renamed on disk → vault_path updated, integer id preserved (DECISION-001)
+
+    Non-md binary drops are also processed (DECISION-018 override for scan).
 
     Args:
         root:    Vault root. None → lazy-imports CONFIG.
         db_path: SQLite path. None → lazy-imports CONFIG.
 
     Returns:
-        Success([WriteOutcome, ...]) — one per successfully captured file.
+        Success([WriteOutcome, ...]) — one per successfully captured/re-captured file.
         Failure if scan_vault itself fails (I/O error, permission denied).
-        Modified files are not re-captured; only files absent from the index are processed.
     """
     from core.config import CONFIG  # lazy — avoids module-scope vault validation
     from core.tags import load_taxonomy
@@ -524,4 +531,70 @@ async def scan_capture(
                         logger.warning(
                             "scan_capture.failed", path=str(path), error=f.error
                         )
+            # Non-md drops: process binaries not yet in attachment/ folder.
+            # DECISION-018 override: scan_vault only indexes .md; this loop handles binary drops.
+            from vault.indexer import scan_non_md_drops
+
+            _attachment_path: Path = CONFIG.main.vault.attachment_path  # type: ignore[attr-defined]
+            non_md_paths = scan_non_md_drops(_root, _attachment_path)
+            for path in non_md_paths:
+                ctx = PipelineContext(
+                    config=CONFIG.main,  # type: ignore[attr-defined]
+                    db_path=_db_path,
+                    correlation_id=new_correlation_id(),
+                    taxonomy=taxonomy,
+                )
+                match await capture_file(path, context=ctx):
+                    case Success(value=v):
+                        outcomes.append(v)
+                    case Failure(error=e, recoverable=True):
+                        logger.info("scan_capture.skip_nonmd", path=str(path), reason=e)
+                    case Failure() as f:
+                        logger.warning(
+                            "scan_capture.failed_nonmd", path=str(path), error=f.error
+                        )
+
+            # Modified notes: full re-capture (fresh summary + frontmatter via full pipeline).
+            for entry in summary.modified:
+                path = _root / entry.vault_path
+                ctx = PipelineContext(
+                    config=CONFIG.main,  # type: ignore[attr-defined]
+                    db_path=_db_path,
+                    correlation_id=new_correlation_id(),
+                    taxonomy=taxonomy,
+                )
+                match await capture_file(path, context=ctx):
+                    case Success(value=v):
+                        outcomes.append(v)
+                    case Failure(error=e, recoverable=True):
+                        logger.info("scan_capture.skip_modified", path=str(path), reason=e)
+                    case Failure() as f:
+                        logger.warning(
+                            "scan_capture.failed_modified", path=str(path), error=f.error
+                        )
+
+            # Moved notes: update vault_path in-place, preserving integer id (DECISION-001).
+            # ON DELETE CASCADE keeps audit_log and corrections FKs valid without extra code.
+            for old_vault_path, new_entry in summary.moved:
+                match documents.rename(old_vault_path, new_entry.vault_path, db_path=_db_path):
+                    case Failure() as f:
+                        logger.warning(
+                            "scan_capture.rename_failed",
+                            old=old_vault_path,
+                            new=new_entry.vault_path,
+                            error=f.error,
+                        )
+                    case Success():
+                        pass
+
+            # Deleted notes: remove documents row (DECISION-008 CASCADE cleans corrections).
+            for vault_path in summary.deleted:
+                match documents.delete_by_path(vault_path, db_path=_db_path):
+                    case Failure() as f:
+                        logger.warning(
+                            "scan_capture.delete_failed", vault_path=vault_path, error=f.error
+                        )
+                    case Success():
+                        pass
+
             return Success(outcomes)

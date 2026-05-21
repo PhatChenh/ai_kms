@@ -67,3 +67,24 @@ _Key concept: updated_by_human whole-note lock as a blocker for cross-note AI op
 The fixes applied to the plan: (1) removed "inbox" from watcher description/docstring; (2) added explicit test in Phase 3 — non-md PDF dropped in `Projects/foo/` must produce sibling in `Projects/foo/`, not `inbox/`; (3) added non-inbox `.md` integration test in Phase 4; (4) added non-inbox scan test in Phase 5; (5) added non-inbox watcher callback test in Phase 6.
 
 _Key concept: capture-from-everywhere — pipeline scope and test coverage for non-inbox drops_
+
+---
+
+## Phase 10 — Modified/deleted/moved reconciliation
+_Captured: 2026-05-21_
+
+### Exchanges
+
+**Q:** Why do CLI runs not appear in `kms.log` even though logs are visible in the terminal?
+
+**A:** `setup_logging()` was never called in `cli/main.py`. Without that call, structlog has no file handler configured — the stdlib root logger has no `RotatingFileHandler` pointing at `kms.log`. Logs reach the terminal via structlog's default fallback (it prints to stdout when unconfigured), but nothing routes to the file. Fix is two lines at CLI startup: import and call `setup_logging(log_level="DEBUG", dev_mode=True)` after `load_dotenv`.
+
+```python
+# cli/main.py — after load_dotenv
+from core.logging_setup import setup_logging
+setup_logging(log_level="DEBUG", dev_mode=True)
+```
+
+`dev_mode=True` keeps the human-readable console output; the file handler is added on top.
+
+_Key concept: structlog file handler requires explicit setup_logging() call at CLI startup_

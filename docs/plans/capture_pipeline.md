@@ -1,6 +1,6 @@
 # Plan: Capture Pipeline
 _Last updated: 2026-05-21_
-_Status: [~] in progress — Phases 1-8 done; Phase 9 pending_
+_Status: [~] in progress — Phases 1-10 done; Phase 11 pending_
 
 ## Architecture
 
@@ -73,6 +73,100 @@ Result[MetadataResult(raw, summary, ai_title, ai_type, ai_domain, ai_tags, decis
                     documents.upsert(sibling_outcome)
                     source_path.exists()? → move_attachment(src, attachment_dst)
 Result[WriteOutcome]
+```
+
+```
+Extended scan_capture flow (Phases 9 + 10):
+
+scan_capture(root, db_path)
+        │
+        ├─ [Phase 8] scan_vault(root) → list[VaultEntry] (.md only)
+        │                 ↓ detect_changes(entries, db_path) → ChangeSummary
+        │             ├─ .added   [VaultEntry] → capture_file per entry     ← Phase 8 ✅
+        │             ├─ .modified [VaultEntry] → capture_file per entry    ← Phase 10 (full re-capture)
+        │             ├─ .deleted  [str]        → documents.delete_by_path  ← Phase 10
+        │             └─ .moved    [(str,VaultEntry)] → documents.rename    ← Phase 10
+        │
+        └─ [Phase 9] scan_non_md_drops(root, attachment_path) → list[Path]
+                    │ non-md files NOT in attachment/ folder
+                    └─ capture_file per path (same pipeline as direct kms capture <file>)
+                           └─ store: sibling .md created in DROP FOLDER (not moved)
+                                     binary moved to attachment/
+```
+
+```
+scan_non_md_drops decision flow (Phase 9):
+
+Walk vault root (same IGNORE_DIRS + dotfile + sync-conflict rules as scan_vault)
+        │
+        For each file:
+        ├─ path in attachment_path subtree? ─yes─▶ skip  (already captured, pipeline artifact)
+        ├─ file.suffix.lower() == ".md"?    ─yes─▶ skip  (handled by scan_vault / detect_changes)
+        ├─ dotfile or .sync-conflict-*?     ─yes─▶ skip
+        └─ else ────────────────────────────────▶ include (PDF / DOCX / any binary drop)
+```
+
+```
+Idempotency for non-md drops:
+
+PDF lands in inbox/                (not yet captured)
+        ↓
+scan_non_md_drops → finds it → capture_file runs
+        ↓
+store._store_nonmd:
+  sibling = inbox/sanitized.md    (created in DROP LOCATION — stays here)
+  binary  = attachment/report.pdf (moved here)
+        ↓
+Next scan_capture:
+  scan_non_md_drops → PDF now in attachment/ → SKIPPED ✓
+  detect_changes → sibling inbox/sanitized.md → in documents table → no re-add ✓
+```
+
+```
+Phase 10 — modified/deleted/moved reconciliation:
+
+detect_changes() ChangeSummary
+  ├─ .modified [VaultEntry]       ├─ .deleted [str]            ├─ .moved [(str, VaultEntry)]
+  │                                │                             │
+  capture_file(path, ctx)      delete_by_path(vault_path)   rename(old, new.vault_path)
+  (full 5-stage re-capture)    (removes documents row)       (updates path, preserves int id)
+  │                                │                             │
+  WriteOutcome                 Success(1)                    Success(1)
+  (fresh summary + tags         table clean                  audit_log FK still valid
+   written to frontmatter)                                   (DECISION-001)
+```
+
+```
+Watcher event routing (Phase 11):
+
+Event type            src location       dst location      Action
+────────────────────────────────────────────────────────────────────────────
+FileCreated           —                  in vault (not att.) on_create(dst)
+FileCreated           —                  in attachment/      SKIP
+FileModified (.md)    —                  in vault (not att.) on_modify(path)
+FileModified (binary) —                  anywhere            SKIP
+FileDeleted           in vault (not att.) —                  on_delete(path)
+FileDeleted           in attachment/      —                  SKIP
+FileMovedEvent        in vault            in vault (not att.) on_move(src,dst) → rename
+FileMovedEvent        in vault            in attachment/      SKIP (pipeline artifact)
+FileMovedEvent        outside vault       in vault (not att.) on_create(dst)
+
+on_create(path)  → capture_file(path, ctx)               ← .md AND non-md drops
+on_modify(path)  → capture_file(path, ctx)               ← re-capture on edit
+on_delete(path)  → delete_by_path(to_vault_path(path))   ← table cleanup
+on_move(src,dst) → rename(to_vault_path(src), to_vault_path(dst))  ← path update
+```
+
+```
+scan_capture vs watcher — same actions, different triggers:
+
+             startup (kms watch)          watcher (real-time)
+             ─────────────────────        ──────────────────────────────
+.md added    detect_changes.added         FileCreatedEvent → on_create
+non-md added scan_non_md_drops            FileCreatedEvent → on_create (any extension)
+.md modified detect_changes.modified      FileModifiedEvent → on_modify (.md only)
+.md deleted  detect_changes.deleted       FileDeletedEvent → on_delete
+.md moved    detect_changes.moved         FileMovedEvent (internal) → on_move
 ```
 
 ```
@@ -679,15 +773,165 @@ points, where context may be None). Never import `CONFIG` at module scope in
 **Completed**: 2026-05-20
 **Notes**: `scan_capture(root, db_path)` added to `pipelines/capture.py` — scans vault via `scan_vault`, diffs against DB via `detect_changes`, captures only `summary.added` entries (modified/deleted ignored). Taxonomy loaded once before the loop. `capture_file` called with explicit `PipelineContext` per file so stability gate uses mock config in tests. `kms capture` CLI updated: `file` arg now optional, `--scan` flag added, `UsageError` raised when neither provided. 6 new tests in `test_capture_phase3.py`. 458 tests pass, 1 skipped (Ollama integration).
 
-# COMMENT: need scan to also detect non md files if that non md file not in attachment (override DECISION-018)
 ---
 
-# COMMENT: scan_capture only processes summary.added. Deletions detected by detect_changes (summary.deleted) are silently ignored — DB accumulates stale rows. summary.moved is also unhandled — scan_capture doesn't call documents.delete_by_path(old_path) + upsert(new_path) for move pairs either. Both are known gaps. The store stage handles deletion/rename within a single capture_file call (when AI renames a note), but the batch scan doesn't reconcile the DB with reality. A vault maintenance command (prune stale rows, sync moves) would need to be a separate phase — not scoped to Phase 8 or 9. => This could be implement, but need to define clearly what we should do in each case of the changes (added, modified, deleted, moved)
+### Phase 9 — Non-md drop detection in scan_capture
+**Goal**: `scan_capture` processes non-md files (PDFs, DOCX, etc.) dropped anywhere in the vault outside the `attachment/` folder — applies the full capture pipeline (sibling `.md` created at the drop location, binary moved to `attachment/`). Overrides DECISION-018 for `scan_capture` only; `scan_vault` is unchanged.
 
-# COMMENT: watcher need to trigger update tags if a file change, because user could edit a file, then leave, then the first capture trigger, and then user continue edit. The last_updated and summary and tags need to be updated every time user make edits. Ask Claude if this one should be fix now or defer until co-authoring is implemented
-# COMMENT: Another thing to implement is the Claude Code as a provider. All of this system is benched on that thing, and we yet to build that.
-### Phase 9 — Watcher
-**Goal**: `kms watch` monitors the **entire vault root** (not just inbox) and calls `capture_file` on any new drop in any non-ignored folder, with debounce to coalesce rapid filesystem events.
+**Idempotency**: After successful capture the binary is moved to `attachment/`. On the next `scan_capture`, `scan_non_md_drops` only returns files NOT in `attachment/` — the processed binary is invisible. If capture fails partway (sibling created but binary not moved), `capture_file` runs again; the store's re-capture guard handles it gracefully.
+
+**Steps**:
+1. Add `scan_non_md_drops(root: Path, attachment_path: Path) -> list[Path]` to `vault/indexer.py`:
+   - Walk vault root with the same `IGNORE_DIRS` + dotfile + `.sync-conflict-*` filters as `scan_vault`.
+   - Skip any file whose absolute path is inside `attachment_path` subtree (`attachment_path in path.parents`).
+   - Skip `.md` files (handled by `scan_vault`).
+   - Return a plain `list[Path]` — no `Result` wrapping; per-file I/O errors silently skip (same partial-success pattern as `scan_vault`).
+   - Export `scan_non_md_drops` in `vault/indexer.py`'s `__all__`.
+
+2. Extend `scan_capture` in `pipelines/capture.py` — after the `summary.added` loop, add:
+   ```python
+   # Non-md drops: process binaries not yet in attachment/ folder.
+   # DECISION-018 override: scan_vault only indexes .md; this loop handles binary drops.
+   from vault.indexer import scan_non_md_drops
+   _attachment_path: Path = CONFIG.main.vault.attachment_path  # type: ignore[attr-defined]
+   non_md_paths = scan_non_md_drops(_root, _attachment_path)
+   for path in non_md_paths:
+       ctx = PipelineContext(
+           config=CONFIG.main,  # type: ignore[attr-defined]
+           db_path=_db_path,
+           correlation_id=new_correlation_id(),
+           taxonomy=taxonomy,
+       )
+       match await capture_file(path, context=ctx):
+           case Success(value=v):
+               outcomes.append(v)
+           case Failure(error=e, recoverable=True):
+               logger.info("scan_capture.skip_nonmd", path=str(path), reason=e)
+           case Failure() as f:
+               logger.warning(
+                   "scan_capture.failed_nonmd", path=str(path), error=f.error
+               )
+   ```
+
+**Files to modify**:
+- `vault/indexer.py` — add `scan_non_md_drops(root, attachment_path) -> list[Path]`
+- `pipelines/capture.py` — extend `scan_capture` with non-md loop after `summary.added` loop
+
+**Test criteria**:
+- [ ] `scan_non_md_drops(root, attachment_path)` returns non-`.md` Paths not in `attachment_path` subtree
+- [ ] `scan_non_md_drops` excludes files in `IGNORE_DIRS`
+- [ ] `scan_non_md_drops` excludes dotfiles and `.sync-conflict-*` files
+- [ ] `scan_non_md_drops` excludes `.md` files
+- [ ] `scan_non_md_drops` returns `[]` when all non-md files are already in `attachment/`
+- [ ] `scan_capture` with one PDF in `inbox/` (not in `attachment/`) → `capture_file` called → sibling `.md` created in `inbox/`, PDF moved to `attachment/`, `WriteOutcome` in result
+- [ ] `scan_capture` with PDF already in `attachment/` → `scan_non_md_drops` skips it → no extra `capture_file` call
+- [ ] `scan_capture` with PDF in `inbox/` AND `.md` notes in `inbox/` → both processed independently; `outcomes` contains results for both
+- [ ] `scan_capture` non-md with unsupported extension (no handler) → `Failure` logged as WARNING, other files continue
+
+**Status**: [x] done
+
+**Completed**: 2026-05-21
+**Notes**: `scan_non_md_drops(root, attachment_path) -> list[Path]` added to `vault/indexer.py` — same skip rules as `scan_vault` (IGNORE_DIRS, dotfiles, `.sync-conflict-*`, symlinks), plus skips `.md` files and files inside `attachment_path` subtree. `scan_capture` extended with non-md loop after `summary.added` loop: calls `capture_file` per non-md path with pre-loaded taxonomy context; logs `scan_capture.skip_nonmd` on recoverable failure, `scan_capture.failed_nonmd` on fatal failure, continues in both cases. Tests use real fixture PDF (`tests/fixtures/sample_text.pdf`) for end-to-end pipeline verification. 452 tests pass (16 skipped/deselected).
+
+---
+
+### Phase 10 — Modified/deleted/moved reconciliation in scan_capture
+**Goal**: `scan_capture` keeps the `documents` table in sync for all change types from `detect_changes`: re-captures modified notes (fresh summary + frontmatter via full pipeline), removes rows for deleted notes, and updates `vault_path` for moved notes without changing integer id.
+
+**Note on implementation order**: Implement Phase 10 before Phase 11 (watcher). Phase 11's `on_modify`/`on_delete`/`on_move` callbacks call the same underlying functions as Phase 10 (`capture_file`, `delete_by_path`, `rename`). Validating the logic in scan_capture first reduces wiring risk.
+
+**Steps**:
+1. In `scan_capture`, after the non-md drop loop (Phase 9), add a `summary.modified` loop. Full re-capture — same pipeline as new captures:
+   ```python
+   for entry in summary.modified:
+       path = _root / entry.vault_path
+       ctx = PipelineContext(
+           config=CONFIG.main,  # type: ignore[attr-defined]
+           db_path=_db_path,
+           correlation_id=new_correlation_id(),
+           taxonomy=taxonomy,
+       )
+       match await capture_file(path, context=ctx):
+           case Success(value=v):
+               outcomes.append(v)
+           case Failure(error=e, recoverable=True):
+               logger.info("scan_capture.skip_modified", path=str(path), reason=e)
+           case Failure() as f:
+               logger.warning(
+                   "scan_capture.failed_modified", path=str(path), error=f.error
+               )
+   ```
+
+2. Add a `summary.moved` loop. `documents.rename` updates `vault_path` in-place, preserving the integer id (DECISION-001). All `audit_log` and future `corrections` FKs remain valid:
+   ```python
+   from storage.documents import rename as rename_doc
+   for old_vault_path, new_entry in summary.moved:
+       match rename_doc(old_vault_path, new_entry.vault_path, db_path=_db_path):
+           case Failure() as f:
+               logger.warning(
+                   "scan_capture.rename_failed",
+                   old=old_vault_path,
+                   new=new_entry.vault_path,
+                   error=f.error,
+               )
+           case Success():
+               pass
+   ```
+
+3. Add a `summary.deleted` loop. `ON DELETE CASCADE` on `corrections.document_id` cleans child rows automatically (DECISION-008):
+   ```python
+   from storage.documents import delete_by_path
+   for vault_path in summary.deleted:
+       match delete_by_path(vault_path, db_path=_db_path):
+           case Failure() as f:
+               logger.warning(
+                   "scan_capture.delete_failed", vault_path=vault_path, error=f.error
+               )
+           case Success():
+               pass
+   ```
+
+4. Update `scan_capture` docstring to reflect all four change types handled.
+
+**Files to modify**:
+- `pipelines/capture.py` — extend `scan_capture` with three new loops (modified, moved, deleted); update docstring
+
+**Test criteria**:
+- [ ] `scan_capture` with one modified `.md` → `capture_file` called again → `documents` row updated, fresh `summary` written to frontmatter
+- [ ] `scan_capture` with one deleted `.md` → `documents.delete_by_path` called → row removed from table
+- [ ] `scan_capture` with one moved `.md` (same content_hash, new path) → `documents.rename` called → `vault_path` updated, integer id unchanged
+- [ ] `scan_capture` modified loop: one file fails with non-recoverable Failure → logged WARNING, other files continue, `Success(outcomes)` still returned
+- [ ] `scan_capture` deleted loop: one `delete_by_path` fails → logged WARNING, other deletes continue
+- [ ] `scan_capture` moved loop: one `rename` fails → logged WARNING, other renames continue
+- [ ] `scan_capture` with zero modified, zero deleted, zero moved → no extra calls made
+
+**Status**: [x] done
+
+**Completed**: 2026-05-21
+**Notes**: `scan_capture` extended with three new loops after the non-md loop: (1) `summary.modified` — full re-capture via `capture_file` with per-file `PipelineContext`; recoverable failures skipped silently, fatal failures logged as WARNING and skipped; (2) `summary.moved` — calls `documents.rename(old, new)` in-place, preserving integer id (DECISION-001); rename failures logged as WARNING, loop continues; (3) `summary.deleted` — calls `documents.delete_by_path`; delete failures logged as WARNING, loop continues. Docstring updated to list all four change types. 7 new tests in `test_capture_phase10.py` cover all plan criteria. Pre-existing test `test_scan_capture_does_not_recapture_modified_files` (Phase 8) still passes coincidentally — its assertion `result.value == []` holds because the real provider call fails without an API key; the authoritative new-behavior test is in `test_capture_phase10.py`. 474 tests pass, 1 skipped (Ollama integration).
+
+---
+
+### Phase 11 — Watcher
+**Goal**: `kms watch` monitors the entire vault root and dispatches four event types — create, modify, delete, move — to the correct handler, with debounce to coalesce rapid filesystem events. Skips all events for files inside `attachment/` (pipeline artifacts).
+
+**Event routing**:
+```
+Event                src              dst               Action
+─────────────────────────────────────────────────────────────────────────
+FileCreatedEvent     —                in vault          on_create(dst)
+                     —                in attachment/    SKIP
+FileModifiedEvent    —                in vault .md      on_modify(path)
+                     —                in vault binary   SKIP  (TD-C6)
+                     —                in attachment/    SKIP
+FileDeletedEvent     in vault         —                 on_delete(path)
+                     in attachment/   —                 SKIP
+FileMovedEvent       in vault         in vault          on_move(src, dst)
+                     in vault         in attachment/    SKIP  (pipeline moved binary)
+                     outside vault    in vault          on_create(dst)  [external drop]
+```
+
+**Debounce with event-type tracking**: debounce map is `dict[str, tuple[Callable, tuple]]` keyed by `str(path)`. Each new event for a path cancels the running timer and stores the latest `(callable, args)`. On fire, dispatch with stored args. Rapid create→modify→delete on the same path results in `on_delete` firing — correct.
 
 **Steps**:
 1. Add `watchdog` to `pyproject.toml` dependencies:
@@ -696,56 +940,91 @@ points, where context may be None). Never import `CONFIG` at module scope in
    ```
 2. Create `vault/watcher.py`:
    ```python
-   # vault/watcher.py — emits paths only; NO pipeline/llm imports
+   # vault/watcher.py — dispatches path events; NO pipeline/llm/core.config imports
    from pathlib import Path
    from typing import Callable
    import threading
    from watchdog.observers import Observer
-   from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileMovedEvent
+   from watchdog.events import (
+       FileSystemEventHandler,
+       FileCreatedEvent,
+       FileModifiedEvent,
+       FileDeletedEvent,
+       FileMovedEvent,
+   )
+   from vault.indexer import IGNORE_DIRS
    ```
-   - `VaultWatcher` class wraps `Observer` + `FileSystemEventHandler`.
-   - `__init__(root: Path, callback: Callable[[Path], None], debounce_seconds: float = 3.0)`.
-   - Ignore list: same as `vault/indexer.py` — `IGNORE_DIRS`, dotfiles, `.sync-conflict-*`.
-   - Debounce: `threading.Timer` per path; each event resets the timer; on fire, call `callback(path)`.
-   - Handle `FileCreatedEvent` and `FileMovedEvent` (dest_path for moved).
-   - `start() / stop()` methods (delegate to `Observer`).
+   - `VaultWatcher.__init__(root: Path, attachment_path: Path, on_create: Callable[[Path], None], on_modify: Callable[[Path], None], on_delete: Callable[[Path], None], on_move: Callable[[Path, Path], None], debounce_seconds: float = 3.0)`.
+   - `_should_skip(path: Path) -> bool`: True if `path` is inside `attachment_path`, is a dotfile, contains `.sync-conflict-`, or is inside an `IGNORE_DIRS` directory anywhere in the path chain.
+   - `_is_internal(path: Path) -> bool`: True if `path` is inside `self._root`.
+   - `on_created(event: FileCreatedEvent)`: skip if `_should_skip(dst)`; else debounce `on_create(dst)`.
+   - `on_modified(event: FileModifiedEvent)`: skip if `_should_skip(path)` OR `path.suffix.lower() != ".md"` (binary modify deferred — TD-C6); else debounce `on_modify(path)`.
+   - `on_deleted(event: FileDeletedEvent)`: skip if `_should_skip(path)`; else debounce `on_delete(path)`.
+   - `on_moved(event: FileMovedEvent)`: skip if `_should_skip(dst)`; elif `_is_internal(src)`: debounce `on_move(src, dst)`; else debounce `on_create(dst)` (external drop via OS move).
+   - `start() / stop() / join()` — delegate to `Observer`.
    - `watcher.py` must NOT import `pipelines/`, `llm/`, or `core.config` at module scope.
+
 3. Add `kms watch` command to `cli/main.py`:
    ```python
    @cli.command()
    def watch() -> None:
-       """Watch vault root; capture new drops from any folder automatically."""
+       """Watch vault root; capture new drops from any folder automatically.
+
+       Taxonomy (Domain/ folders) is loaded once at startup.
+       New Domain/ folders added while the watcher runs require a restart.
+       """
        import asyncio
        from pathlib import Path
-       from core.config import CONFIG  # lazy — cli/main.py already called load_dotenv
+       from core.config import CONFIG
        from core.tags import load_taxonomy
        from core.pipeline import PipelineContext
        from core.logging_setup import new_correlation_id
-       from vault.paths import load_valid_domains
+       from vault.paths import load_valid_domains, to_vault_path
        from vault.watcher import VaultWatcher
        from pipelines.capture import capture_file, scan_capture
+       from storage.documents import delete_by_path, rename as rename_doc
 
        root = CONFIG.main.vault.root
-       db_path = CONFIG.main.db.path
+       db_path = CONFIG.main.database.path
+       attachment_path = CONFIG.main.vault.attachment_path
 
-       # Load taxonomy once at watcher startup
        valid_domains = load_valid_domains(root)
        taxonomy = load_taxonomy(
            Path(__file__).parent.parent / "config" / "tags.yaml",
            valid_domains,
        )
 
-       def on_drop(path: Path) -> None:
-           ctx = PipelineContext(
+       def _make_ctx() -> PipelineContext:
+           return PipelineContext(
                config=CONFIG.main,
                db_path=db_path,
                correlation_id=new_correlation_id(),
-               taxonomy=taxonomy,    # pre-loaded taxonomy
+               taxonomy=taxonomy,
            )
-           asyncio.run(capture_file(path, context=ctx))
+
+       def on_create(path: Path) -> None:
+           asyncio.run(capture_file(path, context=_make_ctx()))
+
+       def on_modify(path: Path) -> None:
+           asyncio.run(capture_file(path, context=_make_ctx()))
+
+       def on_delete(path: Path) -> None:
+           vault_rel = to_vault_path(path)
+           delete_by_path(vault_rel, db_path=db_path)
+
+       def on_move(src: Path, dst: Path) -> None:
+           # Internal vault rename: update path, preserve integer id (DECISION-001)
+           rename_doc(to_vault_path(src), to_vault_path(dst), db_path=db_path)
 
        asyncio.run(scan_capture())  # reconcile files that landed while watcher was down
-       watcher = VaultWatcher(root, callback=on_drop)
+       watcher = VaultWatcher(
+           root=root,
+           attachment_path=attachment_path,
+           on_create=on_create,
+           on_modify=on_modify,
+           on_delete=on_delete,
+           on_move=on_move,
+       )
        watcher.start()
        click.echo(f"Watching {root} — Ctrl-C to stop")
        try:
@@ -755,7 +1034,6 @@ points, where context may be None). Never import `CONFIG` at module scope in
            watcher.stop()
            watcher.join()
    ```
-   **Note on domain refresh**: The taxonomy is loaded once at `kms watch` startup. New Domain/ folders added while the watcher runs are NOT detected until the watcher is restarted. This is acceptable for Phase 9 — document in `kms watch --help` text.
 
 **Files to modify**:
 - `pyproject.toml` — add `watchdog>=4.0`
@@ -763,10 +1041,17 @@ points, where context may be None). Never import `CONFIG` at module scope in
 - `cli/main.py` — add `kms watch` command
 
 **Test criteria**:
-- [ ] `VaultWatcher` fires callback once after debounce window for rapid create events on same path
-- [ ] `VaultWatcher` fires callback for file created in `inbox/` — inbox drop still works
-- [ ] `VaultWatcher` fires callback for file created in `Projects/foo/` — non-inbox drop detected
-- [ ] `VaultWatcher` fires callback for `FileMovedEvent` using `dest_path`
+- [ ] `VaultWatcher` fires `on_create` once after debounce window for rapid create events on same path
+- [ ] `VaultWatcher` fires `on_create` for `.md` file created in `inbox/`
+- [ ] `VaultWatcher` fires `on_create` for `.md` file created in `Projects/foo/` (non-inbox drop)
+- [ ] `VaultWatcher` fires `on_create` for PDF created in `inbox/` (non-md drop)
+- [ ] `VaultWatcher` does NOT fire any callback for events on files inside `attachment/`
+- [ ] `VaultWatcher` fires `on_modify` for `.md` file modified in vault
+- [ ] `VaultWatcher` does NOT fire `on_modify` for a binary (non-`.md`) file modified in vault
+- [ ] `VaultWatcher` fires `on_delete` for `.md` file deleted from vault
+- [ ] `VaultWatcher` fires `on_move(src, dst)` for `.md` moved within vault (both src and dst inside vault root)
+- [ ] `VaultWatcher` fires `on_create(dst)` for `FileMovedEvent` where src is outside vault (external drop via OS move)
+- [ ] `VaultWatcher` does NOT fire for `FileMovedEvent` where dst is inside `attachment/` (pipeline artifact)
 - [ ] `VaultWatcher` ignores dotfiles and `.sync-conflict-*` files
 - [ ] `VaultWatcher` ignores files inside `IGNORE_DIRS` (e.g. `.git/`, `.obsidian/`)
 - [ ] `VaultWatcher` does NOT import any module from `pipelines/` or `llm/`
@@ -782,20 +1067,20 @@ points, where context may be None). Never import `CONFIG` at module scope in
 |---|---|---|---|
 | OQ-C1 | Where to expose `to_vault_path` | Phase 1 | ✅ Resolved: move to `vault/paths.py` as public function |
 | OQ-C2 | `documents.upsert` changes integer id on rename. Safe for Phase 1 (no FK from audit_log). Roadmap Phase 7 (self-learning) corrections FK may orphan if note was renamed post-capture. | Roadmap Phase 7 | Document in TD-C2; defer. |
-| OQ-C4 | `scan_capture` processes `added` only; modified notes not re-captured. | Phase 1 scope | Accept for Phase 1. Note in CLI `--scan` help text. |
+| OQ-C4 | `scan_capture` processes `added` only; modified notes not re-captured. | Phase 8 scope | ✅ Resolved: Phase 10 adds full re-capture for `summary.modified`, plus delete and rename handling. |
 | OQ-C5 | **⚠️ TD-014 flag** — Phase 2 calls `write_note` with AI-filled `NoteMetadata`. Option B merge in `_merge_metadata` treats empty/None caller values as "keep existing." For capture: `tags=[]` (JSON parse fallback) correctly preserves existing tags. But the user has flagged this: _"STOP and surface to user BEFORE implementing."_ Recommended resolution: for Phase 1, `_parse_metadata_json` returns `tags=["unclassified"]` as fallback instead of `tags=[]` — avoids the Option B ambiguity entirely. Confirm before Phase 2 implementation begins. | Phase 2 impl | 🔴 Must confirm before /implement |
-| OQ-C6 | `kms watch` loads taxonomy at startup; new Domain/ folders added while the watcher runs are invisible until restart. Is this acceptable for Phase 9, or does the watcher need periodic taxonomy refresh (e.g. re-scan Domain/ every N minutes)? | Phase 9 | 🟡 Accept for Phase 9. Document in watch help text. Revisit if users report stale domain lists. |
+| OQ-C6 | `kms watch` loads taxonomy at startup; new Domain/ folders added while the watcher runs are invisible until restart. Is this acceptable for Phase 11, or does the watcher need periodic taxonomy refresh? | Phase 11 | 🟡 Accept for Phase 11. Documented in `kms watch` help text. Revisit if users report stale domain lists. |
 | OQ-C7 | When `validate_tags` finds no `type/` tag (zero-type violation), the pipeline continues with `ai_type=None` and writes a note with `type=None` in frontmatter. Is that acceptable, or should zero-type be a recoverable Failure that re-prompts the LLM once? | Phase 7 | 🟡 Accept None for Phase 7 — retrying LLM adds latency and complexity. FLAG in audit log (violation entry covers it). |
 
 ## Out of Scope
 
 - **AI rename disambiguation** (TD-C5): when `.md` rename collides, Phase 1 falls back to suffix. The full strategy — AI reads summaries of both conflicting notes, proposes disambiguated names, may rename both — is deferred. **Hard precondition: must not resume until TD-015 (co-authoring section-merge) replaces the `updated_by_human` whole-note lock.** The reason: renaming an existing note is a write to an already-indexed note; if that note has `updated_by_human=True`, the write is blocked, and silently renaming only the new note while leaving the existing one untouched produces an incoherent result. Once co-authoring lands and per-section ownership replaces the blunt gate, this feature becomes viable.
-- Re-capture of modified (previously-indexed) notes — Phase 2+ feature
+- **Binary lifecycle in `attachment/`** (TD-C6): when a non-md binary in `attachment/` is modified or deleted, the sibling `.md` is unaffected (content_hash unchanged → not in `detect_changes.modified`). Requires reverse lookup (binary → sibling) via a `source_file` queryable column or a new `attachments` table (per DECISION-018). The insertion point is `VaultWatcher._should_skip` — currently returns `True` for all `attachment/` events. A future phase flips this and dispatches to `on_attachment_modify` / `on_attachment_delete` callbacks once the reverse lookup is in place.
 - AI URL triage (Wishlist B: LLM classifies URLs as primary/citation/skip) — TD-017, Phase 2+
 - User explicit URL flagging via frontmatter `fetch_urls:` list — TD-016, Phase 1+ (post-watcher)
 - FTS5 indexing — Phase 3 (retrieval layer)
 - MCP tools for capture — no tool before pipeline is tested (cross-phase constraint)
 - Per-section authorship tracking — TD-006, roadmap Phase 7+
 - **Taxonomy enforcement in classify pipeline** — Phase 2 (classify) will also generate tags; it must apply the same `validate_tags` logic from `core/tags.py`. That wiring belongs in the classify plan, not here. `core/tags.py` is shared infrastructure.
-- **Periodic taxonomy refresh in watcher** — watcher loads domains once at startup; Domain/ folder changes while watcher runs are not detected (OQ-C6). Dynamic refresh deferred post-Phase 9.
+- **Periodic taxonomy refresh in watcher** — watcher loads domains once at startup; Domain/ folder changes while watcher runs are not detected (OQ-C6). Dynamic refresh deferred post-Phase 11.
 - **LLM retry on zero-type violation** — if AI returns no `type/` tag, pipeline continues with `ai_type=None` and logs TAG_VIOLATION. Retry logic (re-prompt once) is deferred (OQ-C7).
