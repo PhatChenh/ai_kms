@@ -322,6 +322,17 @@ repeat the `AskUserQuestion` call. Do not skip this gate on revision
 runs — if a `# COMMENT:` annotation changed the architecture, update
 the diagram and gate again.
 
+### 3f. Mark extension points on the diagram
+
+For every component this plan introduces, mark whether it is open or closed to extension:
+- `[extensible: registry]` — new variants can be added by registering a new class
+- `[extensible: config]` — behavior changes through config/yaml, no code needed
+- `[extensible: protocol]` — implements a Protocol; callers don't depend on the concrete class
+- `[closed]` — adding a variant requires modifying this file
+
+Any component marked `[closed]` that the spec implies will need variants must be
+flagged as a design question before the plan is written.
+
 ---
 
 ## Step 4 — Write the plan
@@ -380,6 +391,13 @@ code block.]
 - No phase should touch more than 3–4 files at once
 - Tests come BEFORE the next phase starts — never at the end
 - If a phase feels too large, split it
+- If a phase introduces a new handler, classifier, or processing step, Phase 1
+  of that feature must define the Protocol (the socket) as a standalone step —
+  before any concrete class. The interface is the deliverable, not the first
+  working implementation.
+- No phase may implement behavior hardcoded to a specific source type, AI
+  provider, or output format without flagging it explicitly as known coupling
+  in the phase's Notes.
 
 ---
 

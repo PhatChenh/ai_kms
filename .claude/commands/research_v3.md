@@ -132,7 +132,7 @@ Wait for the human's decision before proceeding.
 
 ---
 
-## Step 3 — Calibration plan before diving deep  ← NEW
+## Step 3 — Calibration plan before diving deep 
 
 Before starting code investigation, output a calibration plan listing every
 file or component you intend to investigate, with the depth level assigned:
@@ -250,6 +250,13 @@ _Last updated: <date>_
 
 ## Dependencies & Coupling
 [What this touches, what touches it]
+
+## Extension Points
+[For each key class or function in this subsystem: is its behavior
+hardcoded or injectable? List every place where a new variant could
+be swapped in without touching the core pipeline. Flag any place that
+would require code surgery to customize — those are coupling risks.
+Format: component → how it could be extended → what blocks extension today]
 
 ## Open Questions
 [Things you could not determine from reading the code alone — with

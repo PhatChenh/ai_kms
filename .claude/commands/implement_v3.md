@@ -298,6 +298,9 @@ Before marking the phase done, confirm all of these:
 - [ ] No test-only methods in production classes
 - [ ] Typecheck passes on all modified files (including test files) 
 - [ ] No surprises were resolved unilaterally — all were surfaced and approved
+- [ ] Every new processing class implements a Protocol or ABC — no concrete-only classes
+- [ ] No behavior is hardcoded to a specific source type, provider, or format without
+      a # COUPLING: comment explaining why and what would be needed to generalize it
 
 Cannot check all boxes? Something was skipped. Fix it before proceeding.
 

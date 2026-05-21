@@ -74,6 +74,29 @@ Vault/
 
 ---
 
+## Extension Point Rule
+
+Every component that processes, classifies, routes, or stores data must be
+open for extension without modification. Concretely:
+
+- New handler → add a class, register it. Do not touch the pipeline.
+- New behavior → implement the Protocol. Do not add a branch to existing code.
+- New threshold or rule → edit a config file. Do not hardcode it.
+
+**What counts as an extension point:**
+- `Protocol` or `ABC` — callers depend on the interface, not the concrete class
+- Handler registry — new variants self-register at startup
+- Config/YAML key — behavior is data, not logic
+
+**What is a design violation:**
+Adding a new source type, AI provider, output format, or classification rule
+requires touching existing pipeline code. If that is true, the component is
+closed — flag it before implementing, not after.
+
+**How to mark coupling when it's unavoidable:**
+Add a `# COUPLING:` inline comment explaining what would be needed to
+generalize it and why it was not done now.
+
 ## Coding patterns — follow these exactly
 
 **1. Pipeline Pattern**

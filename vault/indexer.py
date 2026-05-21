@@ -71,6 +71,51 @@ class ChangeSummary:
     moved: list[tuple[str, VaultEntry]]
 
 
+def scan_non_md_drops(root: Path, attachment_path: Path) -> list[Path]:
+    """Return non-.md files in the vault that are not inside attachment_path.
+
+    Applies the same skip rules as scan_vault: IGNORE_DIRS, dotfiles,
+    .sync-conflict-* files, and symlinks are excluded. .md files are excluded
+    (they are handled by scan_vault / detect_changes).
+
+    Args:
+        root:            Vault root path.
+        attachment_path: Path to the attachment/ folder. Files inside this
+                         subtree are skipped (they are pipeline artifacts).
+
+    Returns:
+        list[Path] — plain list; per-file I/O errors are silently skipped.
+    """
+    drops: list[Path] = []
+    for dirpath, dirnames, filenames in root.walk():
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if d not in IGNORE_DIRS
+            and not d.startswith(".")
+            and not (dirpath / d).is_symlink()
+        ]
+
+        for name in filenames:
+            if name.startswith("."):
+                continue
+            if ".sync-conflict-" in name:
+                continue
+            if name.lower().endswith(".md"):
+                continue
+
+            file_path = dirpath / name
+            if file_path.is_symlink():
+                continue
+            # Skip files already inside the attachment/ subtree
+            if attachment_path in file_path.parents:
+                continue
+
+            drops.append(file_path)
+
+    return drops
+
+
 def scan_vault(root: Path | None = None) -> Result[list[VaultEntry]]:
     """
     Walk the vault and return VaultEntry for every readable .md note.

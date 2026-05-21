@@ -15,6 +15,9 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env", override=False)
 
 import click  # noqa: E402 — must be after dotenv load
+from core.logging_setup import setup_logging  # noqa: E402
+
+setup_logging(log_level="DEBUG", dev_mode=True)
 
 # ---------------------------------------------------------------------------
 # CLI group

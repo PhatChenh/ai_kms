@@ -248,3 +248,80 @@ def test_detect_changes_does_not_collapse_ambiguous_move(vault_root, db):
     assert cs.moved == []
     assert len(cs.added) == 2
     assert "inbox/orig.md" in cs.deleted
+
+
+# ---------------------------------------------------------------------------
+# scan_non_md_drops tests
+# ---------------------------------------------------------------------------
+
+
+def test_scan_non_md_drops_returns_non_md_paths_not_in_attachment(vault_root):
+    """Returns non-.md files outside attachment/ subtree."""
+    att = vault_root / "attachment"
+    att.mkdir(exist_ok=True)
+    (vault_root / "inbox" / "report.pdf").write_bytes(b"%PDF content")
+    (vault_root / "inbox" / "note.md").write_text("---\n---\nbody", encoding="utf-8")
+    (att / "already.pdf").write_bytes(b"%PDF already captured")
+
+    from vault.indexer import scan_non_md_drops
+
+    result = scan_non_md_drops(vault_root, att)
+    assert len(result) == 1
+    assert result[0] == vault_root / "inbox" / "report.pdf"
+
+
+def test_scan_non_md_drops_excludes_md_files(vault_root):
+    """scan_non_md_drops skips .md files (handled by scan_vault)."""
+    att = vault_root / "attachment"
+    att.mkdir(exist_ok=True)
+    (vault_root / "inbox" / "note.md").write_text("---\n---\nbody", encoding="utf-8")
+
+    from vault.indexer import scan_non_md_drops
+
+    result = scan_non_md_drops(vault_root, att)
+    assert result == []
+
+
+def test_scan_non_md_drops_excludes_ignore_dirs(vault_root):
+    """scan_non_md_drops skips files inside IGNORE_DIRS."""
+    att = vault_root / "attachment"
+    att.mkdir(exist_ok=True)
+    (vault_root / ".git").mkdir()
+    (vault_root / ".git" / "pack.bin").write_bytes(b"git data")
+    (vault_root / "inbox" / "real.pdf").write_bytes(b"%PDF content")
+
+    from vault.indexer import scan_non_md_drops
+
+    result = scan_non_md_drops(vault_root, att)
+    paths = [p.name for p in result]
+    assert "pack.bin" not in paths
+    assert "real.pdf" in paths
+
+
+def test_scan_non_md_drops_excludes_dotfiles(vault_root):
+    """scan_non_md_drops skips dotfiles and .sync-conflict-* files."""
+    att = vault_root / "attachment"
+    att.mkdir(exist_ok=True)
+    (vault_root / "inbox" / ".DS_Store").write_bytes(b"macos junk")
+    (vault_root / "inbox" / "report.sync-conflict-20260514-123456-ABCDEF.pdf").write_bytes(b"conflict")
+    (vault_root / "inbox" / "real.pdf").write_bytes(b"%PDF")
+
+    from vault.indexer import scan_non_md_drops
+
+    result = scan_non_md_drops(vault_root, att)
+    names = [p.name for p in result]
+    assert ".DS_Store" not in names
+    assert not any(".sync-conflict-" in n for n in names)
+    assert "real.pdf" in names
+
+
+def test_scan_non_md_drops_returns_empty_when_all_in_attachment(vault_root):
+    """Returns [] when all non-md files are already inside attachment/."""
+    att = vault_root / "attachment"
+    att.mkdir(exist_ok=True)
+    (att / "captured.pdf").write_bytes(b"%PDF captured")
+
+    from vault.indexer import scan_non_md_drops
+
+    result = scan_non_md_drops(vault_root, att)
+    assert result == []
