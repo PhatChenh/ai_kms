@@ -71,6 +71,9 @@ def get_provider(task: Task, config: MainConfig) -> LLMProvider:
         case "claude":
             from llm.claude_provider import ClaudeProvider
             return ClaudeProvider(config.claude, task=task)
+        case "claude_cli":
+            from llm.claude_cli_provider import ClaudeCliProvider
+            return ClaudeCliProvider(config.claude_cli, task=task)
         case "ollama":
             from llm.ollama_provider import OllamaProvider
             return OllamaProvider(config.ollama, task=task)
@@ -80,5 +83,5 @@ def get_provider(task: Task, config: MainConfig) -> LLMProvider:
         case _:
             raise ValueError(
                 f"Unknown provider '{provider_name}' for task '{task}'. "
-                f"Valid options: 'claude', 'ollama', 'openai'."
+                f"Valid options: 'claude', 'claude_cli', 'ollama', 'openai'."
             )
