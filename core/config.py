@@ -236,12 +236,8 @@ class MainConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_para_context_path(self) -> Self:
-        """Warn (don't crash) if para_context_path is set but missing."""
-        if self.para_context_path and not self.para_context_path.exists():
-            logging.getLogger(__name__).warning(
-                "para_context_path set but not found: %s — classify pipeline will skip PARA context.",
-                self.para_context_path,
-            )
+        """Validator placeholder — warning is emitted once in load_config() to avoid
+        Pydantic v2 re-running this validator when MainConfig is nested inside Config."""
         return self
 
 
@@ -432,12 +428,21 @@ def load_config() -> "Config":
         from pydantic import ValidationError  # local import avoids circular risk
  
         try:
-            return Config(
+            cfg = Config(
                 main=MainConfig(**raw_main),
                 thresholds=Thresholds(**raw_thresholds),
                 routing=Routing(**raw_routing),
                 keys=ApiKeys(),
             )
+            # Warn once here — not in MainConfig.validate_para_context_path, because
+            # Pydantic v2 re-runs model_validators when a nested model is passed to a
+            # parent constructor, causing the warning to appear twice.
+            if cfg.main.para_context_path and not cfg.main.para_context_path.exists():
+                logging.getLogger(__name__).warning(
+                    "para_context_path set but not found: %s — classify pipeline will skip PARA context.",
+                    cfg.main.para_context_path,
+                )
+            return cfg
         except ValidationError as exc:
             raise ConfigError(
                 f"Config validation failed:\n{exc}"

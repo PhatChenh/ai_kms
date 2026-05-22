@@ -585,7 +585,11 @@ async def scan_capture(
                             error=f.error,
                         )
                     case Success():
-                        pass
+                        logger.info(
+                            "scan_capture.renamed",
+                            old=old_vault_path,
+                            new=new_entry.vault_path,
+                        )
 
             # Deleted notes: remove documents row (DECISION-008 CASCADE cleans corrections).
             for vault_path in summary.deleted:

@@ -1,9 +1,9 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-05-20 (Phase 0 complete; Phase 1 checklist created + handlers done)_
+_Last updated: 2026-05-22 (Phase 1 capture pipeline complete — all 11 phases done; watcher double-warning bug fixed)_
 
 ## Current Position
-**Phase**: Phase 1 — Capture ✅ **Phase 0 complete as of 2026-05-20**
+**Phase**: Phase 1 — Capture ✅ **Complete as of 2026-05-21**
 
 **Phase 0 Final Checklist** _(CLOSED)_:
 - [x] core/exceptions.py
@@ -19,21 +19,23 @@ _Last updated: 2026-05-20 (Phase 0 complete; Phase 1 checklist created + handler
 - [x] vault/ (paths.py, frontmatter.py, reader.py, writer.py — complete 2026-05-20)
 - [x] smoke test
 
-**Phase 1 — Capture Checklist** _(In progress — targeting M1 ~15 May 2026)_:
+**Phase 1 — Capture Checklist** _(CLOSED — complete 2026-05-21)_:
 - [x] handlers/base.py (BaseHandler ABC, registry pattern)
 - [x] handlers/__init__.py (HandlerRegistry export + auto-discovery)
 - [x] handlers/markdown_handler.py (extract summary + metadata from .md)
 - [x] handlers/pdf_handler.py (PDF text extraction → summary)
 - [x] handlers/docx_handler.py (DOCX text extraction → summary)
 - [x] handlers/url_fetcher.py (fetch web content; integrated into pipeline stages)
-- [ ] pipelines/capture.py (extract → summarize → extract_metadata → store; 4 pure stages)
-- [ ] prompts/summarize.yaml (AI summarization prompt)
-- [ ] prompts/extract_metadata.yaml (AI metadata extraction prompt)
-- [ ] CLI: `kms capture <file>` (Click command + asyncio.run wrapper)
-- [ ] Phase 1 integration test (end-to-end: .md drop → parsed → upsert → audit)
-- [ ] audit_log wired: every capture writes decision + confidence + source note IDs
+- [x] pipelines/capture.py (5-stage pipeline: extract → enrich_urls → summarize → metadata → store)
+- [x] prompts/summarize.yaml + prompts/extract_metadata.yaml
+- [x] core/tags.py + config/tags.yaml (tag taxonomy + validate_tags)
+- [x] CLI: `kms capture <file>` + `kms capture --scan` + `kms watch`
+- [x] vault/watcher.py (VaultWatcher + debounce via threading.Timer)
+- [x] vault/indexer.py scan_non_md_drops + scan_capture modified/deleted/moved loops
+- [x] 487 tests pass (all capture pipeline phases verified)
+- [x] audit_log wired: every capture writes CAPTURED + TAG_VIOLATION entries
 
-**Next planned work**: Wire handlers → capture pipeline → audit log. Then classify (Phase 2).
+**Next planned work**: Phase 2 — Classify pipeline (roadmap). M1 milestone target passed; classify is the next deliverable.
 
 ---
 
@@ -163,6 +165,13 @@ _Last updated: 2026-05-20 (Phase 0 complete; Phase 1 checklist created + handler
 - **Rationale**: NoteMetadata is used to read all existing vault notes (old and new vocabulary). Adding a strict validator breaks reads of notes captured before the taxonomy change. The pipeline is the right enforcement point — it validates AI output at creation time, not at read time.
 - **Constraint for future phases**: All pipelines that generate tags (capture, classify, synthesis) MUST call `validate_tags` from `core/tags.py`. Tag violations are logged as `TAG_VIOLATION` audit entries (separate from `CAPTURED`). `NoteMetadata.type` is always derived from `type/<name>` tag by stripping prefix; `NoteMetadata.domain` is derived from the first `domain/<name>` tag.
 
+### [DECISION-020] Pydantic v2 `model_validator(mode="after")` side-effects must live in `load_config()`, not in nested model validators
+- **Source**: `core/config.py` — bug fix 2026-05-22; Pydantic v2 re-runs nested `model_validator(mode="after")` validators when a nested model instance is passed to a parent model constructor.
+- **Decision**: Logging side-effects (warnings, info) that should fire exactly once at config load MUST be placed in `load_config()` after the fully-built `Config` object is available — not inside `MainConfig` or other nested model validators.
+- **Alternatives considered**: (a) `model_config = ConfigDict(revalidate_instances='never')` on outer model — tested, does not suppress re-validation of nested validators; (b) class-level `_warned` flag on `MainConfig` — invasive, breaks immutability expectations.
+- **Rationale**: Pydantic v2 re-runs `after` validators on a nested model instance whenever that instance is passed to the parent model's constructor. A validator in `MainConfig` thus fires once during `MainConfig(**raw)` and again during `Config(main=main_instance, ...)` — producing duplicate log output. `load_config()` runs exactly once per singleton load; it is the correct location for once-only side-effects.
+- **Constraint for future phases**: Any new `model_validator(mode="after")` on `MainConfig` or other nested config models MUST NOT produce logging side-effects. All startup warnings and info logs that depend on the fully-validated config belong in `load_config()`, after `Config(...)` construction.
+
 ---
 
 ## Technical Debt
@@ -180,10 +189,10 @@ _Last updated: 2026-05-20 (Phase 0 complete; Phase 1 checklist created + handler
 | TD-009 | `updated_by_human` sync between frontmatter and SQLite | SQLite mirror exists for cheap queries; sync logic is vault/writer.py concern | Phase 1 | research/storage_level.md edge cases |
 | TD-010 | Ollama `httpx` async rewrite | `asyncio.to_thread(requests.post)` is sufficient for Phase 0; only worth revisiting if Ollama becomes performance-critical | Phase 3+ | Out of Scope, `plans/llm_layer.md` |
 | TD-011 | Per-prompt `model` and `temperature` overrides | `Prompt` model has no `model`/`temperature` fields — removed as dead weight. Requires extending `LLMProvider.complete()` signature when needed | Phase 1+ | DECISION-016 + review finding #3 |
-| TD-012 | `cli/main.py` commands: capture, classify, search, briefing | Placeholder stubs raise `NotImplementedError`; wired to pipelines as each phase delivers | Phase 1+ | `cli/main.py` created as dotenv owner (DECISION-014) |
+| TD-012 | `cli/main.py` commands: capture, classify, search, briefing | **Partial**: `capture` + `capture --scan` + `watch` delivered in Phase 1. `classify`, `search`, `briefing` still stub. | Phase 2+ | `cli/main.py` created as dotenv owner (DECISION-014) |
 | TD-013 | `_embedding_model` stored on all providers but not yet routed | Field exists for single-provider portability; Phase 3 retrieval wires it to `sentence-transformers` or provider embedding endpoint | Phase 3 | DECISION-015; Out of Scope, `plans/llm_layer.md` |
 | TD-014 | ~~`write_note` cannot explicitly clear a known field~~ | **RESOLVED 2026-05-20**: Removed Option B merge from `vault/writer.py`. `write_note` now writes exactly what the caller passes. Pipelines must `read_note` first if they want to preserve existing fields. Only `created` is preserved automatically as a factual timestamp invariant. See cross-phase constraint below. | ✅ Resolved | `plans/vault_layer.md` Phase 4 Option B note |
-| TD-015 | `CLAUDE.md` co-authoring needs body section-merge, not just a watcher | `CLAUDE.md` (project/domain index, formerly `project_index.md` / `domain_index.md`) holds an AI-maintained index section AND a human-authored context section in one body. `write_note` replaces the *whole* body — no section merge — and `updated_by_human` is a whole-note gate (DECISION-002). So the Phase 11 watcher cannot just flip `updated_by_human`; it needs a section-aware body merge (e.g. `<!-- AI-INDEX -->...<!-- /AI-INDEX -->` delimiters) so AI index updates do not clobber human context edits. **Interim rule (Option A, decided 2026-05-18):** AI always writes `CLAUDE.md` with `actor="ai"`; `updated_by_human` stays `False` (do NOT set it `True` — that hard-blocks all AI writes); accept that human context edits to `CLAUDE.md` CAN be overwritten by AI index writes until the section-merge lands. The capture/classify pipelines never index `CLAUDE.md` (`indexer.IGNORE_FILES`). | Phase 11 (watcher / co-author) | `plans/vault_layer.md` OQ-V8; review session 2026-05-18 |
+| TD-015 | `CLAUDE.md` co-authoring needs body section-merge, not just a watcher | Watcher (Phase 11) delivered 2026-05-21. Section-merge still deferred. Interim rule: AI writes `CLAUDE.md` with `actor="ai"`; `updated_by_human` stays `False`; human context edits can be overwritten by AI index writes until section-merge lands. | Phase 12+ (post-watcher) | `plans/vault_layer.md` OQ-V8; review session 2026-05-18 |
 | TD-016 | User explicit URL flagging in `enrich_urls` | User marks URLs as crucial via frontmatter `fetch_urls: [url1, url2]` list or inline `#fetch` tag on a URL line. These bypass the structural gate and are always fetched regardless of body length or url count. Implementation: `enrich_urls` reads `fetch_urls` from `RawContent` frontmatter (requires extending `RawContent` or passing note metadata separately) and merges with gate-selected URLs. No changes to stages 3-5. Isolated in `_build_gate` extension point in `enrich_urls`. | Phase 1+ (post-watcher) | `docs/research/capture_pipeline.md` Wishlist A |
 | TD-017 | AI URL triage replacing structural heuristic gate | Before fetching, LLM classifies each URL as `primary \| citation \| skip` using `prompts/url_triage.yaml`. Only `primary` URLs are fetched. Replaces `_should_enrich` structural heuristic with `_ai_triage_urls()` call inside `_build_gate`. Requires: new `prompts/url_triage.yaml`, `_ai_triage_urls(urls, body) → list[str]` helper, LLM call inside `enrich_urls` (adds latency). Gate isolation in `_build_gate` means stages 3-5 need no changes. | Phase 2+ | `docs/research/capture_pipeline.md` Wishlist B |
 | TD-018 | Domain list refresh in `kms watch` | Taxonomy loaded once at watcher startup; new Domain/ folders added while watcher runs are invisible until restart. Acceptable for Phase 11; dynamic refresh deferred. | Post-Phase 11 | OQ-C6, plans/capture_pipeline.md |

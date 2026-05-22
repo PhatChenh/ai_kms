@@ -1,6 +1,6 @@
 # Plan: Capture Pipeline
 _Last updated: 2026-05-21_
-_Status: [~] in progress — Phases 1-10 done; Phase 11 pending_
+_Status: [x] done — all 11 phases complete_
 
 ## Architecture
 
@@ -1057,7 +1057,10 @@ FileMovedEvent       in vault         in vault          on_move(src, dst)
 - [ ] `VaultWatcher` does NOT import any module from `pipelines/` or `llm/`
 - [ ] `kms watch --help` exits 0 (smoke test without starting observer)
 
-**Status**: [ ] pending
+**Status**: [x] done
+
+**Completed**: 2026-05-21
+**Notes**: `vault/watcher.py` created — `_VaultEventHandler` (debounce via `threading.Timer`, `_should_skip` gates attachment/dotfile/sync-conflict/IGNORE_DIRS, `_is_internal` for external-drop detection) + `VaultWatcher` (thin wrapper over watchdog `Observer`). No pipeline/llm/core.config module-scope imports. `kms watch` command added to `cli/main.py` — lazy-imports all heavy deps inside function body, loads taxonomy once at startup, runs `scan_capture()` at boot to reconcile offline drops, starts `VaultWatcher` with 4 callbacks, blocks on `time.sleep(1)` loop until Ctrl-C. `watchdog>=4.0` added to `pyproject.toml` (installed `watchdog==6.0.0`). 18 unit tests in `tests/test_vault/test_watcher.py` (direct `_VaultEventHandler` invocation, no real observer) + 1 CLI smoke test in `tests/test_cli/test_watch_cli.py`. 487 tests pass, 6 deselected (integration/API key tests).
 
 ---
 
