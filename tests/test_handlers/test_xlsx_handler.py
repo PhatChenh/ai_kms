@@ -16,6 +16,7 @@ def xlsx_path(tmp_path: Path) -> Path:
     path = tmp_path / "sample.xlsx"
     wb = openpyxl.Workbook()
     ws = wb.active
+    assert ws is not None
     ws.title = "Revenue"
     ws.append(["Date", "Product", "Amount"])
     ws.append(["2026-01-01", "Widget A", 1200])
@@ -30,6 +31,7 @@ def multi_sheet_path(tmp_path: Path) -> Path:
     path = tmp_path / "multi.xlsx"
     wb = openpyxl.Workbook()
     ws1 = wb.active
+    assert ws1 is not None
     ws1.title = "Q1"
     ws1.append(["Month", "Sales"])
     ws1.append(["Jan", 100])
@@ -46,6 +48,7 @@ def empty_sheet_path(tmp_path: Path) -> Path:
     path = tmp_path / "mixed.xlsx"
     wb = openpyxl.Workbook()
     ws1 = wb.active
+    assert ws1 is not None
     ws1.title = "Data"
     ws1.append(["Name", "Value"])
     ws1.append(["A", 1])
@@ -59,7 +62,9 @@ def all_empty_path(tmp_path: Path) -> Path:
     """Workbook where all sheets have no rows."""
     path = tmp_path / "empty.xlsx"
     wb = openpyxl.Workbook()
-    wb.active.title = "Sheet1"
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Sheet1"
     wb.save(str(path))
     return path
 
@@ -70,6 +75,7 @@ def formula_path(tmp_path: Path) -> Path:
     path = tmp_path / "formula.xlsx"
     wb = openpyxl.Workbook()
     ws = wb.active
+    assert ws is not None
     ws.title = "Calc"
     ws.append(["A", "B", "Sum"])
     ws["C2"] = 42
