@@ -30,6 +30,7 @@ from vault.reader import read_note
 from vault.writer import WriteOutcome, move_attachment, move_note, write_note
 import core.audit as audit
 from core.logging_setup import new_correlation_id
+from core.rename_gate import RenameDecision, decide_rename
 from core.tags import validate_tags
 import storage.documents as documents
 
@@ -82,7 +83,7 @@ def _should_enrich(text: str, urls: list[str], max_urls: int) -> bool:
     return len(urls) <= max_urls and len(body_only) < 500
 
 
-def _parse_metadata_json(content: str, source_stem: str = "") -> dict | Failure:
+def _parse_metadata_json(content: str, source_stem: str = "") -> Result[dict]:
     """Parse LLM JSON metadata response into a validated dict.
 
     Args:
@@ -90,7 +91,7 @@ def _parse_metadata_json(content: str, source_stem: str = "") -> dict | Failure:
         source_stem: Filename stem used as title fallback when title is missing/invalid.
 
     Returns:
-        dict with keys "title", "type", "tags" on success.
+        Success(dict) with keys "title" and "tags" on success.
         Failure(recoverable=False) only on completely unparseable JSON.
         Validation errors (bad types, missing fields) fall back to defaults.
     """
@@ -118,7 +119,7 @@ def _parse_metadata_json(content: str, source_stem: str = "") -> dict | Failure:
         tags = []
 
     # Strip legacy "type" key — type is now derived from type/<name> tag
-    return {"title": title, "tags": tags}
+    return Success({"title": title, "tags": tags})
 
 
 # ---------------------------------------------------------------------------
@@ -191,9 +192,11 @@ async def metadata(sr: SummarizeResult, ctx: PipelineContext) -> Result[Metadata
             return f
         case Success(value=resp):
             source_stem = sr.raw.source_path.stem
-            parsed = _parse_metadata_json(resp.content, source_stem=source_stem)
-            if isinstance(parsed, Failure):
-                return parsed
+            match _parse_metadata_json(resp.content, source_stem=source_stem):
+                case Failure() as f:
+                    return f
+                case Success(value=parsed):
+                    pass
 
             ai_tags: list[str] = parsed.get("tags", [])
             violations: list[str] = []
@@ -226,6 +229,15 @@ async def metadata(sr: SummarizeResult, ctx: PipelineContext) -> Result[Metadata
                 case Success():
                     pass
 
+            logger.info(
+                "metadata.captured",
+                src=str(sr.raw.source_path),
+                ai_title=parsed["title"],
+                ai_type=ai_type,
+                ai_domain=ai_domain,
+                tags=ai_tags,
+            )
+
             if violations:
                 viol_decision = AIDecision(
                     action="capture:tag_violation",
@@ -256,6 +268,44 @@ async def metadata(sr: SummarizeResult, ctx: PipelineContext) -> Result[Metadata
                     decision=decision,
                 )
             )
+
+
+def _audit_rename_gate(
+    decision: RenameDecision, src: Path, ctx: PipelineContext
+) -> None:
+    """Write one audit_log row for a rename gate decision.
+
+    Failures are logged and silently discarded — gate audit is best-effort.
+    Audit log writes MUST be attempted (Phase 8 briefing reads stage="rename_gate"),
+    but a failed write must not abort the capture pipeline itself.
+    """
+    from core.confidence import AIDecision
+
+    ai_decision = AIDecision(
+        action=f"rename_gate:{decision.action.value}",
+        confidence=decision.confidence,
+        reasoning=decision.reason,
+        source_ids=[to_vault_path(src)],
+    )
+    match audit.write(
+        ai_decision,
+        pipeline="capture",
+        stage="rename_gate",
+        outcome=decision.action.value,
+        db_path=ctx.db_path,
+    ):
+        case Failure(error=e):
+            logger.warning("rename_gate.audit_failed", src=str(src), error=e)
+        case Success():
+            pass
+
+    logger.info(
+        "rename_gate.decision",
+        src=src.name,
+        action=decision.action.value,
+        final_stem=decision.final_stem,
+        reason=decision.reason,
+    )
 
 
 def _find_rename_dst(parent: Path, sanitized_stem: str) -> Path | None:
@@ -300,8 +350,21 @@ async def _store_md(
         case Success(value=note):
             original_body = note.content
 
-    sanitized_stem = _sanitize_title(mr.ai_title)
     src = mr.raw.source_path
+
+    # Gate: check if already in documents table (is_existing_doc = Rule 1 SKIP).
+    is_existing_doc = False
+    match documents.get_by_path(to_vault_path(src), db_path=ctx.db_path):
+        case Success(value=row) if row is not None:
+            is_existing_doc = True
+        case _:
+            pass
+
+    decision = decide_rename(
+        src, mr.ai_title, is_existing_doc, config=ctx.config.capture.rename_gate
+    )
+    _audit_rename_gate(decision, src, ctx)
+    sanitized_stem = decision.final_stem
 
     if sanitized_stem != src.stem:
         dst = _find_rename_dst(src.parent, sanitized_stem)
@@ -315,14 +378,39 @@ async def _store_md(
                     pass
             match write_note(dst, original_body, note_meta, actor="ai"):
                 case Failure() as f:
+                    # Disk rename succeeded but content write failed — roll back rename.
+                    match move_note(dst, src, actor="ai"):
+                        case Failure(error=rollback_err):
+                            logger.error(
+                                "store.rename_rollback_failed",
+                                src=str(src),
+                                dst=str(dst),
+                                original_error=f.error,
+                                rollback_error=rollback_err,
+                            )
+                        case Success():
+                            pass
                     return f
                 case Success(value=outcome):
-                    documents.delete_by_path(old_vault_path, db_path=ctx.db_path)
-                    match documents.upsert(outcome, db_path=ctx.db_path):
-                        case Failure() as f:
-                            return f
+                    pass
+            # Atomic DB swap: delete old row + insert new row in one transaction.
+            match documents.replace_path(old_vault_path, outcome, db_path=ctx.db_path):
+                case Failure() as f:
+                    # DB failed — roll back disk rename to restore consistent state.
+                    match move_note(dst, src, actor="ai"):
+                        case Failure(error=rollback_err):
+                            logger.error(
+                                "store.db_replace_rollback_failed",
+                                src=str(src),
+                                dst=str(dst),
+                                original_error=f.error,
+                                rollback_error=rollback_err,
+                            )
                         case Success():
-                            return Success(outcome)
+                            pass
+                    return f
+                case Success():
+                    return Success(outcome)
         else:
             logger.warning(
                 "store.rename_collision_fallback",
@@ -346,12 +434,23 @@ async def _store_md(
 async def _store_nonmd(
     mr: MetadataResult, note_meta: NoteMetadata, ctx: PipelineContext
 ) -> Result[WriteOutcome]:
-    """Handle non-md files: create sibling .md + move binary to attachment/."""
+    """Handle non-md files: move binary to attachment/ first, then create sibling .md.
+
+    Attachment-first ordering ensures no sibling note is written when the binary
+    is unavailable. If the sibling write fails after a successful move, the binary
+    is in attachment/ with no note — recoverable on next scan (see TD-C6).
+    """
     src = mr.raw.source_path
-    sanitized_stem = _sanitize_title(mr.ai_title) or src.stem
     suffix = src.suffix
 
-    sibling = src.parent / f"{sanitized_stem}.md"
+    # Non-md files are never re-processed (DECISION-018) — is_existing_doc=False always.
+    # COUPLING: if DECISION-018 changes and binaries can be re-queued, this must
+    # perform a DB lookup like _store_md does.
+    decision = decide_rename(
+        src, mr.ai_title, is_existing_doc=False, config=ctx.config.capture.rename_gate
+    )
+    _audit_rename_gate(decision, src, ctx)
+    sanitized_stem = decision.final_stem or src.stem
 
     # Resolve attachment destination with collision loop (cap 100)
     attachment_dir: Path = ctx.config.vault.attachment_path
@@ -368,9 +467,21 @@ async def _store_nonmd(
             context={"stem": sanitized_stem, "suffix": suffix},
         )
 
+    # Move binary first — if src is missing, fail before writing anything to vault.
+    match move_attachment(src, attachment_dst):
+        case Failure() as f:
+            return f
+        case Success():
+            pass
+
+    # Binary is confirmed at attachment_dst; write sibling pointing to it.
+    sibling = src.parent / f"{sanitized_stem}.md"
     sibling_body = f"![[{attachment_dst.name}]]"
     match write_note(sibling, sibling_body, note_meta, actor="ai"):
         case Failure() as f:
+            # COUPLING: binary is now in attachment/ with no sibling note.
+            # Cleanup requires reverse-lookup (TD-C6). Returning Failure so
+            # the caller knows the pipeline did not complete cleanly.
             return f
         case Success(value=sibling_outcome):
             pass
@@ -378,18 +489,6 @@ async def _store_nonmd(
     match documents.upsert(sibling_outcome, db_path=ctx.db_path):
         case Failure() as f:
             return f
-
-    if not src.exists():
-        logger.warning(
-            "store.attachment_already_moved",
-            src=str(src),
-            reason="source not found; skipping move_attachment",
-        )
-        return Success(sibling_outcome)
-
-    match move_attachment(src, attachment_dst):
-        case Failure() as f:
-            logger.warning("store.move_attachment_failed", error=f.error)
         case Success():
             pass
 
@@ -399,6 +498,28 @@ async def _store_nonmd(
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
+
+async def _build_default_context() -> PipelineContext:
+    """Build a PipelineContext from CONFIG for callers that don't supply one.
+
+    Lazy-imported to avoid module-scope vault validation in test environments.
+    """
+    from core.config import CONFIG  # lazy — avoids module-scope vault validation
+    from core.tags import load_taxonomy
+    from vault.paths import load_valid_domains
+
+    valid_domains = load_valid_domains(CONFIG.main.vault.root)  # type: ignore[attr-defined]
+    taxonomy = load_taxonomy(
+        Path(__file__).parent.parent / "config" / "tags.yaml",
+        valid_domains,
+    )
+    return PipelineContext(
+        config=CONFIG.main,  # type: ignore[attr-defined]
+        db_path=CONFIG.main.database.path,  # type: ignore[attr-defined]
+        correlation_id=new_correlation_id(),
+        taxonomy=taxonomy,
+    )
 
 
 async def capture_file(
@@ -411,47 +532,15 @@ async def capture_file(
 
     Args:
         path:    Absolute path to the file to capture.
-        context: PipelineContext for tests. None → run_pipeline creates one from CONFIG.
+        context: PipelineContext for tests. None → built from CONFIG via lazy import.
 
     Returns:
         Success(WriteOutcome) on success, or Failure on any stage error.
     """
-    # Stability gate — resolve cooldown from context or lazy CONFIG
-    if context is not None:
-        cooldown = context.config.capture.cooldown_seconds
-    else:
-        from core.config import CONFIG  # lazy — avoids module-scope vault validation
-        from core.tags import load_taxonomy
-        from vault.paths import load_valid_domains
+    if context is None:
+        context = await _build_default_context()
 
-        cooldown = CONFIG.main.capture.cooldown_seconds  # type: ignore[attr-defined]
-
-        age = time.time() - path.stat().st_mtime
-        if age < cooldown:
-            return Failure(
-                error=f"file too recent (age={age:.1f}s < cooldown={cooldown}s); retry later",
-                recoverable=True,
-                context={"path": str(path), "age_seconds": age, "cooldown_seconds": cooldown},
-            )
-
-        valid_domains = load_valid_domains(CONFIG.main.vault.root)  # type: ignore[attr-defined]
-        taxonomy = load_taxonomy(
-            Path(__file__).parent.parent / "config" / "tags.yaml",
-            valid_domains,
-        )
-        context = PipelineContext(
-            config=CONFIG.main,  # type: ignore[attr-defined]
-            db_path=CONFIG.main.database.path,  # type: ignore[attr-defined]
-            correlation_id=new_correlation_id(),
-            taxonomy=taxonomy,
-        )
-        return await run_pipeline(
-            "capture",
-            [extract, enrich_urls, summarize, metadata, store],  # type: ignore[list-item]
-            path,
-            context=context,
-        )
-
+    cooldown = context.config.capture.cooldown_seconds
     age = time.time() - path.stat().st_mtime
     if age < cooldown:
         return Failure(
@@ -537,6 +626,8 @@ async def scan_capture(
 
             _attachment_path: Path = CONFIG.main.vault.attachment_path  # type: ignore[attr-defined]
             non_md_paths = scan_non_md_drops(_root, _attachment_path)
+            if non_md_paths:
+                logger.info("scan_capture.nonmd_found", count=len(non_md_paths))
             for path in non_md_paths:
                 ctx = PipelineContext(
                     config=CONFIG.main,  # type: ignore[attr-defined]

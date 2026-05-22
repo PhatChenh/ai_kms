@@ -186,6 +186,58 @@ def delete_by_path(
         )
 
 
+def replace_path(
+    old_vault_path: str, outcome: WriteOutcome, db_path: Path | None = None
+) -> Result[None]:
+    """Atomically delete the old documents row and upsert from outcome.
+
+    Used by _store_md rename path to avoid a half-commit window where the
+    old row is deleted but the new row is not yet written (or vice versa).
+
+    Args:
+        old_vault_path: vault_path of the row to remove.
+        outcome:        WriteOutcome from write_note on the new path.
+        db_path:        Override DB path.
+
+    Returns:
+        Success(None) or Failure(recoverable=False) on sqlite3.Error.
+        On failure the transaction is rolled back — neither the delete nor
+        the insert is persisted.
+    """
+    title = _derive_title(outcome)
+    meta = outcome.metadata
+    created_at = str(meta.created) if meta.created else None
+
+    try:
+        with get_connection(db_path) as conn:
+            conn.execute("DELETE FROM documents WHERE vault_path = ?", (old_vault_path,))
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO documents
+                    (vault_path, title, summary, note_type, confidence,
+                     updated_at, updated_by_human, content_hash, created_at)
+                VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?, COALESCE(?, datetime('now')))
+                """,
+                (
+                    outcome.vault_path,
+                    title,
+                    meta.summary,
+                    meta.type,
+                    meta.confidence,
+                    1 if meta.updated_by_human else 0,
+                    outcome.content_hash,
+                    created_at,
+                ),
+            )
+        return Success(None)
+    except sqlite3.Error as exc:
+        return Failure(
+            error=str(exc),
+            recoverable=False,
+            context={"old_vault_path": old_vault_path, "new_vault_path": outcome.vault_path, "op": "replace_path"},
+        )
+
+
 def rename(old: str, new: str, db_path: Path | None = None) -> Result[int]:
     """
     Rename a vault_path in the documents table, preserving the row id.

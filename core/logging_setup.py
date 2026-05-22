@@ -120,7 +120,7 @@ def _configure_structlog() -> None:
     ]
 
     structlog.configure(
-        processors=shared_processors,
+        processors=shared_processors,  # type: ignore[arg-type]
         # BoundLogger gives us .info() / .warning() / .error() etc.
         wrapper_class=structlog.stdlib.BoundLogger,
         # stdlib LoggerFactory so structlog.get_logger(__name__) wires up

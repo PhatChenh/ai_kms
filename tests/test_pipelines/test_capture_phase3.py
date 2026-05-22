@@ -76,8 +76,9 @@ async def test_store_md_different_title_renames_note(vault_root, pipeline_ctx):
     from pipelines.capture import store
     from storage.documents import get_by_path
 
-    md_file = vault_root / "inbox" / "old-name.md"
-    md_file.write_text("# Old Name\n\nBody.", encoding="utf-8")
+    # "xkdhgksjfs" is keyboard mash (no vowels) → gate Rule 4 → FULL_RENAME
+    md_file = vault_root / "inbox" / "xkdhgksjfs.md"
+    md_file.write_text("# xkdhgksjfs\n\nBody.", encoding="utf-8")
 
     raw = _make_raw(md_file)
     mr = _make_metadata_result(raw, ai_title="New Title", vault_root=vault_root)
@@ -91,7 +92,7 @@ async def test_store_md_different_title_renames_note(vault_root, pipeline_ctx):
     assert not md_file.exists(), "Old file should be removed after rename"
 
     # documents row for old path should be gone
-    old_row = get_by_path("inbox/old-name.md", db_path=pipeline_ctx.db_path)
+    old_row = get_by_path("inbox/xkdhgksjfs.md", db_path=pipeline_ctx.db_path)
     assert isinstance(old_row, Success)
     assert old_row.value is None
 
@@ -110,8 +111,9 @@ async def test_store_md_different_title_renames_note(vault_root, pipeline_ctx):
 async def test_store_md_rename_collision_tries_suffix(vault_root, pipeline_ctx):
     from pipelines.capture import store
 
-    md_file = vault_root / "inbox" / "original.md"
-    md_file.write_text("# Original\n\nBody.", encoding="utf-8")
+    # "jkqzxvbn" is keyboard mash (no vowels) → gate Rule 4 → FULL_RENAME
+    md_file = vault_root / "inbox" / "jkqzxvbn.md"
+    md_file.write_text("# jkqzxvbn\n\nBody.", encoding="utf-8")
 
     # Pre-create the target name to force collision
     collision = vault_root / "inbox" / "New Title.md"
@@ -165,7 +167,8 @@ async def test_store_md_all_suffix_slots_taken_falls_back_inplace(vault_root, pi
 async def test_store_nonmd_creates_sibling_and_moves_attachment(vault_root, pipeline_ctx):
     from pipelines.capture import store
 
-    pdf_file = vault_root / "inbox" / "report.pdf"
+    # "kqzxvbn" is keyboard mash (no vowels) → gate Rule 4 → FULL_RENAME → "Annual Report"
+    pdf_file = vault_root / "inbox" / "kqzxvbn.pdf"
     pdf_file.write_bytes(b"%PDF-1.4 content")
 
     raw = _make_raw(pdf_file, is_md=False, text="Extracted PDF text.")
@@ -220,22 +223,22 @@ async def test_store_nonmd_creates_sibling_in_same_folder(vault_root, pipeline_c
 
 
 @pytest.mark.asyncio
-async def test_store_nonmd_recapture_skips_move_logs_warning(vault_root, pipeline_ctx):
+async def test_store_nonmd_missing_binary_returns_failure(vault_root, pipeline_ctx):
+    """Phase 12 Fix 3: binary missing → Failure; no sibling written (attachment-first ordering)."""
     from pipelines.capture import store
 
     pdf_file = vault_root / "inbox" / "already-moved.pdf"
-    # Do NOT create the file — simulates binary already moved
+    # Do NOT create the file — simulates binary already gone
 
     raw = _make_raw(pdf_file, is_md=False, text="Extracted text.")
     mr = _make_metadata_result(raw, ai_title="already-moved", vault_root=vault_root)
 
     result = await store(mr, pipeline_ctx)
 
-    # Functional contract: returns Success (does not crash or error)
-    assert isinstance(result, Success)
-    # Sibling .md was created even though source binary was missing
+    # Phase 12: attachment-first — missing binary → Failure before any vault write
+    assert isinstance(result, Failure)
     sibling = vault_root / "inbox" / "already-moved.md"
-    assert sibling.exists()
+    assert not sibling.exists()
 
 
 # ===========================================================================

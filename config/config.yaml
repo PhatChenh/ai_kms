@@ -1,11 +1,21 @@
 capture:
   cooldown_seconds: 0 # original: 60, change for testing
   max_urls_per_note: 3
+  rename_gate:
+    office_extensions: [".md", ".docx", ".xlsx", ".pptx", ".txt"]
+    max_stem_length: 120
 claude:
   max_tokens: 1024
   model: claude-haiku-4-5-20251001
   synthesis_model: claude-sonnet-4-20250514
   embedding_model: voyage-3
+  timeout: 60
+claude_cli:
+  cli_path: claude
+  model: claude-haiku-4-5-20251001
+  synthesis_model: claude-sonnet-4-20250514
+  embedding_model: voyage-3
+  max_tokens: 1024
   timeout: 60
 database:
   path: ./data/kb.db
@@ -35,7 +45,8 @@ openai_compat:
 ollama:
   base_url: http://localhost:11434
   chat_model: llama3
-  synthesis_model: llama3   # replace with larger model e.g. qwen3.5:32b
+  synthesis_model: llama3   # replace with larger model e.g. llama3
+  max_tokens: 1024
   delay_between_calls: 2
   embedding_model: nomic-embed-text
   timeout: 120

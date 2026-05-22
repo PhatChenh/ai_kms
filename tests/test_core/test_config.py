@@ -573,9 +573,14 @@ class TestProvidersConfig:
         assert p.for_task("embeddings") == "ollama"
 
     def test_rejects_unknown_provider_value(self):
-        """Only 'claude', 'ollama', 'openai' are valid providers."""
+        """Only 'claude', 'claude_cli', 'ollama', 'openai' are valid providers."""
         with pytest.raises(ValidationError):
             ProvidersConfig(classify="unknown_provider")
+
+    def test_accepts_claude_cli_as_provider(self):
+        """'claude_cli' is a valid provider — subprocess mode, no API key needed."""
+        p = ProvidersConfig(capture="claude_cli")
+        assert p.capture == "claude_cli"
 
 
 class TestClaudeConfig:
@@ -668,6 +673,44 @@ class TestSelfLearningConfig:
     def test_max_examples_default(self):
         s = SelfLearningConfig()
         assert s.max_examples == 5
+
+
+class TestClaudeCliConfig:
+
+    def test_default_cli_path_is_claude(self):
+        from core.config import ClaudeCliConfig
+        c = ClaudeCliConfig()
+        assert c.cli_path == "claude"
+
+    def test_default_model_is_haiku(self):
+        from core.config import ClaudeCliConfig
+        c = ClaudeCliConfig()
+        assert "haiku" in c.model.lower()
+
+    def test_synthesis_model_is_sonnet(self):
+        from core.config import ClaudeCliConfig
+        c = ClaudeCliConfig()
+        assert "sonnet" in c.synthesis_model.lower()
+
+    def test_default_timeout_is_60(self):
+        from core.config import ClaudeCliConfig
+        c = ClaudeCliConfig()
+        assert c.timeout == 60
+
+    def test_default_max_tokens_is_1024(self):
+        from core.config import ClaudeCliConfig
+        c = ClaudeCliConfig()
+        assert c.max_tokens == 1024
+
+    def test_embedding_model_is_voyage(self):
+        from core.config import ClaudeCliConfig
+        c = ClaudeCliConfig()
+        assert "voyage" in c.embedding_model.lower()
+
+    def test_custom_cli_path(self):
+        from core.config import ClaudeCliConfig
+        c = ClaudeCliConfig(cli_path="/usr/local/bin/claude")
+        assert c.cli_path == "/usr/local/bin/claude"
 
 
 # ===========================================================================

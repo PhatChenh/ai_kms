@@ -335,6 +335,82 @@ flagged as a design question before the plan is written.
 
 ---
 
+### 3g. Make every diagram readable without a code background
+
+The primary audience for these diagrams is a non-technical stakeholder. Every
+diagram must pass this test: **could someone who does not read Python understand
+every label?**
+
+Apply these rules to every diagram drawn in this step:
+
+**1. Decision branches use plain English questions and YES/NO labels.**
+
+Bad: `Rule 1: is_existing_doc = True → SKIP (confidence=1.0)`  
+Good: "Has this file been captured before?" with YES → SKIP / NO → continue
+
+**2. No raw code symbols as labels.**
+
+Bad: `final_stem = src.stem`  
+Good: "Keep the original filename unchanged"
+
+If a code symbol is truly the clearest label, annotate it:  
+`src.stem (the filename without its extension, e.g. "Q2 Strategy" from "Q2 Strategy.md")`
+
+**3. No private helper names in boxes.**
+
+Bad: `_sanitize_stem / _is_legible / _is_generic`  
+Good: "cleans the filename" / "checks if name is readable" / "checks if name is generic"
+
+**4. Component boxes describe behavior in prose, not method signatures.**
+
+Bad:
+```
+│  decide_rename(src, ai_title, is_existing_doc, config) → RenameDecision  │
+│  · _is_legible / _is_generic / _is_illegible                              │
+```
+
+Good:
+```
+│  Takes:  the file path, the AI's suggested title,                         │
+│          whether the file was captured before, and the config             │
+│  Does:   runs the 4-rule decision (no AI calls)                           │
+│  Returns: SKIP / AUGMENT / FULL_RENAME + the final filename               │
+```
+
+**5. Show a concrete before/after example for every outcome.**
+
+After any SKIP / AUGMENT / FULL_RENAME (or equivalent) decision, add an example
+box. Examples are not optional — they are the primary way a non-coder validates
+understanding.
+
+```
+  AUGMENT example:
+  ┌─────────────────────────────────────────┐
+  │ Original name:  "a meeting.md"          │
+  │ AI suggested:   "Q2 Strategy Review"    │
+  │ Final name:     "a meeting - Q2 Strategy Review.md"  │
+  │                  ↑ kept    ↑ AI adds topic info      │
+  └─────────────────────────────────────────┘
+```
+
+**6. Config diagrams show real YAML with inline plain-English comments.**
+
+```yaml
+rename_gate:
+  office_extensions: [".md", ".docx", ".xlsx", ".pptx", ".txt"]
+  # ↑ File types trusted to have human-given names — these get SKIP unless generic
+  max_stem_length: 120
+  # ↑ Maximum characters allowed in a filename (before the extension)
+```
+
+**The test: redraw if you'd need to explain any label out loud.**
+
+If, while presenting the diagram, you would say "oh, `src.stem` just means the
+filename without extension" — that explanation belongs inside the diagram, not
+in a verbal aside.
+
+---
+
 ## Step 4 — Write the plan
 
 Write the plan to `docs/plans/$FEATURE.md` using this structure:

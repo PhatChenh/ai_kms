@@ -32,6 +32,7 @@ class OllamaProvider(LLMProvider):
         self._base_url = config.base_url
         self._model = config.synthesis_model if task in SYNTHESIS_TASKS else config.chat_model
         self._embedding_model = config.embedding_model
+        self._max_tokens = config.max_tokens
         self._timeout = config.timeout
 
     async def complete(self, system: str, user: str) -> Result[LLMResponse]:
@@ -52,6 +53,8 @@ class OllamaProvider(LLMProvider):
                 "prompt": user,
                 "system": system,
                 "stream": False,
+                "format": "json",
+                "options": {"num_predict": self._max_tokens},
             }
             raw = await asyncio.to_thread(self._post, "/api/generate", payload)
             return Success(

@@ -32,7 +32,8 @@ async def test_scan_capture_pdf_in_inbox_creates_sibling_and_moves_attachment(
     from vault.writer import WriteOutcome
     from llm.provider import LLMResponse
 
-    pdf_file = vault_root / "inbox" / "report.pdf"
+    # "kqzxvbn" is keyboard mash (no vowels) → gate Rule 4 → FULL_RENAME → "Annual Report"
+    pdf_file = vault_root / "inbox" / "kqzxvbn.pdf"
     _copy_pdf(pdf_file)
 
     mtime = pdf_file.stat().st_mtime
