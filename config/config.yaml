@@ -53,7 +53,7 @@ ollama:
 para_context_path: /Users/phatchenh/Library/Mobile Documents/iCloud~md~obsidian/Documents/Claude
   Brain/para-context.yaml
 providers:
-  capture: ollama # originally claude, changed to use Fireworks via openai_compat provider
+  capture: claude_cli # originally claude, changed to use Fireworks via openai_compat provider
   classify: claude
   embeddings: ollama
   self_learn: claude
