@@ -1,6 +1,6 @@
 # Plan: claude_cli_provider
 _Last updated: 2026-05-22_
-_Status: [~] in progress_
+_Status: [x] done_
 
 ## Architecture
 
@@ -194,7 +194,10 @@ new section (`config/config.yaml`). Nothing else changes.
 - [ ] `get_provider("synthesis", mock_config_with_claude_cli)` returns a `ClaudeCliProvider` using `synthesis_model`
 - [ ] `get_provider("capture", config_with_unknown_provider)` still raises `ValueError` with correct message
 
-**Status**: [ ] pending
+**Status**: [x] done
+
+**Completed**: 2026-05-22
+**Notes**: Added `case "claude_cli":` branch in `get_provider()` after the `"claude"` branch. Updated `ValueError` message in `case _:` to include `"claude_cli"` in the valid options list. Added 4 unit tests in `TestGetProviderClaudeCli` to `tests/test_llm/test_provider.py`: instance type check, default model routing, synthesis model routing, and unknown provider error message. All 561 non-smoke tests pass.
 
 ---
 
@@ -220,7 +223,10 @@ new section (`config/config.yaml`). Nothing else changes.
 - [ ] `uv run pytest tests/ -m "not smoke"` — full suite still green (no regressions)
 - [ ] Smoke test passes on a machine with `claude` binary installed and authenticated
 
-**Status**: [ ] pending
+**Status**: [x] done
+
+**Completed**: 2026-05-22
+**Notes**: Added 7 unit tests + 1 smoke test to `tests/test_llm/test_claude_cli_provider.py`. Test classes: `TestClaudeCliProviderInit` (binary not found → ConfigError), `TestClaudeCliProviderComplete` (happy path, is_error flag, timeout + kill, invalid JSON, nonzero exit code, markdown fence stripping). Smoke test skips automatically when `claude` binary absent. Fixed pre-existing mypy error in `_make_config` by replacing `**overrides` dict pattern with explicit typed kwargs. One RuntimeWarning from CPython 3.12 AsyncMock + asyncio.wait_for interaction in `test_invalid_json_stdout` — from mock internals, not production code; test passes correctly. Full suite: 568 passed (was 561), 0 failures.
 
 ---
 
