@@ -1,6 +1,7 @@
 # Plan: Handlers Extended (New Types)
 _Last updated: 2026-05-22_
-_Status: [ ] pending_
+_Status: [||] cancel_
+_Note: thinking again about the handlers approach_
 
 ## Architecture
 
@@ -125,7 +126,10 @@ New dependencies (`openpyxl`, `python-pptx`, `extract-msg`) are added to `pyproj
 - [ ] `can_handle(Path("file.xls"))` → `False`
 - [ ] `uv run pytest tests/test_handlers/test_xlsx_handler.py -v` passes
 
-**Status**: [ ] pending
+**Status**: [x] done
+
+**Completed**: 2026-05-22
+**Notes**: Delivered as planned. 14 tests, all green. Added `openpyxl>=3.1` to main deps, `types-openpyxl>=3.1` to dev deps (stubs available on PyPI, consistent with `types-requests` pattern). `wb.active` returns `Worksheet | None` per openpyxl stubs — test fixtures use `assert ws is not None` to narrow type. Handler mypy-clean. No deviations. 557 total tests pass.
 
 ---
 

@@ -46,6 +46,7 @@ dev = [
     "pytest>=9.0.3",
     "fpdf2>=2.7",
     "types-requests>=2.32",
+    "types-openpyxl>=3.1",
 ]
 
 [tool.pytest.ini_options]
