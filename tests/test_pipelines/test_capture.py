@@ -33,10 +33,10 @@ def test_parse_metadata_json_valid_json():
     content = '{"title": "My Note", "tags": ["type/article", "ai", "capture"]}'
     result = _parse_metadata_json(content, source_stem="fallback")
 
-    assert isinstance(result, dict)
-    assert result["title"] == "My Note"
-    assert result["tags"] == ["type/article", "ai", "capture"]
-    assert "type" not in result
+    assert isinstance(result, Success)
+    assert result.value["title"] == "My Note"
+    assert result.value["tags"] == ["type/article", "ai", "capture"]
+    assert "type" not in result.value
 
 
 def test_parse_metadata_json_fenced_json():
@@ -45,9 +45,9 @@ def test_parse_metadata_json_fenced_json():
     content = "```json\n{\"title\": \"My Note\", \"tags\": [\"type/article\", \"ai\"]}\n```"
     result = _parse_metadata_json(content, source_stem="fallback")
 
-    assert isinstance(result, dict)
-    assert result["title"] == "My Note"
-    assert result["tags"] == ["type/article", "ai"]
+    assert isinstance(result, Success)
+    assert result.value["title"] == "My Note"
+    assert result.value["tags"] == ["type/article", "ai"]
 
 
 def test_parse_metadata_json_bad_tags_type_coerced_to_empty():
@@ -56,8 +56,8 @@ def test_parse_metadata_json_bad_tags_type_coerced_to_empty():
     content = '{"title": "My Note", "tags": "ai"}'
     result = _parse_metadata_json(content, source_stem="fallback")
 
-    assert isinstance(result, dict)
-    assert result["tags"] == []
+    assert isinstance(result, Success)
+    assert result.value["tags"] == []
 
 
 def test_parse_metadata_json_missing_title_falls_back_to_stem():
@@ -66,8 +66,8 @@ def test_parse_metadata_json_missing_title_falls_back_to_stem():
     content = '{"tags": ["type/article", "ai"]}'
     result = _parse_metadata_json(content, source_stem="my-note-stem")
 
-    assert isinstance(result, dict)
-    assert result["title"] == "my-note-stem"
+    assert isinstance(result, Success)
+    assert result.value["title"] == "my-note-stem"
 
 
 def test_parse_metadata_json_strips_type_key():
@@ -76,10 +76,10 @@ def test_parse_metadata_json_strips_type_key():
     content = '{"title": "T", "type": "report", "tags": ["type/report"]}'
     result = _parse_metadata_json(content, source_stem="fallback")
 
-    assert isinstance(result, dict)
-    assert "type" not in result
-    assert result["title"] == "T"
-    assert result["tags"] == ["type/report"]
+    assert isinstance(result, Success)
+    assert "type" not in result.value
+    assert result.value["title"] == "T"
+    assert result.value["tags"] == ["type/report"]
 
 
 # ===========================================================================

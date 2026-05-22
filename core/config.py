@@ -36,8 +36,8 @@ _CONFIG_DIR = _PROJECT_ROOT / "config"
 # ---------------------------------------------------------------------------
 # Type aliases — 3.12 `type` statement, runtime-enforced.
 # ---------------------------------------------------------------------------
-type Provider  = Literal["claude", "ollama", "openai"]
-type Task      = Literal["classify", "synthesis", "embeddings", "self_learn", "capture"]
+type Provider  = Literal["claude", "claude_cli", "ollama", "openai"]
+type Task      = Literal["classify", "synthesis", "documentation", "embeddings", "self_learn", "capture"]
 type LogLevel  = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 type Env       = Literal["dev", "prod"]
 
@@ -141,9 +141,10 @@ class ClaudeConfig(BaseModel):
 class OllamaConfig(BaseModel):
     """Ollama local server settings."""
     base_url:            str = "http://localhost:11434"
-    chat_model:          str = "qwen3.5:9b"
-    synthesis_model:     str = "qwen3.5:9b"    # override with a larger model e.g. qwen3.5:32b
+    chat_model:          str = "llama3"
+    synthesis_model:     str = "llama3"    # override with a larger model e.g. llama3
     embedding_model:     str = "nomic-embed-text"
+    max_tokens:          int = 1024
     timeout:             int = 120
     delay_between_calls: int = 2   # seconds between batch calls
 
@@ -157,6 +158,17 @@ class OpenAICompatConfig(BaseModel):
     max_tokens:      int = 1024
     timeout:         int = 60
     api_key_env:     str = "FIREWORKS_API_KEY"  # name of the env var holding the key
+
+
+class ClaudeCliConfig(BaseModel):
+    """Claude CLI subprocess provider settings."""
+
+    cli_path:        str = "claude"
+    model:           str = "claude-haiku-4-5-20251001"
+    synthesis_model: str = "claude-sonnet-4-20250514"
+    embedding_model: str = "voyage-3"   # interface parity; not used by CLI
+    max_tokens:      int = 1024         # interface parity; CLI has no --max-tokens flag
+    timeout:         int = 60           # seconds passed to asyncio.wait_for
 
 
 class MCPConfig(BaseModel):
@@ -194,11 +206,22 @@ class HandlersConfig(BaseModel):
     max_redirects:             int = Field(5, ge=0)
 
 
+class RenameGateConfig(BaseModel):
+    """Tunable parameters for the rename gate. Adjust in config/config.yaml under capture.rename_gate."""
+
+    office_extensions: list[str] = Field(
+        default_factory=lambda: [".md", ".docx", ".xlsx", ".pptx", ".txt"]
+    )
+    max_stem_length: int = Field(120, ge=10)
+    # TODO: migrate _GENERIC_NAMES frozenset to generic_names: list[str] here (TD-GATE-1)
+
+
 class CaptureConfig(BaseModel):
     """Tunable parameters for the capture pipeline. Adjust in config/config.yaml."""
 
     cooldown_seconds: int = Field(60, ge=0)
     max_urls_per_note: int = Field(3, ge=0)
+    rename_gate: RenameGateConfig = Field(default_factory=RenameGateConfig)  # type: ignore[arg-type]
 
 
 class MainConfig(BaseModel):
@@ -211,13 +234,14 @@ class MainConfig(BaseModel):
     para_context_path: Path | None        = None
     providers:        ProvidersConfig     = Field(default_factory=ProvidersConfig)
     claude:           ClaudeConfig        = Field(default_factory=ClaudeConfig)
+    claude_cli:       ClaudeCliConfig     = Field(default_factory=ClaudeCliConfig)
     ollama:           OllamaConfig        = Field(default_factory=OllamaConfig)
     openai_compat:    OpenAICompatConfig  = Field(default_factory=OpenAICompatConfig)
     mcp:              MCPConfig           = Field(default_factory=MCPConfig)
-    self_learning:    SelfLearningConfig  = Field(default_factory=SelfLearningConfig)
+    self_learning:    SelfLearningConfig  = Field(default_factory=SelfLearningConfig)  # type: ignore[arg-type]
     logging:          LoggingConfig       = Field(default_factory=LoggingConfig)
-    handlers:         HandlersConfig      = Field(default_factory=HandlersConfig)
-    capture:          CaptureConfig       = Field(default_factory=CaptureConfig)
+    handlers:         HandlersConfig      = Field(default_factory=HandlersConfig)  # type: ignore[arg-type]
+    capture:          CaptureConfig       = Field(default_factory=CaptureConfig)  # type: ignore[arg-type]
     env:              Env                 = "dev"
 
     @model_validator(mode="after")
@@ -307,7 +331,7 @@ class ConfidenceBand(BaseModel):
 
 class Thresholds(BaseModel):
     """Schema for config/thresholds.yaml."""
-    global_:   ConfidenceBand               = Field(default_factory=ConfidenceBand, alias="global")
+    global_:   ConfidenceBand               = Field(default_factory=ConfidenceBand, alias="global")  # type: ignore[arg-type]
     pipelines: dict[str, ConfidenceBand]    = Field(default_factory=dict)
 
     model_config = {"populate_by_name": True}
@@ -473,6 +497,7 @@ def load_config() -> "Config":
 
 
 _CONFIG: Config | None = None
+CONFIG: Config  # mypy stub — runtime value provided by __getattr__
 
 
 def __getattr__(name: str) -> object:

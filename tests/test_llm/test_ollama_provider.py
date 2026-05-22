@@ -20,8 +20,8 @@ from llm.provider import LLMProvider, LLMResponse
 def _make_config(**overrides) -> OllamaConfig:
     defaults = dict(
         base_url="http://localhost:11434",
-        chat_model="qwen3.5:9b",
-        synthesis_model="qwen3.5:32b",
+        chat_model="llama3",
+        synthesis_model="llama3",
         embedding_model="nomic-embed-text",
         timeout=120,
         delay_between_calls=2,

@@ -15,6 +15,7 @@ import os
 
 from anthropic import AsyncAnthropic, AuthenticationError
 from anthropic import APIError as AnthropicAPIError
+from anthropic.types import TextBlock
 
 from core.config import ClaudeConfig, Task
 from core.exceptions import ConfigError
@@ -68,9 +69,11 @@ class ClaudeProvider(LLMProvider):
                 messages=[{"role": "user", "content": user}],
             )
             usage = resp.usage.model_dump() if resp.usage else {}
+            text_block = next((b for b in resp.content if isinstance(b, TextBlock)), None)
+            content = text_block.text if text_block else ""
             return Success(
                 LLMResponse(
-                    content=resp.content[0].text if resp.content else "",
+                    content=content,
                     model=resp.model,
                     usage=usage,
                 )

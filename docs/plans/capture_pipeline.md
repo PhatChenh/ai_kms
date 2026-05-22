@@ -1,6 +1,6 @@
 # Plan: Capture Pipeline
 _Last updated: 2026-05-21_
-_Status: [x] done — all 11 phases complete_
+_Status: [x] done — all 12 phases complete
 
 ## Architecture
 
@@ -1061,6 +1061,114 @@ FileMovedEvent       in vault         in vault          on_move(src, dst)
 
 **Completed**: 2026-05-21
 **Notes**: `vault/watcher.py` created — `_VaultEventHandler` (debounce via `threading.Timer`, `_should_skip` gates attachment/dotfile/sync-conflict/IGNORE_DIRS, `_is_internal` for external-drop detection) + `VaultWatcher` (thin wrapper over watchdog `Observer`). No pipeline/llm/core.config module-scope imports. `kms watch` command added to `cli/main.py` — lazy-imports all heavy deps inside function body, loads taxonomy once at startup, runs `scan_capture()` at boot to reconcile offline drops, starts `VaultWatcher` with 4 callbacks, blocks on `time.sleep(1)` loop until Ctrl-C. `watchdog>=4.0` added to `pyproject.toml` (installed `watchdog==6.0.0`). 18 unit tests in `tests/test_vault/test_watcher.py` (direct `_VaultEventHandler` invocation, no real observer) + 1 CLI smoke test in `tests/test_cli/test_watch_cli.py`. 487 tests pass, 6 deselected (integration/API key tests).
+
+### Phase 12 — Bug fixes (post-review)
+**Goal**: address findings from code review of `pipelines/capture.py`. Five fixes across `_parse_metadata_json`, `_store_nonmd`, `_store_md`, and `capture_file` entry point. No new features. No behavioral change on success paths — only failure paths become correct and observable.
+
+**Background**: review surfaced 2 Critical + 2 Important issues. One Critical (hardcoded `confidence=0.9` at line 213) intentionally left in place per `docs/research/capture_pipeline.md:270` — capture emits a constant signal, not a routing decision; fixed value is documented design.
+
+**Fix 1 — `_parse_metadata_json` return type (Important)**
+Function currently returns `dict | Failure`, violating the Result Type rule. Wrap the success path in `Success(...)` and update the caller in `metadata` stage to `match` on the result.
+- Change signature: `def _parse_metadata_json(content: str, source_stem: str = "") -> Result[dict]`
+- Final return becomes `Success({"title": title, "tags": tags})`
+- In `metadata` stage (line ~194): replace `isinstance(parsed, Failure)` check with `match parsed: case Failure() as f: return f; case Success(value=parsed_dict): ...`, then read `parsed_dict["title"]` / `parsed_dict.get("tags", [])` downstream.
+
+**Fix 2 — `_store_nonmd` missing Success branch (Important)**
+The `match documents.upsert(sibling_outcome, ...)` block at line 378 only handles `Failure`. Add an explicit `case Success(): pass` so the match is exhaustive and intent is documented. No behavioral change.
+
+**Fix 3 — `_store_nonmd` orphan note (Critical, option C)**
+Current order writes sibling `.md` first, then moves the binary. If the move fails, vault contains a note with a broken `![[...]]` embed and no way for the pipeline to recover. Reorder:
+1. Resolve `attachment_dst` with collision loop (unchanged).
+2. Move binary from `src` to `attachment_dst` FIRST. On `Failure`, return Failure — vault state unchanged.
+3. Only then write the sibling `.md` pointing to the now-confirmed `attachment_dst.name`.
+4. Upsert documents row for the sibling.
+Remove the `src.exists()` "already moved" branch — that path becomes unreachable once the move is the first disk write. If the move succeeds but the sibling write fails, the binary is in `attachment/` with no note — recoverable on next scan (orphan detected by reverse-lookup in TD-C6 / future phase). Surface that gap as a `# COUPLING:` note rather than silently retrying.
+
+**Fix 4 — `_store_md` rename half-commit (Important, option B rollback)**
+Rename path currently does: `move_note(src, dst)` → `write_note(dst, ...)` → `documents.delete_by_path(old)` (return ignored) → `documents.upsert(new)`. If `delete_by_path` fails, DB ends with two rows (stale + new) and the upsert proceeds blind.
+Reorder + transaction + rollback:
+1. `move_note(src, dst)` — disk rename. On Failure, return.
+2. `write_note(dst, original_body, note_meta, actor="ai")` — capture `outcome`. On Failure, rename back via `move_note(dst, src)` and return original Failure.
+3. Wrap `delete_by_path(old) + upsert(new)` in a single SQLite transaction (add a new helper in `storage/documents.py`, e.g. `replace_path(old_vault_path, outcome, db_path)` that runs both inside `BEGIN ... COMMIT`).
+4. If the transaction Fails: undo disk — `move_note(dst, src)`, restore the original body via a second `write_note(src, original_body, note_meta_pre, ...)` is not feasible (pre-write metadata not retained). Simpler rollback: rename file back and delete the new-content file. Return Failure with context describing the partial state for operator inspection.
+- New helper signature in `storage/documents.py`:
+  ```python
+  def replace_path(old_vault_path: str, outcome: WriteOutcome, db_path: Path | None = None) -> Result[None]:
+      """Atomically delete the old documents row and upsert from outcome."""
+  ```
+  Implementation: `with get_connection(db_path) as conn:` → `conn.execute("BEGIN")` → existing delete + upsert logic against `conn` → `conn.execute("COMMIT")`. On `sqlite3.Error`, return Failure; context manager auto-rolls back the transaction.
+
+**Fix 5 — `capture_file` entry point duplication (Critical, refactor)**
+Stability gate and `run_pipeline` call appear twice (lines 429–435 + 455–461; 448–453 + 463–468). Not a correctness bug — `else` branch returns at line 448 — but two near-identical Failure constructions invite drift on future edits. Refactor into a single path:
+1. Extract default-context construction into a private async helper `_build_default_context() -> PipelineContext`:
+   ```python
+   async def _build_default_context() -> PipelineContext:
+       from core.config import CONFIG
+       from core.tags import load_taxonomy
+       from vault.paths import load_valid_domains
+       valid_domains = load_valid_domains(CONFIG.main.vault.root)
+       taxonomy = load_taxonomy(
+           Path(__file__).parent.parent / "config" / "tags.yaml",
+           valid_domains,
+       )
+       return PipelineContext(
+           config=CONFIG.main,
+           db_path=CONFIG.main.database.path,
+           correlation_id=new_correlation_id(),
+           taxonomy=taxonomy,
+       )
+   ```
+2. Rewrite `capture_file`:
+   ```python
+   async def capture_file(path, context=None):
+       if context is None:
+           context = await _build_default_context()
+       age = time.time() - path.stat().st_mtime
+       cooldown = context.config.capture.cooldown_seconds
+       if age < cooldown:
+           return Failure(
+               error=f"file too recent (age={age:.1f}s < cooldown={cooldown}s); retry later",
+               recoverable=True,
+               context={"path": str(path), "age_seconds": age, "cooldown_seconds": cooldown},
+           )
+       return await run_pipeline(
+           "capture",
+           [extract, enrich_urls, summarize, metadata, store],
+           path,
+           context=context,
+       )
+   ```
+Lazy-import discipline preserved — heavy imports remain inside `_build_default_context`.
+
+**Files to modify**:
+- `pipelines/capture.py` — 5 fixes above
+- `storage/documents.py` — add `replace_path` helper for Fix 4
+- `tests/test_pipelines/test_capture.py` (and/or `test_capture_phase3.py`) — add tests below
+
+**Test criteria**:
+- [ ] `_parse_metadata_json` returns `Success(dict)` on valid JSON
+- [ ] `_parse_metadata_json` returns `Failure(recoverable=False)` on unparseable JSON
+- [ ] `metadata` stage handles `_parse_metadata_json` Failure by returning Failure (no audit row written)
+- [ ] `_store_nonmd`: binary missing at move time returns Failure (no sibling written)
+- [ ] `_store_nonmd`: successful move then failed sibling write leaves binary in `attachment/` and returns Failure (no orphan note in drop folder)
+- [ ] `_store_nonmd`: happy path unchanged — sibling created in drop folder, binary in attachment, documents row present
+- [ ] `_store_md` rename: simulated `replace_path` Failure rolls back disk rename — original filename restored, new-name file removed
+- [ ] `_store_md` rename: happy path — old row gone, new row present in single transaction (assert via mid-transaction failure injection that no half-state ever observable)
+- [ ] `_store_md` no-rename in-place write: unchanged behavior
+- [ ] `capture_file(path, context=None)` cooldown still rejects newly-written files
+- [ ] `capture_file(path, context=ctx)` with stale file proceeds through pipeline
+- [ ] No duplicated `Failure(...)` construction string in `pipelines/capture.py` (regression guard: `grep -c "file too recent" pipelines/capture.py` returns 1)
+- [ ] Full test suite still passes (487+ tests)
+
+**Out of scope for Phase 12**:
+- Sibling-without-binary orphan recovery (`_store_nonmd` Fix 3 leaves this gap — covered by TD-C6 future phase).
+- Moving the `confidence=0.9` literal to config (intentional per research; would require Phase 2 routing-gate context to justify).
+- Adding write-ahead log or two-phase commit across disk+DB (overkill; rollback is sufficient for single-process local vault).
+
+**Status**: [x] done
+
+**Completed**: 2026-05-22
+**Notes**: All 5 fixes implemented TDD. `_parse_metadata_json` now returns `Result[dict]`; caller in `metadata` stage updated to `match/case`. `_store_nonmd` reordered: `move_attachment` first — missing binary returns Failure before any vault write. `_store_md` rename path uses new `documents.replace_path()` (atomic delete+insert in one transaction) with disk rollback on DB failure. `capture_file` entry point refactored: `_build_default_context()` extracted, single stability gate, single `run_pipeline` call. `test_store_nonmd_recapture_skips_move_logs_warning` updated to reflect new attachment-first contract (missing binary → Failure). 16 new tests in `test_capture_phase12.py`; 492 tests pass total (1 pre-existing Ollama integration failure unrelated to this phase).
 
 ---
 

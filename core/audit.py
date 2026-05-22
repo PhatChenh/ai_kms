@@ -31,7 +31,7 @@ def write(
     entry = AuditEntry(
         pipeline=pipeline,
         stage=stage,
-        source_ids=list(decision.source_ids),
+        source_ids=tuple(decision.source_ids),
         decision=decision.action,
         confidence=decision.confidence,
         reasoning=decision.reasoning,

@@ -90,7 +90,7 @@ def config_dir(tmp_path: Path, vault_dir: Path) -> Path:
         },
         "ollama": {
             "base_url": "http://localhost:11434",
-            "chat_model": "qwen3.5:9b",
+            "chat_model": "llama3",
             "embedding_model": "nomic-embed-text",
             "timeout": 120,
             "delay_between_calls": 2,

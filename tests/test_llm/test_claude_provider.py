@@ -32,11 +32,12 @@ def _make_config(**overrides) -> ClaudeConfig:
 
 def _make_message_response(text: str, model: str) -> MagicMock:
     """Build a fake anthropic Messages response."""
+    from anthropic.types import TextBlock
+
     usage = MagicMock()
     usage.model_dump.return_value = {"input_tokens": 10, "output_tokens": 5}
 
-    content_block = MagicMock()
-    content_block.text = text
+    content_block = TextBlock(type="text", text=text)
 
     resp = MagicMock()
     resp.content = [content_block]

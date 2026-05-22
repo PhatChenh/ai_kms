@@ -70,13 +70,13 @@ async def test_integration_inbox_md_drop_writes_audit_and_documents(
 
     assert isinstance(result, Success), f"Expected Success, got {result}"
 
-    # One audit_log row with pipeline="capture", outcome="CAPTURED"
+    # audit_log now has 2 rows: metadata (CAPTURED) + rename_gate (SKIP/AUGMENT/FULL_RENAME)
     audit_result = query(pipeline="capture", db_path=pipeline_ctx.db_path)
     assert isinstance(audit_result, Success)
-    assert len(audit_result.value) == 1
-    row = audit_result.value[0]
-    assert row.pipeline == "capture"
-    assert row.outcome == "CAPTURED"
+    assert len(audit_result.value) >= 1
+    captured_rows = [r for r in audit_result.value if r.outcome == "CAPTURED"]
+    assert len(captured_rows) == 1, "Expected exactly one CAPTURED audit row"
+    assert captured_rows[0].stage == "metadata"
 
     # One documents row at inbox/inbox-note.md
     doc_result = get_by_path("inbox/inbox-note.md", db_path=pipeline_ctx.db_path)

@@ -104,6 +104,7 @@ def watch() -> None:
     New Domain/ folders added while the watcher runs require a restart.
     """
     import asyncio
+    import hashlib
     from pathlib import Path
 
     import structlog
@@ -113,9 +114,10 @@ def watch() -> None:
     from core.result import Failure, Success
     from core.tags import load_taxonomy
     from pipelines.capture import capture_file, scan_capture
-    from storage.documents import delete_by_path
+    from storage.documents import delete_by_path, get_by_path
     from storage.documents import rename as rename_doc
     from vault.paths import load_valid_domains, to_vault_path
+    from vault.reader import read_note
     from vault.watcher import VaultWatcher
 
     _wlog = structlog.get_logger("cli.watch")
@@ -144,16 +146,44 @@ def watch() -> None:
             )
 
         def on_create(path: Path) -> None:
+            vault_rel = to_vault_path(path)
+            # Skip if pipeline just wrote this file — prevents re-capture after AI rename.
+            # By the time this debounced callback fires (≥3s after the event), replace_path
+            # has already inserted the new vault_path into the DB.
+            match get_by_path(vault_rel, db_path=db_path):
+                case Success(value=row) if row is not None:
+                    _wlog.debug("watcher.create_skip", vault_path=vault_rel, reason="already_in_db")
+                    return
+                case _:
+                    pass
             asyncio.run_coroutine_threadsafe(
                 capture_file(path, context=_make_ctx()), loop
             )
 
         def on_modify(path: Path) -> None:
+            vault_rel = to_vault_path(path)
+            # Skip if body is unchanged — this is an AI frontmatter-only write, not a user edit.
+            # content_hash in DB is SHA256(body), same formula used by write_note.
+            match get_by_path(vault_rel, db_path=db_path):
+                case Success(value=row) if row is not None and row.content_hash:
+                    match read_note(path):
+                        case Success(value=note):
+                            if hashlib.sha256(note.content.encode()).hexdigest() == row.content_hash:
+                                _wlog.debug("watcher.modify_skip", vault_path=vault_rel, reason="hash_unchanged")
+                                return
+                        case _:
+                            pass
+                case _:
+                    pass
             asyncio.run_coroutine_threadsafe(
                 capture_file(path, context=_make_ctx()), loop
             )
 
         def on_delete(path: Path) -> None:
+            if path.exists():
+                # Spurious delete fired by macOS FSEvents when os.replace(tmp, dst) atomically
+                # overwrites an existing dst — the old inode is "deleted" but the path remains.
+                return
             vault_rel = to_vault_path(path)
             match delete_by_path(vault_rel, db_path=db_path):
                 case Success():
