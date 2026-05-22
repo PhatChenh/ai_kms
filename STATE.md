@@ -35,6 +35,12 @@ _Last updated: 2026-05-22 (Phase 1 capture pipeline complete — all 11 phases d
 - [x] 487 tests pass (all capture pipeline phases verified)
 - [x] audit_log wired: every capture writes CAPTURED + TAG_VIOLATION entries
 
+### Re-make work
+- Claude CLI provider: testing needed
+- Handlers extension: already done XLSX, others waiting, dependent on sibling approach
+- Sibling md file handling: Brainstorming, need more time
+
+
 **Next planned work**: Phase 2 — Classify pipeline (roadmap). M1 milestone target passed; classify is the next deliverable.
 
 ---
