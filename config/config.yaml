@@ -34,15 +34,15 @@ openai_compat:
   timeout: 60
 ollama:
   base_url: http://localhost:11434
-  chat_model: qwen3.5:9b
-  synthesis_model: qwen3.5:9b   # replace with larger model e.g. qwen3.5:32b
+  chat_model: llama3
+  synthesis_model: llama3   # replace with larger model e.g. qwen3.5:32b
   delay_between_calls: 2
   embedding_model: nomic-embed-text
   timeout: 120
 para_context_path: /Users/phatchenh/Library/Mobile Documents/iCloud~md~obsidian/Documents/Claude
   Brain/para-context.yaml
 providers:
-  capture: openai # originally claude, changed to use Fireworks via openai_compat provider
+  capture: ollama # originally claude, changed to use Fireworks via openai_compat provider
   classify: claude
   embeddings: ollama
   self_learn: claude
@@ -60,5 +60,5 @@ vault:
   domain_dir: Domain
   inbox_dir: inbox
   projects_dir: Projects
-  root: /Users/phatchenh/ai_kms_test_vault
+  root: /Users/lap14806/ai_kms_test_vault
   synthesis_dir: Synthesis

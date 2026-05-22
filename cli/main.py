@@ -96,5 +96,102 @@ def briefing() -> None:
     raise NotImplementedError("Phase 7 — not yet built")
 
 
+@cli.command()
+def watch() -> None:
+    """Watch vault root; capture new drops from any folder automatically.
+
+    Taxonomy (Domain/ folders) is loaded once at startup.
+    New Domain/ folders added while the watcher runs require a restart.
+    """
+    import asyncio
+    from pathlib import Path
+
+    import structlog
+    from core.config import CONFIG
+    from core.logging_setup import new_correlation_id
+    from core.pipeline import PipelineContext
+    from core.result import Failure, Success
+    from core.tags import load_taxonomy
+    from pipelines.capture import capture_file, scan_capture
+    from storage.documents import delete_by_path
+    from storage.documents import rename as rename_doc
+    from vault.paths import load_valid_domains, to_vault_path
+    from vault.watcher import VaultWatcher
+
+    _wlog = structlog.get_logger("cli.watch")
+
+    root = CONFIG.main.vault.root
+    db_path = CONFIG.main.database.path
+    attachment_path = CONFIG.main.vault.attachment_path
+
+    valid_domains = load_valid_domains(root)
+    taxonomy = load_taxonomy(
+        Path(__file__).parent.parent / "config" / "tags.yaml",
+        valid_domains,
+    )
+
+    async def _run() -> None:
+        await scan_capture()  # reconcile drops that arrived while watcher was down
+
+        loop = asyncio.get_running_loop()
+
+        def _make_ctx() -> PipelineContext:
+            return PipelineContext(
+                config=CONFIG.main,
+                db_path=db_path,
+                correlation_id=new_correlation_id(),
+                taxonomy=taxonomy,
+            )
+
+        def on_create(path: Path) -> None:
+            asyncio.run_coroutine_threadsafe(
+                capture_file(path, context=_make_ctx()), loop
+            )
+
+        def on_modify(path: Path) -> None:
+            asyncio.run_coroutine_threadsafe(
+                capture_file(path, context=_make_ctx()), loop
+            )
+
+        def on_delete(path: Path) -> None:
+            vault_rel = to_vault_path(path)
+            match delete_by_path(vault_rel, db_path=db_path):
+                case Success():
+                    _wlog.info("watcher.deleted", vault_path=vault_rel)
+                case Failure(error=e):
+                    _wlog.warning("watcher.delete_failed", vault_path=vault_rel, error=e)
+
+        def on_move(src: Path, dst: Path) -> None:
+            old_rel = to_vault_path(src)
+            new_rel = to_vault_path(dst)
+            match rename_doc(old_rel, new_rel, db_path=db_path):
+                case Success():
+                    _wlog.info("watcher.renamed", old=old_rel, new=new_rel)
+                case Failure(error=e):
+                    _wlog.warning("watcher.rename_failed", old=old_rel, new=new_rel, error=e)
+
+        watcher = VaultWatcher(
+            root=root,
+            attachment_path=attachment_path,
+            on_create=on_create,
+            on_modify=on_modify,
+            on_delete=on_delete,
+            on_move=on_move,
+        )
+        watcher.start()
+        click.echo(f"Watching {root} — Ctrl-C to stop")
+        try:
+            while True:
+                await asyncio.sleep(1)
+        finally:
+            watcher.stop()
+            watcher.join()
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        pass
+
+
 if __name__ == "__main__":
     cli()
