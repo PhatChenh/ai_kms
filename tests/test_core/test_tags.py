@@ -19,12 +19,12 @@ SAMPLE_TAXONOMY = TagTaxonomy(
 
 
 class TestTagsYaml:
-    def test_tags_yaml_is_valid_and_has_eight_types(self) -> None:
+    def test_tags_yaml_is_valid_and_has_nine_types(self) -> None:
         raw = yaml.safe_load(TAGS_YAML.read_text())
         assert isinstance(raw, dict)
         allowed = raw.get("allowed_types", [])
         assert isinstance(allowed, list)
-        assert len(allowed) == 8
+        assert len(allowed) == 9
 
 
 class TestValidateTags:
@@ -81,10 +81,14 @@ class TestLoadTaxonomy:
         taxonomy = load_taxonomy(TAGS_YAML, frozenset(["finance"]))
         assert isinstance(taxonomy, TagTaxonomy)
         assert isinstance(taxonomy.allowed_types, frozenset)
-        assert len(taxonomy.allowed_types) == 8
+        assert len(taxonomy.allowed_types) == 9
         assert taxonomy.valid_domains == frozenset(["finance"])
 
     def test_load_taxonomy_populates_allowed_types_from_file(self) -> None:
         taxonomy = load_taxonomy(TAGS_YAML, frozenset())
         assert "report" in taxonomy.allowed_types
         assert "meeting-note" in taxonomy.allowed_types
+
+    def test_attachment_summary_in_allowed_types(self) -> None:
+        taxonomy = load_taxonomy(TAGS_YAML, frozenset())
+        assert "attachment-summary" in taxonomy.allowed_types

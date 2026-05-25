@@ -56,3 +56,30 @@ def test_extract_metadata_render_injects_text_and_summary() -> None:
 def test_extract_metadata_render_returns_nonempty_system_message() -> None:
     system, _ = PROMPTS["extract_metadata"].render(text="t", summary="s", domain_list="(none)")
     assert len(system) > 0
+
+
+def test_summarize_attachment_prompt_exists_in_prompts() -> None:
+    assert "summarize_attachment" in PROMPTS
+
+
+def test_summarize_attachment_render_returns_both_strings() -> None:
+    result = PROMPTS["summarize_attachment"].render(file_type=".pdf", short_summary="x", text="y")
+    assert isinstance(result, tuple)
+    assert len(result) == 2
+    system, user = result
+    assert len(system) > 0
+    assert len(user) > 0
+
+
+def test_summarize_attachment_render_injects_all_three_variables() -> None:
+    _, user = PROMPTS["summarize_attachment"].render(
+        file_type=".pdf", short_summary="quarterly results", text="revenue up 12 percent"
+    )
+    assert ".pdf" in user
+    assert "quarterly results" in user
+    assert "revenue up 12 percent" in user
+
+
+def test_summarize_attachment_render_missing_variable_raises_undefined_error() -> None:
+    with pytest.raises(jinja2.UndefinedError):
+        PROMPTS["summarize_attachment"].render(file_type=".pdf", short_summary="x")

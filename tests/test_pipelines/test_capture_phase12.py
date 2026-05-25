@@ -138,65 +138,82 @@ async def test_metadata_propagates_parse_failure_no_audit_row(
 
 
 # ===========================================================================
-# Fix 3 — _store_nonmd: attachment-first reorder
+# Brief #2 Phase 3 — _store_nonmd: sibling-first, CLUELESS + LOCATED
+# (Supersedes Phase 12 "attachment-first" ordering tests.)
 # ===========================================================================
 
 
 @pytest.mark.asyncio
-async def test_store_nonmd_missing_binary_returns_failure_no_sibling(
+async def test_store_nonmd_clueless_inbox_missing_binary_writes_marker(
     vault_root, pipeline_ctx
 ):
-    """Binary missing at move time → Failure; no sibling note written."""
+    """CLUELESS inbox: binary missing → pending-routing marker written (broken pointer, TD-026)."""
     from pipelines.capture import store
 
-    # Source file does NOT exist — binary already gone or never created
     pdf_file = vault_root / "inbox" / "ghost.pdf"
-    # Do not create pdf_file
+    # Binary not created — simulates ghost/missing file
 
     raw = _make_raw(pdf_file, is_md=False, text="Extracted text.")
     mr = _make_metadata_result(raw, ai_title="ghost")
 
     result = await store(mr, pipeline_ctx)
 
-    assert isinstance(result, Failure)
-    # No sibling note should exist
-    sibling = vault_root / "inbox" / "ghost.md"
-    assert not sibling.exists(), "Sibling must not be created when binary is missing"
+    # CLUELESS inbox: no move needed → marker written regardless (broken pointer is accepted)
+    assert isinstance(result, Success)
+    marker = vault_root / "inbox" / ".summaries" / "ghost.pdf.md"
+    assert marker.exists(), "Pending-routing marker must be written even for missing binary"
+    from vault.reader import read_note
+    note = read_note(marker)
+    assert isinstance(note, Success)
+    assert note.value.metadata.status == "pending-routing"
 
 
 @pytest.mark.asyncio
-async def test_store_nonmd_happy_path_unchanged(vault_root, pipeline_ctx):
-    """Happy path: binary exists → moved to attachment/, sibling created, documents row present."""
+async def test_store_nonmd_located_happy_path_documents_row(vault_root, pipeline_ctx, monkeypatch):
+    """LOCATED project happy path: sibling at .summaries/, binary moved, documents row present."""
     from pipelines.capture import store
     from storage.documents import get_by_path
+    from llm.provider import LLMResponse
 
-    # "kqzxvbn" is keyboard mash (no vowels) → gate Rule 4 → FULL_RENAME → "Annual Report"
-    pdf_file = vault_root / "inbox" / "kqzxvbn.pdf"
+    project_dir = vault_root / "Projects" / "Alpha"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    pdf_file = project_dir / "deck.pdf"
     pdf_file.write_bytes(b"%PDF-1.4 content")
 
-    raw = _make_raw(pdf_file, is_md=False, text="Extracted PDF text.")
-    mr = _make_metadata_result(raw, ai_title="Annual Report")
+    mock_provider = AsyncMock()
+    mock_provider.complete.return_value = Success(LLMResponse(
+        content=(
+            "## What this file is\nA deck.\n\n"
+            "## Key content\nSlides.\n\n"
+            "## Key facts / findings\nTwo findings."
+        ),
+        model="test",
+        usage={},
+    ))
+    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+
+    raw = _make_raw(pdf_file, is_md=False, text="Deck content.")
+    mr = _make_metadata_result(raw, ai_title="deck")
 
     result = await store(mr, pipeline_ctx)
 
     assert isinstance(result, Success)
-    sibling = vault_root / "inbox" / "Annual Report.md"
+    sibling = vault_root / "Projects" / "Alpha" / "attachment" / ".summaries" / "deck.pdf.md"
     assert sibling.exists()
-    attachment_dst = vault_root / "attachment" / "Annual Report.pdf"
-    assert attachment_dst.exists()
+    binary_dst = vault_root / "Projects" / "Alpha" / "attachment" / "deck.pdf"
+    assert binary_dst.exists()
     assert not pdf_file.exists()
-    assert "Annual Report.pdf" in sibling.read_text()
 
-    row = get_by_path("inbox/Annual Report.md", db_path=pipeline_ctx.db_path)
+    row = get_by_path("Projects/Alpha/attachment/.summaries/deck.pdf.md", db_path=pipeline_ctx.db_path)
     assert isinstance(row, Success)
     assert row.value is not None
 
 
 @pytest.mark.asyncio
-async def test_store_nonmd_move_succeeds_sibling_write_fails_returns_failure(
+async def test_store_nonmd_clueless_write_note_failure_returns_failure(
     vault_root, pipeline_ctx, monkeypatch
 ):
-    """Move succeeds but sibling write fails → binary in attachment/, no orphan sibling, returns Failure."""
+    """CLUELESS path: if write_note (marker) fails → Failure; binary stays in inbox (sibling-first)."""
     from pipelines.capture import store
 
     pdf_file = vault_root / "inbox" / "write-fail.pdf"
@@ -213,12 +230,11 @@ async def test_store_nonmd_move_succeeds_sibling_write_fails_returns_failure(
     result = await store(mr, pipeline_ctx)
 
     assert isinstance(result, Failure)
-    # Binary is in attachment/ (move happened before write attempt)
-    attachment_dst = vault_root / "attachment" / "write-fail.pdf"
-    assert attachment_dst.exists()
-    # Sibling must not exist (write_note failed)
-    sibling = vault_root / "inbox" / "write-fail.md"
-    assert not sibling.exists()
+    # Binary stays in inbox (sibling-first: no move attempted before write)
+    assert pdf_file.exists(), "Binary must stay in inbox when write_note fails"
+    # No marker written
+    marker = vault_root / "inbox" / ".summaries" / "write-fail.pdf.md"
+    assert not marker.exists()
 
 
 # ===========================================================================

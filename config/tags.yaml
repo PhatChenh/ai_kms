@@ -9,3 +9,4 @@ allowed_types:
   - task-list
   - transcript
   - capture
+  - attachment-summary

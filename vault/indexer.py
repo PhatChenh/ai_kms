@@ -28,9 +28,14 @@ import logging
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from core.result import Failure, Result, Success
 from vault.frontmatter import NoteMetadata
+from vault.paths import _is_in_managed_attachment
+
+if TYPE_CHECKING:
+    from core.config import VaultConfig
 
 _log = logging.getLogger(__name__)
 
@@ -45,6 +50,10 @@ IGNORE_DIRS = frozenset(
         "_system",
     }
 )
+
+# Dotfolders allowed only when their parent folder is named "attachment".
+# All other dotfolders are pruned unconditionally.
+_DOT_ALLOWLIST: frozenset[str] = frozenset({".summaries"})
 # CLAUDE.md is a project/domain index + instructions file, co-authored by AI
 # and human. It is not a captured note — exclude it from the documents mirror,
 # FTS5 search, and the capture/classify pipelines.
@@ -71,28 +80,55 @@ class ChangeSummary:
     moved: list[tuple[str, VaultEntry]]
 
 
-def scan_non_md_drops(root: Path, attachment_path: Path) -> list[Path]:
-    """Return non-.md files in the vault that are not inside attachment_path.
+def _has_inbox_sibling(file_path: Path, vault_cfg: VaultConfig) -> bool:
+    """Return True if file_path is in inbox/ and already has a .summaries sibling.
 
-    Applies the same skip rules as scan_vault: IGNORE_DIRS, dotfiles,
-    .sync-conflict-* files, and symlinks are excluded. .md files are excluded
-    (they are handled by scan_vault / detect_changes).
+    A sibling exists when `inbox/.summaries/<stem>.md` is present — meaning
+    the binary has already been indexed (pending-routing or fully classified).
+    Re-scanning it would duplicate capture work.
 
     Args:
-        root:            Vault root path.
-        attachment_path: Path to the attachment/ folder. Files inside this
-                         subtree are skipped (they are pipeline artifacts).
+        file_path: Absolute path to the binary file.
+        vault_cfg: VaultConfig with inbox_path and summaries_subdir.
+
+    Returns:
+        True if a sibling .md exists for this binary in inbox/.summaries/.
+    """
+    inbox_path = vault_cfg.inbox_path
+    if inbox_path not in file_path.parents:
+        return False
+    sibling = inbox_path / vault_cfg.summaries_subdir / f"{file_path.name}.md"
+    return sibling.exists()
+
+
+def scan_non_md_drops(root: Path, vault_config: VaultConfig) -> list[Path]:
+    """Return non-.md files in the vault that need to be captured.
+
+    Applies the same skip rules as scan_vault (IGNORE_DIRS, dotfiles,
+    .sync-conflict-*, symlinks, .md extension), plus two drop-specific rules:
+      Rule 1: Skip files inside any per-project or per-domain attachment/ subtree
+              (they are pipeline artifacts — already captured).
+      Rule 2: Skip files in inbox/ that already have a .summaries sibling
+              (they are pending-routing — Phase 2 Classify will handle them).
+
+    Args:
+        root:         Vault root path.
+        vault_config: VaultConfig used for rule evaluation.
 
     Returns:
         list[Path] — plain list; per-file I/O errors are silently skipped.
     """
     drops: list[Path] = []
+    inbox_dir = vault_config.inbox_dir
     for dirpath, dirnames, filenames in root.walk():
         dirnames[:] = [
             d
             for d in dirnames
             if d not in IGNORE_DIRS
-            and not d.startswith(".")
+            and (
+                not d.startswith(".")
+                or (d in _DOT_ALLOWLIST and dirpath.name in ("attachment", inbox_dir))
+            )
             and not (dirpath / d).is_symlink()
         ]
 
@@ -107,8 +143,9 @@ def scan_non_md_drops(root: Path, attachment_path: Path) -> list[Path]:
             file_path = dirpath / name
             if file_path.is_symlink():
                 continue
-            # Skip files already inside the attachment/ subtree
-            if attachment_path in file_path.parents:
+            if _is_in_managed_attachment(file_path, vault_config):
+                continue
+            if _has_inbox_sibling(file_path, vault_config):
                 continue
 
             drops.append(file_path)
@@ -127,10 +164,12 @@ def scan_vault(root: Path | None = None) -> Result[list[VaultEntry]]:
         Success([VaultEntry, ...]) — partial on read errors.
         Logs a WARNING listing skipped paths when any note was unreadable.
     """
+    _inbox_dir = "inbox"  # VaultConfig default; overridden from CONFIG when root is None
     if root is None:
         from core.config import CONFIG
 
         root = CONFIG.main.vault.root
+        _inbox_dir = CONFIG.main.vault.inbox_dir
 
     from vault.reader import read_note
 
@@ -139,11 +178,16 @@ def scan_vault(root: Path | None = None) -> Result[list[VaultEntry]]:
 
     for dirpath, dirnames, filenames in root.walk():
         # Prune directories in-place (controls Path.walk recursion).
+        # Allow .summaries/ when parent is attachment/ (per-project summaries)
+        # or inbox/ (pending-routing siblings — DECISION-027).
         dirnames[:] = [
             d
             for d in dirnames
             if d not in IGNORE_DIRS
-            and not d.startswith(".")
+            and (
+                not d.startswith(".")
+                or (d in _DOT_ALLOWLIST and dirpath.name in ("attachment", _inbox_dir))
+            )
             and not (dirpath / d).is_symlink()
         ]
 

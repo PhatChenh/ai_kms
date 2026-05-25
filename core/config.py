@@ -68,7 +68,8 @@ class RouteDecision(str, Enum):
 class VaultConfig(BaseModel):
     """
     Vault root + all sub-folder names.
-    Add a new folder here + a matching @property — nothing else changes.
+    Add a new folder here + a matching @property for top-level paths.
+    Parametrized sub-paths (per-project, per-domain) live in vault/paths.py.
     """
     root:             Path
     inbox_dir:         str = "inbox"
@@ -79,6 +80,7 @@ class VaultConfig(BaseModel):
     briefings_dir:     str = "Briefings"
     archive_dir:       str = "Archive"
     attachment_dir:    str = "attachment"
+    summaries_subdir:  str = ".summaries"
 
     # ── derived path helpers ──────────────────────────────────────────────
     # Always use these; never build paths by string concatenation elsewhere.
@@ -94,12 +96,6 @@ class VaultConfig(BaseModel):
     def synthesis_path(self)     -> Path: return self.root / self.synthesis_dir
     @property
     def briefings_path(self)     -> Path: return self.root / self.briefings_dir
-    @property
-    def archive_path(self)       -> Path: return self.root / self.archive_dir
-    @property
-    def attachment_path(self)    -> Path: return self.root / self.attachment_dir
-
-
 class DatabaseConfig(BaseModel):
     path: Path = Path("./data/kb.db")
 

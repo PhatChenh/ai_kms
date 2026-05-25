@@ -1,6 +1,6 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-05-22 (Phase 1 capture pipeline complete — all 11 phases done; watcher double-warning bug fixed)_
+_Last updated: 2026-05-24 (Brief #4 — post-review bugfix pass: sibling naming, reconcile guards, watcher refactor)_
 
 ## Current Position
 **Phase**: Phase 1 — Capture ✅ **Complete as of 2026-05-21**
@@ -35,21 +35,63 @@ _Last updated: 2026-05-22 (Phase 1 capture pipeline complete — all 11 phases d
 - [x] 487 tests pass (all capture pipeline phases verified)
 - [x] audit_log wired: every capture writes CAPTURED + TAG_VIOLATION entries
 
+**Phase 1.5 — Revise Attachment Layout Checklist** _(CLOSED — complete 2026-05-23; not in roadmap — design-change rework)_:
+- [x] `core/config.py` — added `summaries_subdir: str = ".summaries"` Field; removed `attachment_path` @property; temporary callers in `capture.py:456`, `capture.py:627`, `cli/main.py:127` use `.root / .attachment_dir` with `# COUPLING:` comments marking Brief #2/#3 work. 576 tests pass.
+- [x] `vault/paths.py` — added `project_attachment`, `project_summaries`, `domain_attachment`, `domain_summaries` helpers reading `attachment_dir` + `summaries_subdir` from VaultConfig. No hardcoded subdir names. 8 new tests; 594 tests pass.
+- [x] `vault/indexer.py` — added `_DOT_ALLOWLIST: frozenset[str] = frozenset({".summaries"})`; updated both `dirnames[:] = [...]` prune expressions in `scan_non_md_drops` + `scan_vault` with scoped condition `(not d.startswith(".") or (d in _DOT_ALLOWLIST and dirpath.name == "attachment"))`. 99 vault tests pass, no regressions.
+- [x] `vault/frontmatter.py` — added `"attachment_path"` to `_KNOWN_KEYS`; added `attachment_path: str | None = None` field to `NoteMetadata` after `source_file`. 15 frontmatter tests pass.
+- [x] 4 architecture decisions recorded (DECISION-021 through -024); 5 TD items recorded (TD-020 through TD-024).
+
 ### Re-make work
 
-- Handlers extension: already done XLSX, others waiting, dependent on sibling approach
-- Sibling md file handling: Brainstorming, need more time (docs/discussion/vault_layout_attachment_strategy.md)
-- Rename gate logic not satisfying yet. Sometime too liberal, sometime too conservative
-- Claude CLI provider: testing needed. currently have problems with a docx file (test claude cli folder). Error log:
+Promoted to formal TD entries (see Technical Debt table below):
+- **TD-028** — Claude CLI provider: metadata JSON parse fails on short DOCX extracts (~29 chars). Prompt hardening or empty-metadata fallback needed.
+- **TD-029** — Rename gate logic mis-calibrated (too liberal / too conservative). Needs research on competitor approaches + confidence-scored suggestion model.
+
+Other in-flight notes:
+- Handlers extension: XLSX done; others pending sibling approach finalization.
+- Sibling md file handling: DONE.
+
+<!-- Original Claude CLI provider error log (kept for TD-028 reproduction):
     tested with real vault and file, receive this kms capture /Users/lap14806/ai_kms_test_vault/attachment/finance.docx
     2026-05-22T10:07:00.590605Z [warning  ] para_context_path set but not found: /Users/phatchenh/Library/Mobile Documents/iCloud~md~obsidian/Documents/Claude Brain/para-context.yaml — classify pipeline will skip PARA context. [core.config]
     2026-05-22T10:07:00.617190Z [info     ] docx.extract.ok                [handlers.docx_handler] bytes=24045 chars=29 correlation_id=3b1f2067-3b2f-4edf-a190-1e745c566e7e path=/Users/lap14806/ai_kms_test_vault/attachment/finance.docx
     2026-05-22T10:07:22.601077Z [error    ] stage_failed                   [core.pipeline] context={'content_preview': 'Need full note content. Headings alone ("Q1 performance", "Q2 Performance") insufficient for metadata extraction.\n\nProvide:\n- Body text / data / findings\n- Context (meeting? report? personal reflectio'} correlation_id=3b1f2067-3b2f-4edf-a190-1e745c566e7e error='metadata JSON parse error: Expecting value: line 1 column 1 (char 0)' pipeline=capture recoverable=False stage=metadata traceback='Traceback (most recent call last):\n  File "/Users/lap14806/Library/CloudStorage/OneDrive-VNGGroupJSC/Documents/Zalopay 2026/01. Improve productivity/ai_kms/pipelines/capture.py", line 100, in _parse_metadata_json\n    parsed = json.loads(cleaned)\n             ^^^^^^^^^^^^^^^^^^^\n  File "/Users/lap14806/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/__init__.py", line 346, in loads\n    return _default_decoder.decode(s)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File "/Users/lap14806/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/decoder.py", line 338, in decode\n    obj, end = self.raw_decode(s, idx=_w(s, 0).end())\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File "/Users/lap14806/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/json/decoder.py", line 356, in raw_decode\n    raise JSONDecodeError("Expecting value", s, err.value) from None\njson.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)\n'
     FAILED: metadata JSON parse error: Expecting value: line 1 column 1 (char 0)
+-->
 
 
 
-**Next planned work**: Phase 2 — Classify pipeline (roadmap). M1 milestone target passed; classify is the next deliverable.
+**Brief #2 — attachment_capture_pipeline** _(complete — 2026-05-24)_:
+- [x] Phase 1 (Taxonomy): `attachment-summary` added to `config/tags.yaml`; count tests updated to 9
+- [x] Phase 2 (Prompt): `prompts/summarize_attachment.yaml` created — 3-section system prompt; variables: file_type, short_summary, text
+- [x] Phase 3 (Rewrite `_store_nonmd()`): per-project paths, inline destination resolution, sibling-first write, CLUELESS inbox handling _(complete 2026-05-24)_
+- [x] Phase 4 (Fix `scan_non_md_drops` + `scan_capture`): rule-based skip, extended `.summaries/` allowlist for inbox/ _(complete 2026-05-24)_
+
+**Brief #3 — attachment_sync_and_archive** _(complete — 2026-05-24)_:
+- [x] Phase 1 (Prerequisite Fixes): TD-023 watcher VaultConfig, TD-AS-1 .summaries/ skip, false-success logging — complete
+- [x] Phase 2 (Archive Layout Helpers): domain_archive(paths.py), archive_path @property removed (config.py) — complete
+- [x] Phase 3 (Watcher Sync Callbacks): _is_binary, _sibling_for helpers; on_delete → SIBLING_ORPHANED; on_move → ATTACHMENT_MOVED (same folder) or SIBLING_ORPHANED (different folder) — complete
+- [x] Phase 4 (kms reconcile): 4-stage reconcile command — reconcile_paths, reconcile_orphan_binaries, reconcile_stale_binaries, reconcile_orphan_siblings; ReconcileResult dataclass; CLI wired; TD-026 retired
+
+**Brief #4 — Review Fixes (post Phase 1.5+Briefs #1/#2/#3 review)** _(2026-05-24)_:
+Triggered by `/superpowers:requesting-code-review`. Applied subset of review findings.
+- [x] Sibling marker naming convention changed to `<binary.name>.md` (e.g. `report.pdf.md`) to prevent collisions between `report.pdf` and `report.docx` — see DECISION-028. Touched: `vault/watcher.py::_sibling_for`, `vault/indexer.py::_has_inbox_sibling`, `pipelines/capture.py` (3 sites: LOCATED sibling, CLUELESS marker, early-exit guard), `pipelines/reconcile.py` (Stages 2+3 sibling lookups), + tests.
+- [x] Added `_is_managed_summaries_area(path, vault_cfg)` in `vault/paths.py`. Returns True when path lives under any `attachment/` subtree OR under `inbox/`. Used by reconcile Stage 4 to scope `.summaries/` `rglob`. Distinct from `_is_in_managed_attachment` (kept) which is the binary-pipeline area predicate.
+- [x] Reconcile Stage 4 dual guards (DECISION-029): scope guard (`_is_managed_summaries_area`) + type guard (`note.metadata.type == "attachment-summary"`). Prevents accidental deletion of user-placed `.md` inside `.summaries/`.
+- [x] `vault/watcher.py` refactor: hoisted lazy imports (logging, unicodedata, audit_write, AIDecision, Failure, Success, delete_by_path, rename_doc, read_note, move_note, write_note) to module top; moved `TYPE_CHECKING` block above `_sibling_for` definition.
+- [x] `pipelines/reconcile.py`: top-level `from pipelines.capture import capture_file` (replaces inline lazy import). Test monkeypatch target updated from `pipelines.capture.capture_file` → `pipelines.reconcile.capture_file`. Reordered `__all__` so entry point `reconcile` is last (composition order).
+- [x] CLUELESS marker body: replaced empty string with single-line placeholder (`_Pending classification — binary at: <path>_` + handoff note) so markers are FTS-searchable and self-explanatory in Obsidian preview.
+- [x] STATE.md label fix: Brief #2 header `in progress` → `complete`. "Re-make work" prose collapsed into TD-028 + TD-029 with full error log preserved in HTML comment.
+- [x] Tests updated: `test_watcher.py` monkeypatch targets retargeted to `vault.watcher.<name>` (top-level imports broke source-module patching — same gotcha as Q13); `_sibling_for` tests now assert `<filename>.md`; 1 new test for stem-collision distinctness. Phase-3, phase-9, phase-12, phase-rename, reconcile, indexer tests updated to new sibling pattern. 650 tests pass.
+
+- [x] **Critical #1** (TD-030) resolved 2026-05-24: `on_deleted` reorder — binary sync now runs before `_should_skip`. Regression test added.
+
+**Not applied (deferred to user decision)**:
+- Issue #8 — `move_attachment` TOCTOU window (existence check then `os.replace`). Tracked as **TD-031**.
+- Issue #9 — `kms migrate-attachments` for legacy `Vault/attachment/`+`Vault/Archive/` layout. Deferred greenfield — no production users. Tracked as **TD-032**.
+
+**Next planned work**: Phase 2 — Classify pipeline.
 
 ---
 
@@ -186,6 +228,69 @@ _Last updated: 2026-05-22 (Phase 1 capture pipeline complete — all 11 phases d
 - **Rationale**: Pydantic v2 re-runs `after` validators on a nested model instance whenever that instance is passed to the parent model's constructor. A validator in `MainConfig` thus fires once during `MainConfig(**raw)` and again during `Config(main=main_instance, ...)` — producing duplicate log output. `load_config()` runs exactly once per singleton load; it is the correct location for once-only side-effects.
 - **Constraint for future phases**: Any new `model_validator(mode="after")` on `MainConfig` or other nested config models MUST NOT produce logging side-effects. All startup warnings and info logs that depend on the fully-validated config belong in `load_config()`, after `Config(...)` construction.
 
+### [DECISION-021] Per-project/Domain attachment layout replaces single global `Vault/attachment/`
+- **Source**: `docs/plans/revise_attachment_layout.md` — header decisions + Phases 1–4 (complete 2026-05-23)
+- **Decision**: Each `Projects/<A>/` and `Domain/<D>/` has its own `attachment/` subfolder. The global `Vault/attachment/` folder is removed. Non-md binaries live at `Projects/<A>/attachment/<file>`. Sibling `.md` summaries live at `Projects/<A>/attachment/.summaries/<file>.md` (dot-prefix hides folder from Obsidian and the user). Domain follows the same pattern.
+- **Alternatives considered**: Global `Vault/attachment/` — rejected: boss expects all project files in one place. Sibling next to source (old Phase 1 design) — rejected: floods vault with near-empty notes.
+- **Rationale**: Boss's navigation model. All project-related files (notes, binaries, summaries) sit under one project folder. `.summaries/` dot-prefix keeps them invisible unless explicitly sought.
+- **Constraint for future phases**: `pipelines/capture.py` MUST use `vault/paths.py::project_attachment(name)` / `project_summaries(name)` to compute target paths — never hardcode `"attachment"` or `".summaries"` in pipeline code. `vault/watcher.py` must generalize its per-project attachment-skip logic (Brief #3 scope — TD-023). `scan_non_md_drops` single `attachment_path` skip must generalize (Brief #2/#3 — TD-024).
+
+### [DECISION-022] `documents.vault_path` for attachment siblings = sibling `.md` path; `NoteMetadata.attachment_path` points to binary
+- **Source**: `docs/plans/revise_attachment_layout.md` — OQ-AL1 resolved (Option C / hybrid)
+- **Decision**: `documents.vault_path` for a sibling row = `"Projects/<A>/attachment/.summaries/report.md"` (the indexed `.md` file). `NoteMetadata.attachment_path: str | None` frontmatter field carries the vault-relative path to the binary (`"Projects/<A>/attachment/report.pdf"`). Both pieces are maintained by the capture pipeline (Brief #2).
+- **Alternatives considered**: (A) sibling-only (no pointer) — search hit opens summary; attachment rename breaks link silently; (B) attachment-only — requires weakening DECISION-018 and path rewrite in indexer; highest cost; (C) hybrid — chosen. Survives binary rename if sync updates frontmatter (Brief #3).
+- **Rationale**: Option B conflicts with DECISION-018 (indexer indexes `.md` only; `vault_path` pointing at `.pdf` is incoherent). Option A is weaker — no structured way for tooling to find the binary. Option C is clean, schema-unchanged, and lets Phase 4 MCP follow the pointer.
+- **Constraint for future phases**: Every search hit in Phase 3/4 resolves `documents.vault_path` to the sibling `.md`. To open the actual binary, consumers read `metadata.attachment_path` from the sibling's frontmatter. Phase 3 embeddings are computed from sibling body (coherent — body contains the AI-generated summary of the binary). Brief #3 sync must update `attachment_path` in frontmatter when the binary is renamed/moved.
+
+### [DECISION-023] `VaultConfig`: `attachment_path` property removed; `summaries_subdir: str = ".summaries"` Field added
+- **Source**: `docs/plans/revise_attachment_layout.md` — Phase 1 (OQ-AL2 resolved: Option-VC-A — remove the property)
+- **Decision**: `VaultConfig.attachment_path` @property deleted. `attachment_dir: str = "attachment"` kept (used by path helpers). New `summaries_subdir: str = ".summaries"` Field added. Callers in `capture.py:456`, `capture.py:627`, `cli/main.py:127` temporarily use `.root / .attachment_dir` with `# COUPLING:` comments until Brief #2/#3 fixes them properly.
+- **Alternatives considered**: (VC-B) repurpose as low-confidence staging area — depends on Brief #2 OQ-AC3 resolution, deferred; (VC-C) deprecated alias — creates confusion about which global folder still exists.
+- **Rationale**: Global `Vault/attachment/` no longer exists. Keeping the property implies a global folder that is being deleted. Clean removal forces Brief #2 to use the per-project helpers.
+- **Constraint for future phases**: `CONFIG.main.vault.attachment_path` no longer exists. Brief #2 must replace all 3 `# COUPLING:` callers with `project_attachment(name)` / `domain_attachment(name)` calls. Test `tests/test_core/test_config.py:353-355` (asserted `vault.attachment_path`) was deleted when the property was removed.
+
+### [DECISION-025] Sibling-first write ordering in `_store_nonmd()` — binary move is step 2, never step 1
+- **Source**: `docs/plans/attachment_capture_pipeline.md` — Phase 3 diagram + OQ-AC6 decision
+- **Decision**: In the LOCATED path, the sibling `.md` is written **before** the binary is moved. Move only happens if `needs_move=True`. If move fails after sibling write, the broken `attachment_path` pointer is the accepted failure mode.
+- **Alternatives considered**: Move-first (write sibling after move) — rejected: if sibling write fails after move, binary is displaced with no index record; harder to reconcile.
+- **Rationale**: A sibling with a broken pointer is detectable and reconcilable (Brief #3 orphan pass). A moved binary with no sibling is invisible to search and harder to recover. Sibling-first guarantees the index always has a record even if the move step fails.
+- **Constraint for future phases**: Brief #3 reconciliation pass must handle the case where `attachment_path` in sibling frontmatter points to a file that no longer exists (binary move failed or binary was manually deleted). TD-026 tracks this.
+
+### [DECISION-026] Destination resolution in `_store_nonmd()` is inline path math — no AI call, no new pipeline stage
+- **Source**: `docs/plans/attachment_capture_pipeline.md` — Approach section + Phase 3 Step 1
+- **Decision**: Whether a binary is LOCATED or CLUELESS is determined by pure path inspection at the top of `_store_nonmd()`. No AI triage. No new stage. Projects/<A>/ or Domain/<D>/ → LOCATED; everything else → CLUELESS.
+- **Alternatives considered**: AI-assisted routing (infer project from content/filename) — deferred to Phase 2 Classify. A new pipeline stage — rejected: stage count stays at 5; routing is not an extractable concern here.
+- **Rationale**: Path context is deterministic when available; adding an AI call adds latency and cost for a decision that is already made structurally. Phase 2 Classify owns the harder case (inbox drops with no path context).
+- **Constraint for future phases**: Phase 2 Classify resolves CLUELESS markers — it must NOT re-invoke `_store_nonmd()`. It reads the pending-routing sibling, classifies to project/domain, calls `project_attachment()` / `domain_attachment()` helpers, writes the full sibling, and clears `status=pending-routing`. No changes to `_store_nonmd()` at that point.
+
+### [DECISION-027] CLUELESS binaries → inbox pending-routing markers; Phase 2 Classify resolves them
+- **Source**: `docs/plans/attachment_capture_pipeline.md` — Diagram 4 (CLUELESS path)
+- **Decision**: When `_store_nonmd()` cannot determine a project/domain from the source path, it writes a minimal sibling at `inbox/.summaries/<stem>.md` with `status=pending-routing`, `type=attachment-summary`, `attachment_path` → binary location. Binary stays in inbox (or is moved there from a stray location). The capture pipeline does NOT re-process these files on subsequent scans (early-exit guard checks for `status=pending-routing`).
+- **Alternatives considered**: Block capture and surface to user for manual routing — rejected: non-technical user should not have to route files. Classify inline in capture — rejected: Phase 2 Classify is the dedicated routing pipeline; bundling it here violates stage separation.
+- **Rationale**: Capture remains a thin ingest pipeline. CLUELESS files are safely parked with enough metadata (summary, type, attachment_path) for Phase 2 to act on. The pending-routing status field is the handoff contract between capture and classify.
+- **Constraint for future phases**: Phase 2 Classify MUST check `status=pending-routing` on `.md` files in `inbox/.summaries/` as its input scan. The `scan_non_md_drops` Rule 2 skip (`_has_inbox_sibling`) prevents capture from re-triggering on already-parked CLUELESS binaries. Any pipeline that writes to `inbox/.summaries/` must set `status=pending-routing` (or clear it — Classify's job). _(See also DECISION-025 for sibling-first ordering.)_
+
+### [DECISION-028] Sibling marker filename uses `<binary.name>.md` (full filename incl. extension), not `<binary.stem>.md`
+- **Source**: Code review 2026-05-24 (issue #4 + #5)
+- **Decision**: Capture pipeline writes sibling at `<parent>/<summaries_subdir>/<binary.name>.md` — e.g. `report.pdf` → `.summaries/report.pdf.md`. Replaces earlier `<stem>.md` pattern from Brief #2.
+- **Alternatives considered**: `<stem>-<ext>.md` (e.g. `report-pdf.md`) — ugly. `<stem>-<hash6>.md` — unique but unreadable. `<stem>.md` (original) — broken when two binaries share stem.
+- **Rationale**: With `<stem>.md`, dropping both `report.pdf` and `report.docx` in inbox produces a single sibling `report.md` whose `attachment_path` gets clobbered by the second binary, losing the first binary's classify handoff. `<binary.name>.md` is bijective with the binary, FTS-indexable, and trivially round-trips via `Path.with_suffix("")`.
+- **Constraint for future phases**: All sibling lookups MUST use `<binary.name>.md`. Phase 2 Classify resolves markers by reading `attachment_path` from frontmatter, not by stem-matching sibling filename. Any new helper that maps binary → sibling must call `_sibling_for(binary, vault_config)` from `vault/watcher.py` (do not duplicate the path math).
+
+### [DECISION-029] Reconcile Stage 4 unlinks only with two guards: managed-summaries scope + `attachment-summary` type
+- **Source**: Code review 2026-05-24 (issues #2 + #3)
+- **Decision**: `reconcile_orphan_siblings` (Stage 4) filters `summaries_dir` via `_is_managed_summaries_area(summaries_dir, vault_cfg)` AND filters individual sibling entries via `note.metadata.type == "attachment-summary"` before considering unlink. Both guards must pass.
+- **Alternatives considered**: Scope guard only (still unlinks user-placed `.md` if scope happens to match). Type guard only (unscoped `rglob` finds stray `.summaries/` folders anywhere in vault). Trust the layout (unsafe; data-loss potential is autonomous).
+- **Rationale**: Reconcile runs unattended (manual `kms reconcile` or scheduler). Stage 4 deletes by design. Defense in depth: scope rules out non-managed `.summaries/` directories (`Projects/<A>/.summaries/` without an `attachment/` parent, stray user folders); type rules out user-placed siblings of a different kind within managed dirs.
+- **Constraint for future phases**: Any new pipeline that writes to `.summaries/` MUST set `type=attachment-summary` in frontmatter, otherwise reconcile Stage 4 will leave its output alone. Phase 2 Classify, when it resolves CLUELESS markers, must preserve the `type` field. New stages that create different sibling kinds inside `.summaries/` require either (a) their own type string + Stage 4 exclusion clause or (b) a separate parallel folder.
+
+### [DECISION-024] Indexer `.summaries/` dotfolder allowlist is scoped — parent folder must be named `"attachment"`
+- **Source**: `docs/plans/revise_attachment_layout.md` — Phase 3 (OQ-AL4 resolved: scoped allowlist)
+- **Decision**: `_DOT_ALLOWLIST = frozenset({".summaries"})` in `vault/indexer.py`. Prune condition: `(not d.startswith(".") or (d in _DOT_ALLOWLIST and dirpath.name == "attachment"))`. A `.summaries/` folder is only traversed when its immediate parent is named `"attachment"`. All other dotfolders remain skipped.
+- **Alternatives considered**: Global allowlist (traverse any `.summaries/` anywhere in vault) — simpler, but any user-created `.summaries/` in `inbox/` or elsewhere would be unexpectedly indexed.
+- **Rationale**: Prevents accidental indexing. The `.summaries/` convention is a per-attachment-folder internal structure; it has no meaning outside an `attachment/` subtree.
+- **Constraint for future phases**: If a new hidden-but-indexable convention emerges (e.g. `.archive-index/`), add it to `_DOT_ALLOWLIST` and add the appropriate parent-folder guard in the same condition. Do not loosen the global dotfolder skip without an explicit scoping guard.
+
 ---
 
 ## Technical Debt
@@ -211,6 +316,20 @@ _Last updated: 2026-05-22 (Phase 1 capture pipeline complete — all 11 phases d
 | TD-017 | AI URL triage replacing structural heuristic gate | Before fetching, LLM classifies each URL as `primary \| citation \| skip` using `prompts/url_triage.yaml`. Only `primary` URLs are fetched. Replaces `_should_enrich` structural heuristic with `_ai_triage_urls()` call inside `_build_gate`. Requires: new `prompts/url_triage.yaml`, `_ai_triage_urls(urls, body) → list[str]` helper, LLM call inside `enrich_urls` (adds latency). Gate isolation in `_build_gate` means stages 3-5 need no changes. | Phase 2+ | `docs/research/capture_pipeline.md` Wishlist B |
 | TD-018 | Domain list refresh in `kms watch` | Taxonomy loaded once at watcher startup; new Domain/ folders added while watcher runs are invisible until restart. Acceptable for Phase 11; dynamic refresh deferred. | Post-Phase 11 | OQ-C6, plans/capture_pipeline.md |
 | TD-019 | Tag taxonomy enforcement in classify pipeline | `core/tags.py` validate_tags is shared infrastructure; classify (roadmap Phase 2) must wire it in. Not in capture plan scope. | Roadmap Phase 2 | Out of Scope, plans/capture_pipeline.md |
+| TD-020 | `docs/research/capture_pipeline.md` § "Non-md branch" documents OLD layout (sibling next to source, global attachment_path, bare wikilink) | Superseded by revise_attachment_layout; annotation "→ see revise_attachment_layout.md for new layout" deferred until Brief #2 ships the new behavior | Brief #2 post-ship | `docs/research/revise_attachment_layout.md` TD-RAL-1 |
+| TD-021 | `docs/roadmap.md` Phase 1 (l. 53–66) describes OLD attachment layout in detail | Brief #2 post-plan documentation pass; annotate or rewrite | Brief #2 post-ship | `docs/research/revise_attachment_layout.md` TD-RAL-2 |
+| TD-022 | ~~`pipelines/capture.py:456`, `capture.py:627`, `cli/main.py:127` use `.root / .attachment_dir` workaround~~ | _(all three callers retired — cli/main.py:127 was the last, fixed in Brief #3 Phase 1)_ | ✅ Resolved | `docs/plans/revise_attachment_layout.md` Phase 1 Notes |
+| TD-023 | ~~`vault/watcher.py` takes single `attachment_path` arg to skip events~~ | _(resolved 2026-05-24 — Brief #3 Phase 1: watcher now takes `vault_config: VaultConfig`, uses `_is_in_managed_attachment` for per-project path check)_ | ✅ Resolved | `docs/plans/attachment_sync_and_archive.md` Phase 1 |
+| TD-024 | ~~`vault/indexer.py::scan_non_md_drops(root, attachment_path: Path)` single-path skip~~ | _(retired 2026-05-24 — Brief #2 Phase 4: new `vault_config` signature with `_is_in_managed_attachment` + `_has_inbox_sibling` rules)_ | ✅ Resolved | `docs/plans/revise_attachment_layout.md` Phase 3 Notes |
+| TD-025 | ~~`tests/test_vault/test_indexer.py` uses old `scan_non_md_drops(root, attachment_path: Path)` signature~~ | _(retired 2026-05-24 — Brief #2 Phase 4: all 6 old tests updated to new signature + 4 new tests added)_ | ✅ Resolved | `docs/plans/attachment_capture_pipeline.md` Phase 4 Steps |
+| TD-026 | ~~Orphan reconciliation — binary in `attachment/` with no sibling `.md`~~ | _(resolved 2026-05-24 — Brief #3 Phase 4: reconcile Stage 4 walks `.summaries/`, unlinks ghosts, removes DB rows. Stage 2 captures binaries with no sibling.)_ | ✅ Resolved | `docs/plans/attachment_sync_and_archive.md` Phase 4 |
+| TD-027 | ~~`prompts/summarize_attachment.yaml` missing~~ | _(delivered 2026-05-24 — Brief #2 Phase 2)_ | ✅ Brief #2 Phase 2 | `docs/plans/attachment_capture_pipeline.md` TD-C8 |
+| TD-028 | `ClaudeCliProvider` metadata JSON parse fails on short DOCX extracts | Provider returns prose ("Need full note content...") instead of JSON when extracted text is too thin (e.g. headings-only DOCX). `pipelines/capture.py::_parse_metadata_json` raises `json.JSONDecodeError`. Repro: real-vault `kms capture <finance.docx>` with ~29 chars extracted. Needs prompt hardening (JSON-only response) or fallback to empty metadata on parse failure. | Phase 2 pre-req | STATE.md "Re-make work" §1 |
+| TD-029 | Rename gate logic mis-calibrated — too liberal in some cases, too conservative in others | Capture-time rename decision (`_should_rename_md` / equivalent) fires when title looks generic but skips when title is descriptive-yet-stale. Needs survey of how other KMS tools (Logseq, Reflect, mem.ai) handle filename vs heading drift. Likely fix: confidence-scored rename suggestion + human-review queue rather than auto-rename. | Phase 2 pre-req | STATE.md "Re-make work" §3 |
+| TD-030 | ~~**Critical** — `vault/watcher.py::on_deleted` calls `_should_skip(path)` before binary-sync dispatch~~ | _(resolved 2026-05-24 — Brief #4: reordered `on_deleted` to mirror `on_moved`. Binary sync (`_handle_binary_delete`) now runs before `_should_skip` filter. Regression test `test_on_deleted_binary_in_managed_attachment_dir_fires_sync` asserts `delete_by_path` fires for `Projects/<A>/attachment/Q2.pdf` and user callback is suppressed. 30 watcher tests pass.)_ | ✅ Resolved | Code review 2026-05-24 (Critical #1) |
+| TD-031 | `vault/writer.py::move_attachment` TOCTOU window between `dst.exists()` check and `os.replace(src, dst)`. Acceptable in single-process CLI; risk in watcher mode w/ concurrent drops + scan in flight. Fix: replace exists-check + `os.replace` with `os.link(src, dst)` (atomic, raises `FileExistsError` if dst exists) + `src.unlink()`. Keep existing EXDEV cross-filesystem fallback for `os.link`. | Watcher hardening pass | Code review 2026-05-24 (issue #8) |
+| TD-032 | No `kms migrate-attachments` command for vaults using pre-Brief-#1 layout (global `Vault/attachment/` + global `Vault/Archive/`). New code expects per-project/per-domain `attachment/` and `Domain/<D>/Archive/`. Greenfield deferred — no production users with legacy layout. If/when shipped, add `kms migrate-attachments` one-shot: walk legacy folders, infer project/domain (via frontmatter or prompt), move binary + sibling, update DB `vault_path` rows. | Post-Phase 2 (only if needed) | Code review 2026-05-24 (issue #9) |
+| TD-033 | `vault/watcher.py` top-level imports (`move_note`, `write_note`, `delete_by_path`, `rename` as `rename_doc`, `read_note`, `audit_write`, `AIDecision`, `Failure`, `Success`) mean tests MUST patch `vault.watcher.<name>` rather than the source module. Patching `vault.writer.move_note` no longer affects watcher's local binding. Existing watcher tests updated 2026-05-24. Documented here so future test authors don't re-introduce the bug. | Documentation-only | Code review 2026-05-24 (issue #10/#11 follow-on) |
 
 ---
 
@@ -245,3 +364,5 @@ _Last updated: 2026-05-22 (Phase 1 capture pipeline complete — all 11 phases d
 | Q-003 | `wal_autocheckpoint` tuning. Reference sets to 100 pages; SQLite default is 1000. Worth adding to `_connect()` before Phase 4 MCP (long-running daemon), or accept default for CLI? | Phase 4 | 🔴 Open |
 | Q-004 | Concurrent `run_pipeline` calls in Phase 4 MCP daemon — `clear_contextvars()` in `new_correlation_id()` will bleed across concurrent runs. Needs scoped contextvars or per-run copies. | Phase 4 | 🔴 Open |
 | Q-005 | Phase 11 watcher design for `updated_by_human` locking strategy. DECISION-002 specifies whole-note lock: if `updated_by_human=True`, no AI writes allowed at all (including metadata-only edits). When Phase 11 watcher detects a human body edit and sets `updated_by_human=True`, should the AI still be allowed to update frontmatter (metadata-only writes) if the body is unchanged, or keep the whole-note lock? | Phase 11 (watcher) | 🔴 Open |
+| Q-006 | Obsidian wikilink path shape inside `.summaries/<x>.md` pointing at the binary. Obsidian resolves `[[report.pdf]]` vault-wide by filename — ambiguous when two projects both have `report.pdf`. Full path `[[Projects/A/attachment/report.pdf]]` or relative `[[../report.pdf]]` needed. Cannot verify live in research session. Brief #2 capture pipeline must decide and test on a real vault before shipping. | Brief #2 | `docs/research/revise_attachment_layout.md` OQ-AL5 |
+| Q-007 | `summarize_attachment` prompt quality on real files. Prompt structure (3 sections: What this file is / Key content / Key facts) is untested against diverse binary types (PDF reports, DOCX meeting notes, XLSX data). May need prompt iteration after first real vault run. | Brief #2 Phase 2 post-ship | `docs/plans/attachment_capture_pipeline.md` OQ-AC4 |

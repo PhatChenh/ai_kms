@@ -205,32 +205,45 @@ async def test_rename_gate_augment_on_generic_placeholder(
 async def test_rename_gate_full_rename_on_illegible_binary(
     vault_root, pipeline_ctx, monkeypatch
 ):
-    """'xkdhgksjfs.pdf' with AI title 'Q2 Movies Deck' → attachment + sibling use AI title."""
+    """LOCATED binary with illegible name → rename gate FULL_RENAME → sibling uses AI title."""
     from pipelines.capture import capture_file
     from storage.audit_log import query
 
-    pdf_file = _backdated_binary(vault_root / "inbox" / "xkdhgksjfs.pdf")
+    # Place binary in a Project subfolder → LOCATED path (rename gate applies)
+    project_dir = vault_root / "Projects" / "Foo"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    pdf_file = _backdated_binary(project_dir / "xkdhgksjfs.pdf")
 
-    provider = _mock_provider("Q2 Movies Deck")
+    # Provider needs 3 responses: summarize, metadata, summarize_attachment
+    provider = AsyncMock()
+    provider.complete.side_effect = [
+        Success(LLMResponse(content="Test summary.", model="test", usage={})),
+        Success(LLMResponse(
+            content='{"title": "Q2 Movies Deck", "tags": ["type/note"]}',
+            model="test", usage={},
+        )),
+        Success(LLMResponse(
+            content=(
+                "## What this file is\nA deck.\n\n"
+                "## Key content\nSlides.\n\n"
+                "## Key facts / findings\nKey points."
+            ),
+            model="test", usage={},
+        )),
+    ]
     monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: provider)
 
     result = await capture_file(pdf_file, context=pipeline_ctx)
 
     assert isinstance(result, Success), f"Expected Success, got {result}"
 
-    # Attachment should be at attachments/Q2 Movies Deck.pdf
-    attachment = vault_root / "attachment" / "Q2 Movies Deck.pdf"
-    assert attachment.exists(), (
-        f"Expected attachment at {attachment}; files: "
-        + str(list((vault_root / "attachment").iterdir()))
-    )
+    # Sibling at Projects/Foo/attachment/.summaries/Q2 Movies Deck.pdf.md
+    sibling = vault_root / "Projects" / "Foo" / "attachment" / ".summaries" / "Q2 Movies Deck.pdf.md"
+    assert sibling.exists(), f"Expected sibling at {sibling}"
 
-    # Sibling note at inbox/Q2 Movies Deck.md
-    sibling = vault_root / "inbox" / "Q2 Movies Deck.md"
-    assert sibling.exists(), (
-        f"Expected sibling note at {sibling}; files: "
-        + str(list((vault_root / "inbox").iterdir()))
-    )
+    # Binary moved to Projects/Foo/attachment/Q2 Movies Deck.pdf
+    binary_dst = vault_root / "Projects" / "Foo" / "attachment" / "Q2 Movies Deck.pdf"
+    assert binary_dst.exists(), f"Expected renamed binary at {binary_dst}"
 
     # audit_log must have a rename_gate row with outcome=FULL_RENAME.
     audit_result = query(pipeline="capture", db_path=pipeline_ctx.db_path)

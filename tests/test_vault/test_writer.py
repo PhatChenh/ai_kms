@@ -370,3 +370,23 @@ def test_move_attachment_atomic_no_partial_on_failure(vault_root, monkeypatch):
     assert src.read_bytes() == original_bytes
     tmp_files = list((vault_root / "attachment").glob(".tmp_*"))
     assert tmp_files == []
+
+
+def test_write_note_preserves_attachment_path(vault_root):
+    """write_note forwards attachment_path through _merge_metadata (Phase 1.5 bug fix)."""
+    from vault.writer import write_note
+
+    note_path = vault_root / "inbox" / "summary.md"
+    meta = NoteMetadata(
+        type="attachment-summary",
+        attachment_path="inbox/report.pdf",
+        status="pending-routing",
+        tags=["type/attachment-summary"],
+    )
+    result = write_note(note_path, "", meta, actor="ai")
+
+    assert isinstance(result, Success)
+    from vault.reader import read_note
+    note = read_note(note_path)
+    assert isinstance(note, Success)
+    assert note.value.metadata.attachment_path == "inbox/report.pdf"

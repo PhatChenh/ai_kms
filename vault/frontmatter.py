@@ -37,6 +37,7 @@ _KNOWN_KEYS: frozenset[str] = frozenset(
         "summary",
         "source",
         "source_file",
+        "attachment_path",
         "status",
     }
 )
@@ -58,10 +59,11 @@ class NoteMetadata(BaseModel):
     summary: str | None = None
     source: str | None = None
     source_file: str | None = None
+    attachment_path: str | None = None
     status: str | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("type", "project", "domain", "summary", "source", "source_file", "status", mode="before")
+    @field_validator("type", "project", "domain", "summary", "source", "source_file", "attachment_path", "status", mode="before")
     @classmethod
     def _coerce_bool_to_str(cls, v: Any) -> Any:
         """PyYAML 1.1 maps yes/no/on/off/true/false to bool. Coerce back to str."""

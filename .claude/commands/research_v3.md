@@ -51,7 +51,7 @@ Only then move to Step 0b.
 
 ---
 
-## Step 0b — Surface blocking conflicts and ambiguities  ← NEW
+## Step 0b — Surface blocking conflicts and ambiguities 
 
 After loading all context, before doing any research:
 
@@ -309,7 +309,7 @@ For issues that are clear factual gaps or unsupported claims: fix inline.
 
 For issues that require a design decision — where you found two valid
 interpretations and aren't sure which the human intends — call
-`AskUserQuestion` before writing the final finding.  ← CHANGED
+`AskUserQuestion` before writing the final finding.  
 
 Do not skip this step.
 

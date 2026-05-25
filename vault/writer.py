@@ -79,6 +79,7 @@ def _merge_metadata(
         summary=incoming.summary,
         source=incoming.source,
         source_file=incoming.source_file,
+        attachment_path=incoming.attachment_path,
         status=incoming.status,
         extra=incoming.extra,
     )

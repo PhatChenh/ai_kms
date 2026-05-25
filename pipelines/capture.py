@@ -434,65 +434,214 @@ async def _store_md(
 async def _store_nonmd(
     mr: MetadataResult, note_meta: NoteMetadata, ctx: PipelineContext
 ) -> Result[WriteOutcome]:
-    """Handle non-md files: move binary to attachment/ first, then create sibling .md.
+    """Handle non-md files: resolve destination (LOCATED or CLUELESS), write sibling, move binary.
 
-    Attachment-first ordering ensures no sibling note is written when the binary
-    is unavailable. If the sibling write fails after a successful move, the binary
-    is in attachment/ with no note — recoverable on next scan (see TD-C6).
+    LOCATED: source path reveals project or domain → sibling written first, binary moved second
+             (DECISION-025 sibling-first ordering).
+    CLUELESS: no path context → binary parked in inbox, pending-routing marker written for
+              Phase 2 Classify (DECISION-027).
     """
+    from vault.paths import (
+        domain_attachment,
+        domain_summaries,
+        project_attachment,
+        project_summaries,
+    )
+
     src = mr.raw.source_path
     suffix = src.suffix
+    vault_cfg = ctx.config.vault
 
-    # Non-md files are never re-processed (DECISION-018) — is_existing_doc=False always.
-    # COUPLING: if DECISION-018 changes and binaries can be re-queued, this must
-    # perform a DB lookup like _store_md does.
-    decision = decide_rename(
-        src, mr.ai_title, is_existing_doc=False, config=ctx.config.capture.rename_gate
-    )
-    _audit_rename_gate(decision, src, ctx)
-    sanitized_stem = decision.final_stem or src.stem
+    # ── Inline destination resolution (DECISION-026: pure path math, no AI) ─
+    target_type: str | None = None
+    target_name: str | None = None
+    needs_move = False
 
-    # Resolve attachment destination with collision loop (cap 100)
-    attachment_dir: Path = ctx.config.vault.attachment_path
-    attachment_dst = attachment_dir / f"{sanitized_stem}{suffix}"
-    counter = 0
-    while attachment_dst.exists() and counter < 100:
-        counter += 1
-        attachment_dst = attachment_dir / f"{sanitized_stem}-{counter}{suffix}"
+    if vault_cfg.projects_path in src.parents:
+        rel = src.relative_to(vault_cfg.projects_path)
+        if len(rel.parts) >= 2:
+            target_type, target_name = "project", rel.parts[0]
+            needs_move = rel.parts[1] != vault_cfg.attachment_dir
+    elif vault_cfg.domain_path in src.parents:
+        rel = src.relative_to(vault_cfg.domain_path)
+        if len(rel.parts) >= 2:
+            target_type, target_name = "domain", rel.parts[0]
+            needs_move = rel.parts[1] != vault_cfg.attachment_dir
 
-    if attachment_dst.exists():
-        return Failure(
-            error="attachment collision: all 100 slots taken",
-            recoverable=False,
-            context={"stem": sanitized_stem, "suffix": suffix},
+    if target_type is not None:
+        # LOCATED path: rename gate + rich sibling body + binary move
+        # Non-md files are never re-processed (DECISION-018) — is_existing_doc=False always.
+        decision = decide_rename(
+            src, mr.ai_title, is_existing_doc=False, config=ctx.config.capture.rename_gate
         )
+        _audit_rename_gate(decision, src, ctx)
+        sanitized_stem = decision.final_stem or src.stem
 
-    # Move binary first — if src is missing, fail before writing anything to vault.
-    match move_attachment(src, attachment_dst):
-        case Failure() as f:
-            return f
-        case Success():
-            pass
+        if target_type == "project":
+            att_dir = project_attachment(target_name)  # type: ignore[arg-type]
+            sum_dir = project_summaries(target_name)  # type: ignore[arg-type]
+        else:
+            att_dir = domain_attachment(target_name)  # type: ignore[arg-type]
+            sum_dir = domain_summaries(target_name)  # type: ignore[arg-type]
 
-    # Binary is confirmed at attachment_dst; write sibling pointing to it.
-    sibling = src.parent / f"{sanitized_stem}.md"
-    sibling_body = f"![[{attachment_dst.name}]]"
-    match write_note(sibling, sibling_body, note_meta, actor="ai"):
-        case Failure() as f:
-            # COUPLING: binary is now in attachment/ with no sibling note.
-            # Cleanup requires reverse-lookup (TD-C6). Returning Failure so
-            # the caller knows the pipeline did not complete cleanly.
-            return f
-        case Success(value=sibling_outcome):
-            pass
+        if needs_move:
+            attachment_dst = att_dir / f"{sanitized_stem}{suffix}"
+            counter = 0
+            while attachment_dst.exists() and counter < 100:
+                counter += 1
+                attachment_dst = att_dir / f"{sanitized_stem}-{counter}{suffix}"
+            if attachment_dst.exists():
+                return Failure(
+                    error="attachment collision: all 100 slots taken",
+                    recoverable=False,
+                    context={"stem": sanitized_stem, "suffix": suffix},
+                )
+            sibling_stem = sanitized_stem
+        else:
+            attachment_dst = src  # binary already at final destination
+            sibling_stem = src.stem
 
-    match documents.upsert(sibling_outcome, db_path=ctx.db_path):
-        case Failure() as f:
-            return f
-        case Success():
-            pass
+        # Step 3: Rich sibling body via summarize_attachment prompt
+        provider = get_provider("capture", ctx.config)
+        system, user = PROMPTS["summarize_attachment"].render(
+            file_type=suffix.lower(),
+            short_summary=mr.summary,
+            text=mr.raw.text,
+        )
+        match await provider.complete(system, user):
+            case Failure() as f:
+                return f
+            case Success(value=resp):
+                rich_body = resp.content.strip()
 
-    return Success(sibling_outcome)
+        # Step 4: WRITE SIBLING FIRST (DECISION-025)
+        # Sibling name = binary's full filename + ".md" (e.g. report.pdf.md) so
+        # that report.pdf and report.docx never collide on the same sibling.
+        sibling_path = sum_dir / f"{attachment_dst.name}.md"
+        attachment_vault_path = to_vault_path(attachment_dst)
+        sibling_meta = NoteMetadata(
+            type="attachment-summary",
+            attachment_path=attachment_vault_path,
+            summary=mr.summary,
+            tags=["type/attachment-summary"]
+            + ([f"domain/{note_meta.domain}"] if note_meta.domain else []),
+            domain=note_meta.domain,
+            confidence=note_meta.confidence,
+        )
+        match write_note(sibling_path, rich_body, sibling_meta, actor="ai"):
+            case Failure() as f:
+                return f
+            case Success(value=sibling_outcome):
+                pass
+
+        # Step 5: MOVE BINARY (only if not already at destination)
+        if needs_move:
+            match move_attachment(src, attachment_dst):
+                case Failure() as f:
+                    # Sibling written with broken pointer — accepted failure mode
+                    # (DECISION-025). TD-026 tracks orphan reconciliation in Brief #3.
+                    logger.error(
+                        "store.located_move_failed",
+                        src=str(src),
+                        dst=str(attachment_dst),
+                        sibling=str(sibling_path),
+                        error=f.error,
+                    )
+                    return f
+                case Success():
+                    pass
+
+        # Step 6: Write LOCATED audit entry
+        located_decision = AIDecision(
+            action="capture:store",
+            confidence=1.0,
+            reasoning=f"Routed to {target_type}/{target_name}",
+            source_ids=[to_vault_path(src)],
+        )
+        match audit.write(
+            located_decision,
+            pipeline="capture",
+            stage="store",
+            outcome="LOCATED",
+            db_path=ctx.db_path,
+        ):
+            case Failure(error=e):
+                logger.warning("store.located_audit_failed", error=e)
+            case Success():
+                pass
+
+        # Step 7: Upsert documents row for sibling
+        match documents.upsert(sibling_outcome, db_path=ctx.db_path):
+            case Failure() as f:
+                return f
+            case Success():
+                return Success(sibling_outcome)
+
+    else:
+        # CLUELESS path: no project/domain context (DECISION-027)
+        # Binary parked in inbox; pending-routing marker written for Phase 2 Classify.
+        if vault_cfg.inbox_path in src.parents:
+            final_src = src  # already in inbox — stays
+        else:
+            # Move binary to inbox with collision handling
+            inbox_dst = vault_cfg.inbox_path / src.name
+            counter = 0
+            while inbox_dst.exists() and counter < 100:
+                counter += 1
+                inbox_dst = vault_cfg.inbox_path / f"{src.stem}-{counter}{suffix}"
+            match move_attachment(src, inbox_dst):
+                case Failure() as f:
+                    return f
+                case Success():
+                    final_src = inbox_dst
+
+        # Write pending-routing marker at inbox/.summaries/<filename>.md
+        summaries_dir = vault_cfg.inbox_path / vault_cfg.summaries_subdir
+        summaries_dir.mkdir(parents=True, exist_ok=True)
+        marker_path = summaries_dir / f"{final_src.name}.md"
+        attachment_rel = to_vault_path(final_src)
+        marker_meta = NoteMetadata(
+            type="attachment-summary",
+            status="pending-routing",
+            attachment_path=attachment_rel,
+            tags=["type/attachment-summary"],
+        )
+        marker_body = (
+            f"_Pending classification — binary at:_ `{attachment_rel}`\n\n"
+            "This marker was created by the capture pipeline without project/domain "
+            "context. Phase 2 (Classify) will replace this body with a full summary "
+            "and route the binary into a project or domain attachment folder.\n"
+        )
+        match write_note(marker_path, marker_body, marker_meta, actor="ai"):
+            case Failure() as f:
+                return f
+            case Success(value=marker_outcome):
+                pass
+
+        # Write CLUELESS audit entry
+        clueless_decision = AIDecision(
+            action="capture:store",
+            confidence=1.0,
+            reasoning="No project/domain context — parked for Phase 2 Classify",
+            source_ids=[to_vault_path(src)],
+        )
+        match audit.write(
+            clueless_decision,
+            pipeline="capture",
+            stage="store",
+            outcome="CLUELESS",
+            db_path=ctx.db_path,
+        ):
+            case Failure(error=e):
+                logger.warning("store.clueless_audit_failed", error=e)
+            case Success():
+                pass
+
+        match documents.upsert(marker_outcome, db_path=ctx.db_path):
+            case Failure() as f:
+                return f
+            case Success():
+                return Success(marker_outcome)
 
 
 # ---------------------------------------------------------------------------
@@ -548,6 +697,20 @@ async def capture_file(
             recoverable=True,
             context={"path": str(path), "age_seconds": age, "cooldown_seconds": cooldown},
         )
+
+    # Early-exit guard for CLUELESS binaries already parked in inbox (DECISION-027).
+    # If inbox/.summaries/<filename>.md has status=pending-routing, skip re-processing.
+    if path.suffix.lower() != ".md":
+        vault_cfg = context.config.vault
+        marker = vault_cfg.inbox_path / vault_cfg.summaries_subdir / f"{path.name}.md"
+        if marker.exists():
+            match read_note(marker):
+                case Success(value=note) if note.metadata.status == "pending-routing":
+                    return Failure(
+                        error="pending-routing — binary already indexed; awaiting Phase 2 classify",
+                        recoverable=True,
+                        context={"path": str(path), "marker": str(marker)},
+                    )
 
     return await run_pipeline(
         "capture",
@@ -624,8 +787,7 @@ async def scan_capture(
             # DECISION-018 override: scan_vault only indexes .md; this loop handles binary drops.
             from vault.indexer import scan_non_md_drops
 
-            _attachment_path: Path = CONFIG.main.vault.attachment_path  # type: ignore[attr-defined]
-            non_md_paths = scan_non_md_drops(_root, _attachment_path)
+            non_md_paths = scan_non_md_drops(_root, CONFIG.main.vault)
             if non_md_paths:
                 logger.info("scan_capture.nonmd_found", count=len(non_md_paths))
             for path in non_md_paths:
@@ -646,7 +808,13 @@ async def scan_capture(
                         )
 
             # Modified notes: full re-capture (fresh summary + frontmatter via full pipeline).
+            # Skip .summaries/ paths — sibling .md files are owned by the sync
+            # pipeline; re-capturing them would wipe attachment_path from frontmatter
+            # (TD-AS-1).
+            _summaries_subdir = CONFIG.main.vault.summaries_subdir  # type: ignore[attr-defined]
             for entry in summary.modified:
+                if _summaries_subdir in Path(entry.vault_path).parts:
+                    continue
                 path = _root / entry.vault_path
                 ctx = PipelineContext(
                     config=CONFIG.main,  # type: ignore[attr-defined]

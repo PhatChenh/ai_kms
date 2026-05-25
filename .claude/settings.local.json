@@ -4,7 +4,12 @@
       "Skill(research)",
       "Skill(research:*)",
       "Skill(superpowers:brainstorming)",
-      "Skill(superpowers:brainstorming:*)"
+      "Skill(superpowers:brainstorming:*)",
+      "Skill(update-state)",
+      "Skill(update-state:*)",
+      "Skill(claude-md-management:revise-claude-md)",
+      "Skill(claude-md-management:revise-claude-md:*)",
+      "Bash(uv run *)"
     ]
   }
 }

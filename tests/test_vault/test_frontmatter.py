@@ -193,3 +193,55 @@ def test_source_file_field_round_trips(tmp_path):
     r2 = parse(f2)
     assert isinstance(r2, Success)
     assert r2.value[0].source_file is None
+
+
+def test_attachment_path_field_parsed_not_in_extra(tmp_path):
+    """attachment_path in frontmatter lands on metadata field, not in extra."""
+    from vault.frontmatter import parse
+
+    f = write_file(
+        tmp_path, "n.md",
+        "---\nattachment_path: Projects/A/attachment/report.pdf\n---\nbody"
+    )
+    r = parse(f)
+    assert isinstance(r, Success)
+    meta, _ = r.value
+    assert meta.attachment_path == "Projects/A/attachment/report.pdf"
+    assert "attachment_path" not in meta.extra
+
+
+def test_attachment_path_field_round_trips(tmp_path):
+    """attachment_path survives dumps → parse unchanged."""
+    from vault.frontmatter import NoteMetadata, dumps, parse
+
+    meta = NoteMetadata(attachment_path="Projects/A/attachment/report.pdf")
+    rendered = dumps(meta, "body")
+    f = write_file(tmp_path, "rt.md", rendered)
+    r = parse(f)
+    assert isinstance(r, Success)
+    assert r.value[0].attachment_path == "Projects/A/attachment/report.pdf"
+
+
+def test_attachment_path_defaults_to_none_when_absent(tmp_path):
+    """parse() on note without attachment_path sets field to None."""
+    from vault.frontmatter import parse
+
+    f = write_file(tmp_path, "n.md", "---\ntitle: hello\n---\nbody")
+    r = parse(f)
+    assert isinstance(r, Success)
+    assert r.value[0].attachment_path is None
+
+
+def test_unknown_keys_still_go_to_extra_with_attachment_path_known(tmp_path):
+    """attachment_path known; other unknown keys still land in extra."""
+    from vault.frontmatter import parse
+
+    f = write_file(
+        tmp_path, "n.md",
+        "---\nattachment_path: Projects/A/attachment/f.pdf\nweirdo: 42\n---\nbody"
+    )
+    r = parse(f)
+    assert isinstance(r, Success)
+    meta, _ = r.value
+    assert meta.attachment_path == "Projects/A/attachment/f.pdf"
+    assert meta.extra == {"weirdo": 42}

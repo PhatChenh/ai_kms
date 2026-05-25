@@ -59,7 +59,7 @@ When reading `docs/plans/$TOPIC.md`, extract from these specific locations:
 
 **`## Approach`** — the opening paragraph often contains key design choices stated plainly (e.g. "raw sqlite3 over ORM", "versioned .sql deltas"). These are Architecture Decisions if they constrain future phases.
 
-## Step 3 — Write STATE.md
+## Step 3 — Write STATE.md and sync to CLAUDE.md
 
 **If initializing (Path A)**, create `STATE.md` at the project root:
 
@@ -111,6 +111,8 @@ _Last updated: <date>_
 Never delete existing entries. If superseded, add inline: `_(superseded by DECISION-NNN)_`
 
 Always update `_Last updated:` at the top.
+
+**After done with STATE.md,** call /claude-md-management:revise-claude-md $ARGUMENTS
 
 ## Step 4 — Confirm
 
