@@ -347,12 +347,18 @@ class TestVaultConfig:
     def test_briefings_path_is_root_plus_briefings_dir(self, vault, tmp_path):
         assert vault.briefings_path == tmp_path / "Briefings"
 
-    def test_archive_path_is_root_plus_archive_dir(self, vault, tmp_path):
-        assert vault.archive_path == tmp_path / "Archive"
+    def test_summaries_subdir_default_is_dotted_summaries(self, vault, tmp_path):
+        """summaries_subdir defaults to '.summaries' (the hidden sibling folder name)."""
+        assert vault.summaries_subdir == ".summaries"
 
-    def test_attachment_path_derives_from_root(self, vault, tmp_path):
-        """attachment_path = root / attachment_dir (default 'attachment')."""
-        assert vault.attachment_path == tmp_path / "attachment"
+    def test_summaries_subdir_override_is_respected(self, tmp_path):
+        """summaries_subdir can be overridden in config."""
+        vc = VaultConfig(root=tmp_path, summaries_subdir=".alt-summaries")
+        assert vc.summaries_subdir == ".alt-summaries"
+
+    def test_attachment_path_property_removed(self, vault):
+        """attachment_path property is removed; per-project paths live in vault/paths.py."""
+        assert not hasattr(vault, "attachment_path")
 
     # ── custom dir names are honoured ─────────────────────────────────────────
 

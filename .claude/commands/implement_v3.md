@@ -320,6 +320,8 @@ After all test criteria pass, update `docs/plans/$FEATURE.md`:
 
 3. Change the top-level `_Status_` field to `[~] in progress` (or `[x] done` if this was the last phase)
 
+4. Call /update-state $ARGUMENTS
+
 ---
 
 ## Step 6 — Hard stop

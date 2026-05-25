@@ -97,6 +97,37 @@ def briefing() -> None:
 
 
 @cli.command()
+def reconcile() -> None:
+    """Sync search index to vault — fix paths, capture missing, re-summarize stale, clean orphans."""
+    import asyncio
+    from core.config import CONFIG
+    from core.logging_setup import new_correlation_id
+    from core.pipeline import PipelineContext
+    from core.result import Failure, Success
+    from pipelines.reconcile import reconcile as run_reconcile
+
+    async def _run() -> None:
+        ctx = PipelineContext(
+            config=CONFIG.main,
+            db_path=CONFIG.main.database.path,
+            correlation_id=new_correlation_id(),
+        )
+        match await run_reconcile(ctx):
+            case Success(value=r):
+                click.echo(
+                    f"OK: {r.paths_reconciled} paths reconciled, "
+                    f"{r.new_captures} new binary captured, "
+                    f"{r.restale_count} stale binaries re-summarized, "
+                    f"{r.orphans_cleaned} orphans cleaned"
+                )
+            case Failure(error=e):
+                click.echo(f"FAILED: {e}", err=True)
+                raise SystemExit(1)
+
+    asyncio.run(_run())
+
+
+@cli.command()
 def watch() -> None:
     """Watch vault root; capture new drops from any folder automatically.
 
@@ -124,7 +155,6 @@ def watch() -> None:
 
     root = CONFIG.main.vault.root
     db_path = CONFIG.main.database.path
-    attachment_path = CONFIG.main.vault.attachment_path
 
     valid_domains = load_valid_domains(root)
     taxonomy = load_taxonomy(
@@ -186,8 +216,11 @@ def watch() -> None:
                 return
             vault_rel = to_vault_path(path)
             match delete_by_path(vault_rel, db_path=db_path):
-                case Success():
-                    _wlog.info("watcher.deleted", vault_path=vault_rel)
+                case Success(value=rowcount):
+                    if rowcount == 0:
+                        _wlog.warning("watcher.binary_not_in_index", vault_path=vault_rel)
+                    else:
+                        _wlog.info("watcher.deleted", vault_path=vault_rel)
                 case Failure(error=e):
                     _wlog.warning("watcher.delete_failed", vault_path=vault_rel, error=e)
 
@@ -195,14 +228,17 @@ def watch() -> None:
             old_rel = to_vault_path(src)
             new_rel = to_vault_path(dst)
             match rename_doc(old_rel, new_rel, db_path=db_path):
-                case Success():
-                    _wlog.info("watcher.renamed", old=old_rel, new=new_rel)
+                case Success(value=rowcount):
+                    if rowcount == 0:
+                        _wlog.warning("watcher.binary_not_in_index", old=old_rel, new=new_rel)
+                    else:
+                        _wlog.info("watcher.renamed", old=old_rel, new=new_rel)
                 case Failure(error=e):
                     _wlog.warning("watcher.rename_failed", old=old_rel, new=new_rel, error=e)
 
         watcher = VaultWatcher(
             root=root,
-            attachment_path=attachment_path,
+            vault_config=CONFIG.main.vault,
             on_create=on_create,
             on_modify=on_modify,
             on_delete=on_delete,

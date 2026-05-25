@@ -24,15 +24,14 @@ def _copy_pdf(dst: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_scan_capture_pdf_in_inbox_creates_sibling_and_moves_attachment(
+async def test_scan_capture_pdf_in_inbox_creates_pending_routing_marker(
     vault_root, db_path, pipeline_ctx, monkeypatch
 ):
-    """scan_capture with PDF in inbox/ runs capture_file → sibling .md + PDF moved."""
+    """scan_capture with PDF in inbox/ → CLUELESS: pending-routing marker at inbox/.summaries/."""
     from pipelines.capture import scan_capture
     from vault.writer import WriteOutcome
     from llm.provider import LLMResponse
 
-    # "kqzxvbn" is keyboard mash (no vowels) → gate Rule 4 → FULL_RENAME → "Annual Report"
     pdf_file = vault_root / "inbox" / "kqzxvbn.pdf"
     _copy_pdf(pdf_file)
 
@@ -55,13 +54,11 @@ async def test_scan_capture_pdf_in_inbox_creates_sibling_and_moves_attachment(
     assert isinstance(result, Success)
     assert len(result.value) == 1
     assert isinstance(result.value[0], WriteOutcome)
-    # Sibling .md created in inbox/
-    sibling = vault_root / "inbox" / "Annual Report.md"
-    assert sibling.exists(), f"Expected sibling md at {sibling}"
-    # PDF moved to attachment/
-    attachment_dst = vault_root / "attachment" / "Annual Report.pdf"
-    assert attachment_dst.exists(), f"Expected PDF at {attachment_dst}"
-    assert not pdf_file.exists(), "Original PDF should be gone"
+    # Pending-routing marker at inbox/.summaries/ (CLUELESS path)
+    marker = vault_root / "inbox" / ".summaries" / "kqzxvbn.pdf.md"
+    assert marker.exists(), f"Expected pending-routing marker at {marker}"
+    # Binary stays in inbox (not moved)
+    assert pdf_file.exists(), "Binary must stay in inbox for CLUELESS path"
 
 
 # ---------------------------------------------------------------------------
@@ -73,10 +70,11 @@ async def test_scan_capture_pdf_in_inbox_creates_sibling_and_moves_attachment(
 async def test_scan_capture_pdf_in_attachment_is_skipped(
     vault_root, db_path, pipeline_ctx, monkeypatch
 ):
-    """scan_capture skips PDF already inside attachment/ — no capture_file call."""
+    """scan_capture skips PDF already inside Projects/<A>/attachment/ — no capture_file call."""
     from pipelines.capture import scan_capture
 
-    att = vault_root / "attachment"
+    att = vault_root / "Projects" / "Alpha" / "attachment"
+    att.mkdir(parents=True, exist_ok=True)
     (att / "already-captured.pdf").write_bytes(b"%PDF already here")
 
     capture_called: list[Path] = []
@@ -186,3 +184,58 @@ async def test_scan_capture_nonmd_unsupported_ext_logs_warning_continues(
     # Valid PDF captured; unsupported extension skipped with WARNING
     assert len(result.value) == 1
     assert isinstance(result.value[0], WriteOutcome)
+
+
+# ---------------------------------------------------------------------------
+# scan_capture — .summaries/ paths skipped in modified loop (TD-AS-1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_scan_capture_skips_summaries_in_modified_loop(
+    vault_root, db_path, pipeline_ctx, monkeypatch
+):
+    """scan_capture modified loop skips paths under .summaries/ (TD-AS-1 fix).
+
+    Sibling .md files are summary artifacts owned by the sync pipeline.
+    Re-capturing them calls _store_md which builds NoteMetadata from scratch,
+    wiping attachment_path from frontmatter.
+    """
+    from pipelines.capture import scan_capture
+
+    # Create a sibling .md file under .summaries/
+    summaries_dir = vault_root / "Projects" / "Alpha" / "attachment" / ".summaries"
+    summaries_dir.mkdir(parents=True, exist_ok=True)
+    sibling = summaries_dir / "report.md"
+    sibling.write_text("# Summary of report.pdf\n\nAI-generated summary.", encoding="utf-8")
+    sibling_vp = f"Projects/Alpha/attachment/.summaries/report.md"
+
+    # Insert DB row with a DIFFERENT content_hash — makes it appear as "modified"
+    import hashlib
+    import sqlite3
+    old_hash = hashlib.sha256(b"old content").hexdigest()
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute(
+        "INSERT INTO documents (vault_path, content_hash, title, updated_by_human) VALUES (?, ?, ?, 0)",
+        (sibling_vp, old_hash, "report"),
+    )
+    conn.commit()
+    conn.close()
+
+    capture_called: list[str] = []
+
+    async def fake_capture_file(path, context=None):
+        capture_called.append(str(path))
+        return Success(MagicMock())
+
+    monkeypatch.setattr("pipelines.capture.capture_file", fake_capture_file)
+
+    result = await scan_capture(root=vault_root, db_path=db_path)
+
+    assert isinstance(result, Success)
+    # The sibling path must NOT be in capture_called
+    sibling_abs = str(sibling)
+    assert sibling_abs not in capture_called, (
+        f"capture_file was called for .summaries/ path: {capture_called}"
+    )

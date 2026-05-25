@@ -9,9 +9,11 @@ must remain importable without a configured vault root.
 
 from __future__ import annotations
 
+import logging
 import threading
+import unicodedata
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from watchdog.events import (
     DirCreatedEvent,
@@ -26,7 +28,46 @@ from watchdog.events import (
 )
 from watchdog.observers import Observer
 
+from core.audit import write as audit_write
+from core.confidence import AIDecision
+from core.result import Failure, Success
+from storage.documents import delete_by_path, rename as rename_doc
 from vault.indexer import IGNORE_DIRS
+from vault.paths import _is_in_managed_attachment
+from vault.reader import read_note
+from vault.writer import move_note, write_note
+
+if TYPE_CHECKING:
+    from core.config import VaultConfig
+
+_log = logging.getLogger(__name__)
+
+
+def _is_binary(path: Path) -> bool:
+    """Return True if path is not a markdown note."""
+    return path.suffix.lower() != ".md"
+
+
+def _sibling_for(binary: Path, vault_config: VaultConfig) -> Path:
+    """Return the expected sibling .md path for a binary file.
+
+    Uses `<binary.name>.md` (full filename including extension) so that two
+    binaries with the same stem but different suffixes (e.g. `report.pdf` +
+    `report.docx`) get distinct sibling markers and do not collide on the
+    `attachment_path` pointer.
+
+    Args:
+        binary: Absolute path to the binary file.
+        vault_config: VaultConfig with summaries_subdir.
+
+    Returns:
+        Path to <parent>/<summaries_subdir>/<binary.name>.md
+    """
+    return (
+        binary.parent
+        / vault_config.summaries_subdir
+        / f"{binary.name}.md"
+    )
 
 
 class _VaultEventHandler(FileSystemEventHandler):
@@ -34,7 +75,7 @@ class _VaultEventHandler(FileSystemEventHandler):
 
     Args:
         root:             Vault root Path.
-        attachment_path:  Path to the attachment/ folder; events here are skipped.
+        vault_config:     VaultConfig for per-project attachment path checks.
         on_create:        Callback for file-created (or external-drop) events.
         on_modify:        Callback for .md file modifications.
         on_delete:        Callback for file deletions.
@@ -45,7 +86,7 @@ class _VaultEventHandler(FileSystemEventHandler):
     def __init__(
         self,
         root: Path,
-        attachment_path: Path,
+        vault_config: VaultConfig,
         on_create: Callable[[Path], None],
         on_modify: Callable[[Path], None],
         on_delete: Callable[[Path], None],
@@ -54,7 +95,7 @@ class _VaultEventHandler(FileSystemEventHandler):
     ) -> None:
         super().__init__()
         self._root = root
-        self._attachment_path = attachment_path
+        self._vault_config = vault_config
         self._on_create = on_create
         self._on_modify = on_modify
         self._on_delete = on_delete
@@ -67,9 +108,12 @@ class _VaultEventHandler(FileSystemEventHandler):
     def _should_skip(self, path: Path) -> bool:
         """Return True if this path should never trigger a callback.
 
-        Skips: attachment/ subtree, dotfiles, .sync-conflict-* files, IGNORE_DIRS.
+        Skips: managed attachment/ subtrees (non-.md only), dotfiles,
+        .sync-conflict-* files, IGNORE_DIRS.
         """
-        if self._attachment_path in path.parents:
+        if path.suffix.lower() != ".md" and _is_in_managed_attachment(
+            path, self._vault_config
+        ):
             return True
         if path.name.startswith("."):
             return True
@@ -121,6 +165,16 @@ class _VaultEventHandler(FileSystemEventHandler):
         if event.is_directory:
             return
         path = Path(str(event.src_path))
+
+        # Binary sync always fires for internal binary deletes — even when path
+        # is inside a managed attachment/ dir. _should_skip would otherwise hide
+        # the headline Brief #3 scenario (user deletes Projects/A/attachment/X.pdf).
+        # Mirrors on_moved ordering (see lines below). TD-030 fix.
+        if _is_binary(path) and self._is_internal(path):
+            self._debounce(
+                f"bin:{path}", self._handle_binary_delete, (path,)
+            )
+
         if self._should_skip(path):
             return
         self._debounce(str(path), self._on_delete, (path,))
@@ -130,6 +184,14 @@ class _VaultEventHandler(FileSystemEventHandler):
             return
         src = Path(str(event.src_path))
         dst = Path(str(event.dest_path))
+
+        # Binary sync always fires for internal binary moves — even when dst
+        # is inside a managed attachment/ dir (we need to orphan the old sibling).
+        if _is_binary(src) and self._is_internal(src):
+            self._debounce(
+                f"bin:{dst}", self._handle_binary_move, (src, dst)
+            )
+
         if self._should_skip(dst):
             return
         if self._is_internal(src):
@@ -138,13 +200,159 @@ class _VaultEventHandler(FileSystemEventHandler):
             # External drop via OS move (src outside vault root)
             self._debounce(str(dst), self._on_create, (dst,))
 
+    # ── binary sync helpers ────────────────────────────────────────────────
+
+    def _handle_binary_delete(self, path: Path) -> None:
+        """Remove sibling DB row + audit when a binary file is deleted."""
+        sibling = _sibling_for(path, self._vault_config)
+        sibling_vp = unicodedata.normalize(
+            "NFC", str(sibling.relative_to(self._root).as_posix())
+        )
+        match delete_by_path(sibling_vp):
+            case Success(value=rowcount):
+                if rowcount == 0:
+                    _log.warning(
+                        "watcher.binary_delete_sibling_not_found binary=%s sibling=%s",
+                        path, sibling_vp,
+                    )
+                else:
+                    _log.info(
+                        "watcher.binary_delete_sibling_removed binary=%s sibling=%s",
+                        path, sibling_vp,
+                    )
+            case Failure(error=e):
+                _log.warning(
+                    "watcher.binary_delete_sibling_failed binary=%s error=%s",
+                    path, e,
+                )
+        match audit_write(
+            AIDecision(
+                action="watcher:binary_delete",
+                confidence=1.0,
+                reasoning=f"Binary deleted: {path.name}",
+                source_ids=[sibling_vp],
+            ),
+            pipeline="watcher",
+            stage="sync",
+            outcome="SIBLING_ORPHANED",
+        ):
+            case Failure(error=e):
+                _log.warning("watcher.binary_delete_audit_failed error=%s", e)
+            case Success():
+                pass
+
+    def _handle_binary_move(self, src: Path, dst: Path) -> None:
+        """Sync sibling when a binary file is renamed or moved."""
+        old_sibling = _sibling_for(src, self._vault_config)
+        new_sibling = _sibling_for(dst, self._vault_config)
+        same_folder = dst.parent == src.parent
+
+        def _vp(p: Path) -> str:
+            return unicodedata.normalize(
+                "NFC", str(p.relative_to(self._root).as_posix())
+            )
+
+        if same_folder and old_sibling.exists():
+            # Step 1: rename sibling on disk
+            match move_note(old_sibling, new_sibling, actor="ai"):
+                case Failure(error=e):
+                    _log.warning(
+                        "watcher.binary_move_sibling_rename_failed src=%s dst=%s error=%s",
+                        src, dst, e,
+                    )
+                    return
+                case Success():
+                    pass
+
+            # Step 2: update attachment_path pointer in sibling frontmatter
+            match read_note(new_sibling):
+                case Success(value=note):
+                    new_attachment_vp = _vp(dst)
+                    note.metadata.attachment_path = new_attachment_vp
+                    match write_note(new_sibling, note.content, note.metadata, actor="ai"):
+                        case Failure(error=e):
+                            _log.warning(
+                                "watcher.binary_move_pointer_update_failed sibling=%s error=%s",
+                                new_sibling, e,
+                            )
+                        case Success():
+                            pass
+                case Failure(error=e):
+                    _log.warning(
+                        "watcher.binary_move_read_sibling_failed sibling=%s error=%s",
+                        new_sibling, e,
+                    )
+
+            # Step 3: update DB row
+            old_sibling_vp = _vp(old_sibling)
+            new_sibling_vp = _vp(new_sibling)
+            match rename_doc(old_sibling_vp, new_sibling_vp):
+                case Success(value=rowcount):
+                    if rowcount == 0:
+                        _log.warning(
+                            "watcher.binary_move_sibling_not_in_index old=%s new=%s",
+                            old_sibling_vp, new_sibling_vp,
+                        )
+                case Failure(error=e):
+                    _log.warning(
+                        "watcher.binary_move_rename_failed old=%s error=%s",
+                        old_sibling_vp, e,
+                    )
+
+            # Step 4: audit
+            match audit_write(
+                AIDecision(
+                    action="watcher:binary_rename",
+                    confidence=1.0,
+                    reasoning=f"Binary renamed: {src.name} → {dst.name}",
+                    source_ids=[_vp(dst)],
+                ),
+                pipeline="watcher",
+                stage="sync",
+                outcome="ATTACHMENT_MOVED",
+            ):
+                case Failure(error=e):
+                    _log.warning("watcher.binary_move_audit_failed error=%s", e)
+                case Success():
+                    pass
+        else:
+            # Different folder or sibling doesn't exist: orphan old sibling
+            old_sibling_vp = _vp(old_sibling)
+            match delete_by_path(old_sibling_vp):
+                case Success(value=rowcount):
+                    if rowcount == 0:
+                        _log.warning(
+                            "watcher.binary_move_orphan_not_in_index binary=%s sibling=%s",
+                            src, old_sibling_vp,
+                        )
+                case Failure(error=e):
+                    _log.warning(
+                        "watcher.binary_move_orphan_failed binary=%s error=%s",
+                        src, e,
+                    )
+            match audit_write(
+                AIDecision(
+                    action="watcher:binary_move",
+                    confidence=1.0,
+                    reasoning=f"Binary moved outside attachment: {src.name} → {dst.name}",
+                    source_ids=[_vp(src)] if src.exists() else [],
+                ),
+                pipeline="watcher",
+                stage="sync",
+                outcome="SIBLING_ORPHANED",
+            ):
+                case Failure(error=e):
+                    _log.warning("watcher.binary_move_orphan_audit_failed error=%s", e)
+                case Success():
+                    pass
+
 
 class VaultWatcher:
     """Watch a vault root and dispatch filesystem events to pipeline callbacks.
 
     Args:
         root:             Vault root path to watch recursively.
-        attachment_path:  Path to attachment/ folder; events here are skipped.
+        vault_config:     VaultConfig for per-project attachment path checks.
         on_create:        Called with Path when a file is created or externally moved in.
         on_modify:        Called with Path when a .md file is modified.
         on_delete:        Called with Path when a file is deleted.
@@ -155,7 +363,7 @@ class VaultWatcher:
     def __init__(
         self,
         root: Path,
-        attachment_path: Path,
+        vault_config: VaultConfig,
         on_create: Callable[[Path], None],
         on_modify: Callable[[Path], None],
         on_delete: Callable[[Path], None],
@@ -164,7 +372,7 @@ class VaultWatcher:
     ) -> None:
         self._handler = _VaultEventHandler(
             root=root,
-            attachment_path=attachment_path,
+            vault_config=vault_config,
             on_create=on_create,
             on_modify=on_modify,
             on_delete=on_delete,

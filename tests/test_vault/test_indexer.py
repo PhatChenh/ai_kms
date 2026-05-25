@@ -255,73 +255,196 @@ def test_detect_changes_does_not_collapse_ambiguous_move(vault_root, db):
 # ---------------------------------------------------------------------------
 
 
-def test_scan_non_md_drops_returns_non_md_paths_not_in_attachment(vault_root):
-    """Returns non-.md files outside attachment/ subtree."""
-    att = vault_root / "attachment"
-    att.mkdir(exist_ok=True)
+def test_scan_non_md_drops_returns_non_md_paths_not_in_attachment(vault_root, vault_config):
+    """Returns non-.md files outside managed attachment/ subtrees."""
+    att = vault_root / "Projects" / "A" / "attachment"
+    att.mkdir(parents=True, exist_ok=True)
     (vault_root / "inbox" / "report.pdf").write_bytes(b"%PDF content")
     (vault_root / "inbox" / "note.md").write_text("---\n---\nbody", encoding="utf-8")
     (att / "already.pdf").write_bytes(b"%PDF already captured")
 
     from vault.indexer import scan_non_md_drops
 
-    result = scan_non_md_drops(vault_root, att)
+    result = scan_non_md_drops(vault_root, vault_config)
     assert len(result) == 1
     assert result[0] == vault_root / "inbox" / "report.pdf"
 
 
-def test_scan_non_md_drops_excludes_md_files(vault_root):
+def test_scan_non_md_drops_excludes_md_files(vault_root, vault_config):
     """scan_non_md_drops skips .md files (handled by scan_vault)."""
-    att = vault_root / "attachment"
-    att.mkdir(exist_ok=True)
     (vault_root / "inbox" / "note.md").write_text("---\n---\nbody", encoding="utf-8")
 
     from vault.indexer import scan_non_md_drops
 
-    result = scan_non_md_drops(vault_root, att)
+    result = scan_non_md_drops(vault_root, vault_config)
     assert result == []
 
 
-def test_scan_non_md_drops_excludes_ignore_dirs(vault_root):
+def test_scan_non_md_drops_excludes_ignore_dirs(vault_root, vault_config):
     """scan_non_md_drops skips files inside IGNORE_DIRS."""
-    att = vault_root / "attachment"
-    att.mkdir(exist_ok=True)
     (vault_root / ".git").mkdir()
     (vault_root / ".git" / "pack.bin").write_bytes(b"git data")
     (vault_root / "inbox" / "real.pdf").write_bytes(b"%PDF content")
 
     from vault.indexer import scan_non_md_drops
 
-    result = scan_non_md_drops(vault_root, att)
+    result = scan_non_md_drops(vault_root, vault_config)
     paths = [p.name for p in result]
     assert "pack.bin" not in paths
     assert "real.pdf" in paths
 
 
-def test_scan_non_md_drops_excludes_dotfiles(vault_root):
+def test_scan_non_md_drops_excludes_dotfiles(vault_root, vault_config):
     """scan_non_md_drops skips dotfiles and .sync-conflict-* files."""
-    att = vault_root / "attachment"
-    att.mkdir(exist_ok=True)
     (vault_root / "inbox" / ".DS_Store").write_bytes(b"macos junk")
     (vault_root / "inbox" / "report.sync-conflict-20260514-123456-ABCDEF.pdf").write_bytes(b"conflict")
     (vault_root / "inbox" / "real.pdf").write_bytes(b"%PDF")
 
     from vault.indexer import scan_non_md_drops
 
-    result = scan_non_md_drops(vault_root, att)
+    result = scan_non_md_drops(vault_root, vault_config)
     names = [p.name for p in result]
     assert ".DS_Store" not in names
     assert not any(".sync-conflict-" in n for n in names)
     assert "real.pdf" in names
 
 
-def test_scan_non_md_drops_returns_empty_when_all_in_attachment(vault_root):
-    """Returns [] when all non-md files are already inside attachment/."""
-    att = vault_root / "attachment"
-    att.mkdir(exist_ok=True)
+def test_scan_non_md_drops_returns_empty_when_all_in_attachment(vault_root, vault_config):
+    """Returns [] when all non-md files are already inside a managed attachment/ subtree."""
+    att = vault_root / "Projects" / "A" / "attachment"
+    att.mkdir(parents=True, exist_ok=True)
     (att / "captured.pdf").write_bytes(b"%PDF captured")
 
     from vault.indexer import scan_non_md_drops
 
-    result = scan_non_md_drops(vault_root, att)
+    result = scan_non_md_drops(vault_root, vault_config)
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# _DOT_ALLOWLIST / scoped .summaries traversal tests
+# ---------------------------------------------------------------------------
+
+
+def test_scan_vault_indexes_summaries_inside_attachment(vault_root):
+    """scan_vault returns VaultEntry for .md inside attachment/.summaries/."""
+    summary = vault_root / "Projects" / "A" / "attachment" / ".summaries" / "report.md"
+    _write_md(summary, "summary body")
+
+    from vault.indexer import scan_vault
+
+    result = scan_vault(vault_root)
+    assert isinstance(result, Success)
+    paths = [e.vault_path for e in result.value]
+    assert "Projects/A/attachment/.summaries/report.md" in paths
+
+
+def test_scan_vault_indexes_summaries_under_inbox(vault_root):
+    """scan_vault DOES traverse inbox/.summaries/ — pending-routing siblings must be indexed."""
+    inbox_summary = vault_root / "inbox" / ".summaries" / "note.md"
+    _write_md(inbox_summary, "pending-routing sibling")
+
+    from vault.indexer import scan_vault
+
+    result = scan_vault(vault_root)
+    assert isinstance(result, Success)
+    paths = [e.vault_path for e in result.value]
+    assert any(".summaries" in p and "inbox" in p for p in paths)
+
+
+def test_scan_vault_skips_summaries_directly_under_project(vault_root):
+    """scan_vault does NOT traverse .summaries/ directly under Projects/A/ (must be inside attachment/)."""
+    project_summary = vault_root / "Projects" / "A" / ".summaries" / "note.md"
+    _write_md(project_summary, "should be hidden")
+
+    from vault.indexer import scan_vault
+
+    result = scan_vault(vault_root)
+    assert isinstance(result, Success)
+    paths = [e.vault_path for e in result.value]
+    assert not any(".summaries" in p for p in paths)
+
+
+def test_scan_vault_skips_non_allowlist_dotfolder(vault_root):
+    """scan_vault still skips .hidden_other/ — not in _DOT_ALLOWLIST."""
+    hidden = vault_root / "Projects" / "A" / "attachment" / ".hidden_other" / "note.md"
+    _write_md(hidden, "must not appear")
+
+    from vault.indexer import scan_vault
+
+    result = scan_vault(vault_root)
+    assert isinstance(result, Success)
+    paths = [e.vault_path for e in result.value]
+    assert not any(".hidden_other" in p for p in paths)
+
+
+def test_scan_non_md_drops_skips_pdf_inside_project_attachment(vault_root, vault_config):
+    """scan_non_md_drops: report.pdf inside Projects/A/attachment/ is NOT returned (Rule 1)."""
+    att = vault_root / "Projects" / "A" / "attachment"
+    att.mkdir(parents=True, exist_ok=True)
+    (att / "report.pdf").write_bytes(b"%PDF content")
+    (vault_root / "inbox" / "drop.pdf").write_bytes(b"%PDF drop")
+
+    from vault.indexer import scan_non_md_drops
+
+    result = scan_non_md_drops(vault_root, vault_config)
+    names = [p.name for p in result]
+    assert "report.pdf" not in names
+    assert "drop.pdf" in names
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Rule 1 (domain attachment), Rule 2 (inbox sibling)
+# ---------------------------------------------------------------------------
+
+
+def test_scan_non_md_drops_rule1_skips_domain_attachment(vault_root, vault_config):
+    """Rule 1: file inside Domain/D/attachment/ is NOT returned."""
+    att = vault_root / "Domain" / "Finance" / "attachment"
+    att.mkdir(parents=True, exist_ok=True)
+    (att / "deck.pdf").write_bytes(b"%PDF deck")
+    (vault_root / "inbox" / "drop.pdf").write_bytes(b"%PDF drop")
+
+    from vault.indexer import scan_non_md_drops
+
+    result = scan_non_md_drops(vault_root, vault_config)
+    names = [p.name for p in result]
+    assert "deck.pdf" not in names
+    assert "drop.pdf" in names
+
+
+def test_scan_non_md_drops_rule2_skips_inbox_binary_with_sibling(vault_root, vault_config):
+    """Rule 2: inbox binary that already has a .summaries sibling is NOT returned."""
+    pdf = vault_root / "inbox" / "report.pdf"
+    pdf.write_bytes(b"%PDF content")
+    sibling_dir = vault_root / "inbox" / ".summaries"
+    sibling_dir.mkdir(parents=True, exist_ok=True)
+    (sibling_dir / "report.pdf.md").write_text("---\nstatus: pending-routing\n---\nbody", encoding="utf-8")
+
+    from vault.indexer import scan_non_md_drops
+
+    result = scan_non_md_drops(vault_root, vault_config)
+    names = [p.name for p in result]
+    assert "report.pdf" not in names
+
+
+def test_scan_non_md_drops_rule2_scans_inbox_binary_without_sibling(vault_root, vault_config):
+    """Rule 2: inbox binary with NO sibling IS returned (needs capture)."""
+    (vault_root / "inbox" / "new.pdf").write_bytes(b"%PDF new drop")
+
+    from vault.indexer import scan_non_md_drops
+
+    result = scan_non_md_drops(vault_root, vault_config)
+    names = [p.name for p in result]
+    assert "new.pdf" in names
+
+
+def test_scan_non_md_drops_stray_drop_outside_project_domain_scanned(vault_root, vault_config):
+    """File in Briefings/ or other non-project folder is returned (stray drop)."""
+    (vault_root / "Briefings" / "stray.docx").write_bytes(b"binary")
+
+    from vault.indexer import scan_non_md_drops
+
+    result = scan_non_md_drops(vault_root, vault_config)
+    names = [p.name for p in result]
+    assert "stray.docx" in names

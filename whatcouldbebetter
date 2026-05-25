@@ -1,0 +1,7 @@
+Having a more structured and grouped up way to documenting and checking constraints. Current constrants documentation is just like random facts, messy, unorganized
+
+Having an overall architecture, a single source of truth that is actively maintained and updated, about the whole system, as well as each and every component. So we could later come back and understand how things works
+
+A dictionary for technical terms that the AI randomly injects into the conversation.
+
+A user-side expected experience that get updated as we build. This is to verify with real-world actions.

@@ -19,6 +19,12 @@ from core.config import VaultConfig
 
 
 @pytest.fixture()
+def vault_config(vault_root: Path) -> VaultConfig:
+    """VaultConfig pointing at the temp vault root (depends on vault_root)."""
+    return VaultConfig(root=vault_root)
+
+
+@pytest.fixture()
 def vault_root(tmp_path: Path, monkeypatch) -> Path:
     """
     Empty vault skeleton at tmp_path/vault.

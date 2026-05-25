@@ -159,112 +159,325 @@ async def test_store_md_all_suffix_slots_taken_falls_back_inplace(vault_root, pi
 
 
 # ===========================================================================
-# store — non-md (PDF) in inbox/
+# store — non-md CLUELESS path (inbox drop)
+# Binary stays in inbox/; pending-routing marker written to inbox/.summaries/
 # ===========================================================================
 
 
 @pytest.mark.asyncio
-async def test_store_nonmd_creates_sibling_and_moves_attachment(vault_root, pipeline_ctx):
+async def test_store_nonmd_clueless_inbox_binary_stays_pending_marker(vault_root, pipeline_ctx):
+    """PDF dropped in inbox → CLUELESS: binary stays, pending-routing sibling at inbox/.summaries/."""
     from pipelines.capture import store
 
-    # "kqzxvbn" is keyboard mash (no vowels) → gate Rule 4 → FULL_RENAME → "Annual Report"
-    pdf_file = vault_root / "inbox" / "kqzxvbn.pdf"
+    pdf_file = vault_root / "inbox" / "report.pdf"
     pdf_file.write_bytes(b"%PDF-1.4 content")
 
     raw = _make_raw(pdf_file, is_md=False, text="Extracted PDF text.")
-    mr = _make_metadata_result(raw, ai_title="Annual Report", vault_root=vault_root)
+    mr = _make_metadata_result(raw, ai_title="report", vault_root=vault_root)
 
     result = await store(mr, pipeline_ctx)
 
     assert isinstance(result, Success)
-    # Sibling .md created in inbox/ (same folder as drop)
-    sibling = vault_root / "inbox" / "Annual Report.md"
-    assert sibling.exists(), f"Expected sibling md at {sibling}"
-    # Attachment moved to attachment/ folder
-    attachment_dst = vault_root / "attachment" / "Annual Report.pdf"
-    assert attachment_dst.exists(), f"Expected attachment at {attachment_dst}"
-    # Original should be gone
-    assert not pdf_file.exists()
-    # Sibling content references attachment
-    sibling_text = sibling.read_text()
-    assert "Annual Report.pdf" in sibling_text
+    # Binary stays in inbox/
+    assert pdf_file.exists(), "Binary should NOT be moved — stays in inbox/"
+    # Pending-routing marker at inbox/.summaries/report.pdf.md
+    marker = vault_root / "inbox" / ".summaries" / "report.pdf.md"
+    assert marker.exists(), f"Expected pending-routing marker at {marker}"
+    # Marker frontmatter: status=pending-routing, attachment_path set, type=attachment-summary
+    from vault.reader import read_note
+    note = read_note(marker)
+    assert isinstance(note, Success)
+    meta = note.value.metadata
+    assert meta.status == "pending-routing"
+    assert meta.attachment_path == "inbox/report.pdf"
+    assert meta.type == "attachment-summary"
+    # No sibling written in inbox/ root (only in .summaries/)
+    root_sibling = vault_root / "inbox" / "report.md"
+    assert not root_sibling.exists()
 
 
 # ===========================================================================
-# store — non-md in Projects/foo/ (not inbox)
+# store — non-md CLUELESS path (outside inbox: Briefings/ stray drop)
+# Binary moves to inbox/; pending-routing marker at inbox/.summaries/
 # ===========================================================================
 
 
 @pytest.mark.asyncio
-async def test_store_nonmd_creates_sibling_in_same_folder(vault_root, pipeline_ctx):
+async def test_store_nonmd_clueless_outside_inbox_moves_binary_to_inbox(vault_root, pipeline_ctx):
+    """PDF dropped in Briefings/ → CLUELESS: binary moved to inbox/, pending-routing marker."""
     from pipelines.capture import store
 
-    project_dir = vault_root / "Projects" / "foo"
+    briefings_dir = vault_root / "Briefings"
+    pdf_file = briefings_dir / "stray.pdf"
+    pdf_file.write_bytes(b"%PDF stray content")
+
+    raw = _make_raw(pdf_file, is_md=False, text="Stray PDF text.")
+    mr = _make_metadata_result(raw, ai_title="stray", vault_root=vault_root)
+
+    result = await store(mr, pipeline_ctx)
+
+    assert isinstance(result, Success)
+    # Binary moved to inbox/stray.pdf
+    inbox_binary = vault_root / "inbox" / "stray.pdf"
+    assert inbox_binary.exists(), f"Expected binary at {inbox_binary}"
+    assert not pdf_file.exists(), "Original should be gone"
+    # Pending-routing marker at inbox/.summaries/stray.pdf.md
+    marker = vault_root / "inbox" / ".summaries" / "stray.pdf.md"
+    assert marker.exists(), f"Expected pending-routing marker at {marker}"
+    from vault.reader import read_note
+    note = read_note(marker)
+    assert isinstance(note, Success)
+    assert note.value.metadata.status == "pending-routing"
+
+
+# ===========================================================================
+# store — non-md CLUELESS: Projects/ root drop (no sub-project)
+# Dropped in Projects/ root (not Projects/<A>/) → CLUELESS
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_store_nonmd_clueless_projects_root_drop(vault_root, pipeline_ctx):
+    """PDF dropped directly in Projects/ root (no sub-project) → CLUELESS."""
+    from pipelines.capture import store
+
+    pdf_file = vault_root / "Projects" / "stray.pdf"
+    pdf_file.write_bytes(b"%PDF projects root content")
+
+    raw = _make_raw(pdf_file, is_md=False, text="Projects root drop.")
+    mr = _make_metadata_result(raw, ai_title="stray", vault_root=vault_root)
+
+    result = await store(mr, pipeline_ctx)
+
+    assert isinstance(result, Success)
+    marker = vault_root / "inbox" / ".summaries" / "stray.pdf.md"
+    assert marker.exists(), f"Expected pending-routing marker at {marker}"
+    from vault.reader import read_note
+    note = read_note(marker)
+    assert isinstance(note, Success)
+    assert note.value.metadata.status == "pending-routing"
+
+
+# ===========================================================================
+# store — non-md LOCATED path: Projects/<A>/ (needs_move=True)
+# PDF in Projects/Strategy/ → sibling at attachment/.summaries/, binary moved
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_store_nonmd_located_project_needs_move(vault_root, pipeline_ctx, monkeypatch):
+    """PDF in Projects/Strategy/report.pdf → LOCATED: sibling first, binary moved to attachment/."""
+    from pipelines.capture import store
+    from vault.writer import WriteOutcome
+    from llm.provider import LLMResponse
+    from unittest.mock import AsyncMock
+
+    project_dir = vault_root / "Projects" / "Strategy"
     project_dir.mkdir(parents=True, exist_ok=True)
-    pdf_file = project_dir / "spec.pdf"
-    pdf_file.write_bytes(b"%PDF-1.4 spec content")
+    pdf_file = project_dir / "report.pdf"
+    pdf_file.write_bytes(b"%PDF strategy report")
 
-    raw = _make_raw(pdf_file, is_md=False, text="Spec content.")
-    mr = _make_metadata_result(raw, ai_title="spec", vault_root=vault_root)
+    mock_provider = AsyncMock()
+    mock_provider.complete.return_value = Success(LLMResponse(
+        content=(
+            "## What this file is\nA strategy report.\n\n"
+            "## Key content\nQ1 results.\n\n"
+            "## Key facts / findings\nRevenue up 10%."
+        ),
+        model="test",
+        usage={},
+    ))
+    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+
+    raw = _make_raw(pdf_file, is_md=False, text="Strategy report content.")
+    mr = _make_metadata_result(raw, ai_title="report", vault_root=vault_root)
 
     result = await store(mr, pipeline_ctx)
 
     assert isinstance(result, Success)
-    # Sibling in Projects/foo/ NOT inbox/
-    sibling = project_dir / "spec.md"
+    # Sibling at Projects/Strategy/attachment/.summaries/report.pdf.md
+    sibling = vault_root / "Projects" / "Strategy" / "attachment" / ".summaries" / "report.pdf.md"
     assert sibling.exists(), f"Expected sibling at {sibling}"
-    inbox_sibling = vault_root / "inbox" / "spec.md"
-    assert not inbox_sibling.exists(), "Sibling should NOT be created in inbox"
+    # Binary moved to Projects/Strategy/attachment/report.pdf
+    binary_dst = vault_root / "Projects" / "Strategy" / "attachment" / "report.pdf"
+    assert binary_dst.exists(), f"Expected binary at {binary_dst}"
+    assert not pdf_file.exists(), "Original should be gone"
+    # attachment_path frontmatter = vault-relative binary path
+    from vault.reader import read_note
+    note = read_note(sibling)
+    assert isinstance(note, Success)
+    assert note.value.metadata.attachment_path == "Projects/Strategy/attachment/report.pdf"
+    assert note.value.metadata.source_file is None
 
 
 # ===========================================================================
-# store — non-md re-capture (binary already moved)
+# store — non-md LOCATED path: Projects/<A>/attachment/ (needs_move=False)
+# Binary already in attachment/ → no move; sibling written only
 # ===========================================================================
 
 
 @pytest.mark.asyncio
-async def test_store_nonmd_missing_binary_returns_failure(vault_root, pipeline_ctx):
-    """Phase 12 Fix 3: binary missing → Failure; no sibling written (attachment-first ordering)."""
+async def test_store_nonmd_located_project_no_move_sibling_only(vault_root, pipeline_ctx, monkeypatch):
+    """PDF already in Projects/A/attachment/ → LOCATED needs_move=False: sibling written, no move."""
     from pipelines.capture import store
+    from unittest.mock import AsyncMock
+    from llm.provider import LLMResponse
 
-    pdf_file = vault_root / "inbox" / "already-moved.pdf"
-    # Do NOT create the file — simulates binary already gone
+    att_dir = vault_root / "Projects" / "Alpha" / "attachment"
+    att_dir.mkdir(parents=True, exist_ok=True)
+    pdf_file = att_dir / "data.pdf"
+    pdf_file.write_bytes(b"%PDF data content")
 
-    raw = _make_raw(pdf_file, is_md=False, text="Extracted text.")
-    mr = _make_metadata_result(raw, ai_title="already-moved", vault_root=vault_root)
+    mock_provider = AsyncMock()
+    mock_provider.complete.return_value = Success(LLMResponse(
+        content=(
+            "## What this file is\nData file.\n\n"
+            "## Key content\nNumbers.\n\n"
+            "## Key facts / findings\nKey metric: 42."
+        ),
+        model="test",
+        usage={},
+    ))
+    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+
+    raw = _make_raw(pdf_file, is_md=False, text="Data content.")
+    mr = _make_metadata_result(raw, ai_title="data", vault_root=vault_root)
 
     result = await store(mr, pipeline_ctx)
 
-    # Phase 12: attachment-first — missing binary → Failure before any vault write
-    assert isinstance(result, Failure)
-    sibling = vault_root / "inbox" / "already-moved.md"
-    assert not sibling.exists()
+    assert isinstance(result, Success)
+    # Sibling at .summaries/data.pdf.md
+    sibling = att_dir / ".summaries" / "data.pdf.md"
+    assert sibling.exists(), f"Expected sibling at {sibling}"
+    # Binary stays at original location (no move)
+    assert pdf_file.exists(), "Binary must not move (already at destination)"
+    # attachment_path points to binary's vault-relative path
+    from vault.reader import read_note
+    note = read_note(sibling)
+    assert isinstance(note, Success)
+    assert note.value.metadata.attachment_path == "Projects/Alpha/attachment/data.pdf"
 
 
 # ===========================================================================
-# store — non-md attachment collision > 100
+# store — non-md LOCATED path: Domain/<D>/ (domain attachment)
 # ===========================================================================
 
 
 @pytest.mark.asyncio
-async def test_store_nonmd_attachment_collision_over_100_returns_failure(vault_root, pipeline_ctx):
+async def test_store_nonmd_located_domain(vault_root, pipeline_ctx, monkeypatch):
+    """PDF in Domain/Finance/ → LOCATED domain: sibling at domain attachment/.summaries/."""
     from pipelines.capture import store
+    from unittest.mock import AsyncMock
+    from llm.provider import LLMResponse
 
-    pdf_file = vault_root / "inbox" / "clash.pdf"
+    domain_dir = vault_root / "Domain" / "Finance"
+    domain_dir.mkdir(parents=True, exist_ok=True)
+    pdf_file = domain_dir / "budget.pdf"
+    pdf_file.write_bytes(b"%PDF budget")
+
+    mock_provider = AsyncMock()
+    mock_provider.complete.return_value = Success(LLMResponse(
+        content=(
+            "## What this file is\nBudget report.\n\n"
+            "## Key content\nQ4 numbers.\n\n"
+            "## Key facts / findings\nUnder budget by 5%."
+        ),
+        model="test",
+        usage={},
+    ))
+    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+
+    raw = _make_raw(pdf_file, is_md=False, text="Budget content.")
+    mr = _make_metadata_result(raw, ai_title="budget", vault_root=vault_root)
+
+    result = await store(mr, pipeline_ctx)
+
+    assert isinstance(result, Success)
+    sibling = vault_root / "Domain" / "Finance" / "attachment" / ".summaries" / "budget.pdf.md"
+    assert sibling.exists(), f"Expected sibling at {sibling}"
+    binary_dst = vault_root / "Domain" / "Finance" / "attachment" / "budget.pdf"
+    assert binary_dst.exists(), f"Expected binary at {binary_dst}"
+    assert not pdf_file.exists()
+
+
+# ===========================================================================
+# store — non-md LOCATED: sibling body contains all 3 required sections
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_store_nonmd_located_sibling_body_has_three_sections(vault_root, pipeline_ctx, monkeypatch):
+    """LOCATED sibling body (from summarize_attachment) has all 3 required markdown sections."""
+    from pipelines.capture import store
+    from unittest.mock import AsyncMock
+    from llm.provider import LLMResponse
+
+    project_dir = vault_root / "Projects" / "Demo"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    pdf_file = project_dir / "notes.pdf"
+    pdf_file.write_bytes(b"%PDF notes")
+
+    mock_provider = AsyncMock()
+    mock_provider.complete.return_value = Success(LLMResponse(
+        content=(
+            "## What this file is\nMeeting notes.\n\n"
+            "## Key content\nAction items listed.\n\n"
+            "## Key facts / findings\nThree open issues."
+        ),
+        model="test",
+        usage={},
+    ))
+    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+
+    raw = _make_raw(pdf_file, is_md=False, text="Notes content.")
+    mr = _make_metadata_result(raw, ai_title="notes", vault_root=vault_root)
+
+    await store(mr, pipeline_ctx)
+
+    summaries_dir = vault_root / "Projects" / "Demo" / "attachment" / ".summaries"
+    siblings = list(summaries_dir.glob("*.md"))
+    assert siblings, f"Expected at least one sibling in {summaries_dir}"
+    body = siblings[0].read_text(encoding="utf-8")
+    assert "## What this file is" in body
+    assert "## Key content" in body
+    assert "## Key facts / findings" in body
+
+
+# ===========================================================================
+# capture_file — pending-routing early-exit guard (Brief #2 Phase 3)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_capture_file_skips_pending_routing_binary(vault_root, pipeline_ctx, monkeypatch):
+    """capture_file returns recoverable Failure early when inbox/.summaries/<filename>.md has status=pending-routing."""
+    from pipelines.capture import capture_file
+    from vault.frontmatter import NoteMetadata
+
+    # Binary exists in inbox (so cooldown check doesn't blow up)
+    pdf_file = vault_root / "inbox" / "parked.pdf"
     pdf_file.write_bytes(b"%PDF content")
 
-    # Block all 100 slots in attachment/
-    att_dir = vault_root / "attachment"
-    (att_dir / "clash.pdf").write_bytes(b"existing")
-    for i in range(1, 101):
-        (att_dir / f"clash-{i}.pdf").write_bytes(b"existing")
+    # Pre-create pending-routing marker
+    summaries_dir = vault_root / "inbox" / ".summaries"
+    summaries_dir.mkdir(parents=True, exist_ok=True)
+    marker = summaries_dir / "parked.pdf.md"
+    from vault.frontmatter import dumps
+    marker.write_text(
+        dumps(NoteMetadata(status="pending-routing", type="attachment-summary"), ""),
+        encoding="utf-8",
+    )
 
-    raw = _make_raw(pdf_file, is_md=False, text="Clash content.")
-    mr = _make_metadata_result(raw, ai_title="clash", vault_root=vault_root)
+    # Cooldown: make file appear old enough to pass stability gate
+    mtime = pdf_file.stat().st_mtime
+    monkeypatch.setattr("pipelines.capture.time", MagicMock(time=lambda: mtime + 120))
 
-    result = await store(mr, pipeline_ctx)
+    result = await capture_file(pdf_file, context=pipeline_ctx)
 
+    # Must return recoverable Failure (silent skip — Phase 2 Classify will handle it)
     assert isinstance(result, Failure)
+    assert result.recoverable is True
+    assert "pending-routing" in result.error
 
 
 # ===========================================================================

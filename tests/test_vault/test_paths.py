@@ -14,14 +14,20 @@ from pathlib import Path
 import pytest
 
 from vault.paths import (
+    _is_in_managed_attachment,
     briefings_for,
     briefings_today,
     documentation,
+    domain_archive,
+    domain_attachment,
     domain_dir,
     domain_notes,
+    domain_summaries,
     load_valid_domains,
+    project_attachment,
     project_dir,
     project_materials,
+    project_summaries,
     synthesis_week,
 )
 
@@ -147,3 +153,163 @@ class TestIdempotent:
 
         assert (vault_root / "Projects" / "IdempotentTest").is_dir()
         assert (vault_root / "Domain" / "IdempotentTest").is_dir()
+
+
+class TestAttachmentHelpers:
+    def test_project_attachment_returns_correct_path(self, vault_root: Path):
+        result = project_attachment("Strategy")
+        assert result == vault_root / "Projects" / "Strategy" / "attachment"
+        assert result.is_dir()
+
+    def test_project_summaries_returns_correct_path(self, vault_root: Path):
+        result = project_summaries("Strategy")
+        assert result == vault_root / "Projects" / "Strategy" / "attachment" / ".summaries"
+        assert result.is_dir()
+
+    def test_domain_attachment_returns_correct_path(self, vault_root: Path):
+        result = domain_attachment("Finance")
+        assert result == vault_root / "Domain" / "Finance" / "attachment"
+        assert result.is_dir()
+
+    def test_domain_summaries_returns_correct_path(self, vault_root: Path):
+        result = domain_summaries("Finance")
+        assert result == vault_root / "Domain" / "Finance" / "attachment" / ".summaries"
+        assert result.is_dir()
+
+    def test_project_attachment_respects_config_override(self, tmp_path: Path, monkeypatch):
+        root = tmp_path / "vault"
+        root.mkdir()
+        from core.config import VaultConfig
+        import core.config as cfg_module
+        from unittest.mock import MagicMock
+        vc = VaultConfig(root=root, attachment_dir="files")
+        fake_config = MagicMock()
+        fake_config.main.vault = vc
+        monkeypatch.setattr(cfg_module, "_CONFIG", fake_config)
+
+        result = project_attachment("Strategy")
+        assert result == root / "Projects" / "Strategy" / "files"
+        assert result.is_dir()
+
+    def test_project_summaries_respects_config_override(self, tmp_path: Path, monkeypatch):
+        root = tmp_path / "vault"
+        root.mkdir()
+        from core.config import VaultConfig
+        import core.config as cfg_module
+        from unittest.mock import MagicMock
+        vc = VaultConfig(root=root, attachment_dir="files", summaries_subdir=".sums")
+        fake_config = MagicMock()
+        fake_config.main.vault = vc
+        monkeypatch.setattr(cfg_module, "_CONFIG", fake_config)
+
+        result = project_summaries("Strategy")
+        assert result == root / "Projects" / "Strategy" / "files" / ".sums"
+        assert result.is_dir()
+
+    def test_domain_attachment_respects_config_override(self, tmp_path: Path, monkeypatch):
+        root = tmp_path / "vault"
+        root.mkdir()
+        from core.config import VaultConfig
+        import core.config as cfg_module
+        from unittest.mock import MagicMock
+        vc = VaultConfig(root=root, attachment_dir="files")
+        fake_config = MagicMock()
+        fake_config.main.vault = vc
+        monkeypatch.setattr(cfg_module, "_CONFIG", fake_config)
+
+        result = domain_attachment("Finance")
+        assert result == root / "Domain" / "Finance" / "files"
+        assert result.is_dir()
+
+    def test_domain_summaries_respects_config_override(self, tmp_path: Path, monkeypatch):
+        root = tmp_path / "vault"
+        root.mkdir()
+        from core.config import VaultConfig
+        import core.config as cfg_module
+        from unittest.mock import MagicMock
+        vc = VaultConfig(root=root, attachment_dir="files", summaries_subdir=".sums")
+        fake_config = MagicMock()
+        fake_config.main.vault = vc
+        monkeypatch.setattr(cfg_module, "_CONFIG", fake_config)
+
+        result = domain_summaries("Finance")
+        assert result == root / "Domain" / "Finance" / "files" / ".sums"
+        assert result.is_dir()
+
+
+class TestIsInManagedAttachment:
+    def test_returns_true_for_project_attachment_pdf(self, tmp_path: Path):
+        from core.config import VaultConfig
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        pdf = root / "Projects" / "Alpha" / "attachment" / "report.pdf"
+        assert _is_in_managed_attachment(pdf, vc) is True
+
+    def test_returns_true_for_domain_attachment_file(self, tmp_path: Path):
+        from core.config import VaultConfig
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        docx = root / "Domain" / "Finance" / "attachment" / "budget.docx"
+        assert _is_in_managed_attachment(docx, vc) is True
+
+    def test_returns_false_for_project_md_outside_attachment(self, tmp_path: Path):
+        from core.config import VaultConfig
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        note = root / "Projects" / "Alpha" / "notes.md"
+        assert _is_in_managed_attachment(note, vc) is False
+
+    def test_returns_false_for_inbox_pdf(self, tmp_path: Path):
+        from core.config import VaultConfig
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        pdf = root / "inbox" / "report.pdf"
+        assert _is_in_managed_attachment(pdf, vc) is False
+
+    def test_returns_false_for_nested_but_not_under_projects_or_domain(self, tmp_path: Path):
+        from core.config import VaultConfig
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        pdf = root / "Documentation" / "attachment" / "file.pdf"
+        assert _is_in_managed_attachment(pdf, vc) is False
+
+    def test_respects_custom_attachment_dir(self, tmp_path: Path):
+        from core.config import VaultConfig
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root, attachment_dir="files")
+        pdf = root / "Projects" / "Alpha" / "files" / "report.pdf"
+        assert _is_in_managed_attachment(pdf, vc) is True
+
+    def test_returns_false_when_attachment_dir_mismatch(self, tmp_path: Path):
+        from core.config import VaultConfig
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        pdf = root / "Projects" / "Alpha" / "other" / "report.pdf"
+        assert _is_in_managed_attachment(pdf, vc) is False
+
+
+class TestDomainArchive:
+    def test_returns_correct_path_for_domain(self, tmp_path: Path):
+        from core.config import VaultConfig
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        result = domain_archive("Finance", vc)
+        assert result == root / "Domain" / "Finance" / "Archive"
+        assert result.is_dir()
+
+    def test_respects_custom_archive_dir(self, tmp_path: Path):
+        from core.config import VaultConfig
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root, archive_dir="Completed")
+        result = domain_archive("Product", vc)
+        assert result == root / "Domain" / "Product" / "Completed"
+        assert result.is_dir()

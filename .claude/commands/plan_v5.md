@@ -4,7 +4,7 @@ allowed-tools: Read, Bash(find:*), Bash(cat:*)
 argument-hint: <feature>
 ---
 
-# Planning Task
+# Planning Task 
 
 > The global HITL behavioral contract in CLAUDE.md applies in full.
 > The specific rules below govern the planning workflow only.
@@ -432,6 +432,22 @@ code block.]
 
 ### Phase 1 — <Short name>
 **Goal**: [What this phase delivers, in one sentence]
+
+**Design**:
+[Draw at least one diagram per phase that shows what this phase changes and why — not just what it builds. A reader who sees only the diagram should understand the problem being solved and its effect on the vault, index, or config, etc.
+
+Common shapes (pick what fits, combine if needed):
+- Bug fix → BEFORE (broken) + AFTER (fixed) panels
+- New helper → show the folder structure or path it enables, using a real filename
+- Sequence of steps → numbered steps + RESULT box with a real example
+- Pipeline → one box per stage with its audit outcome string
+
+Function annotation convention — name real functions inline using ─── :
+  function_name(args)  ─── "plain English: what this does"
+This links the diagram to production code without requiring code knowledge.
+
+Each diagram must be self-contained (readable without the Steps section).
+Apply §3g readability rules.]
 
 **Steps**:
 1. [Concrete step]
