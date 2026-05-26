@@ -6,6 +6,40 @@ updated: 2026-05-06
 
 ## created: 2026-04-26 updated: 2026-05-01
 
+# PROJECT CONTEXT
+
+## Problem Statement and Project Overview
+Office workers in tech companies are struggling to keep up with the demanding knowledge and an ever-growing list of things they have to do. This get especially terrible when they become managers and take on multiple different responsibilities and business lines. They find that the simple traditional note-taking system does not work due to:
+- Notes accumulate fast and hard to find, and often time written down and forgot
+- Organization effort is needed to manage the notes, but there is no time for that
+- There is synthesis part of note taking, which is productive, and the transcribing part, which is not productive but is essential for the synthesis part. However, the modern workflow requires so much transcribing - meeting notes, reports, etc. that makes the unproductive part is too overwhelming and leave little room for other work
+- Ideas and thinking often get lost, and not revisited
+This project is built to solve all those issues by building a knowledge management system with AI. The AI will help users with transcribing and organizational tasks, as well as becoming a thinking tool for users by surfacing patterns from the notes, or bringing up interesting ideas for users to revisit
+## Key Rule
+This project is aimed at professional office workers, like managers and executives, who is too busy to do anything else except using things out of the box. This means that we need to make:
+- Aggressive simplification
+- Zero organizational effort as the baseline assumption
+- AI does work, human does judgment
+- Defaults and invisibility layer as the main interface to the office workers, but have flexibility and tinkering layer underneath for customization done by the technical team to adapt better to the office workers' needs
+## Key Design principles:
+- **Progressive automation with human oversight** — high confidence = auto-file, medium = flag for review, low = stay in inbox
+- **Show your work** — every AI decision should be traceable to source materials
+- **Never silently overwrite human edits** — trust-breaking moment if it happens
+- **Natural emptying mechanisms** — systems without them decay
+- **One job per artifact** — if you can't describe a component's job in one sentence, it's too complex
+- **Flexibility and Adaptability** - a knowledge system is a highly personalized product, and thus the code base need to be designed in modular, interchangeable patterns so the technical team could add more features as requested by the office worker
+
+## Feature Roadmap
+1. **Capture** — Listen for drops of web articles, email, chat sessions, notes, pdf, docs, YouTube video transcripts, and process them by summarize, and input metadata
+2. **Classify** — Classify the notes based on their content, and move them to correct folder
+3. **Semantic Search** — Find notes by meaning, not just keywords ("what do I know about stakeholder resistance" finds notes about "managing pushback in meetings")
+4. **Three-Tier Retrieval** — Get quick summaries (hot), search snippets (warm), or full content (cold) — always starting cheap and going deep only when needed
+5.  **MCP Server** — Let Claude (desktop app or web) directly search, classify, promote, and synthesize your notes in natural conversation
+6.  **Note Promotion** — Extract structured knowledge (research notes, workflow templates, lessons) from raw captures, turning ore into refined metal
+7. **Documentation** - Automatically keep track and write synthesis report (based on notes relating to projects) of current progress of active projects.
+8. **Self-Learning** — Track human corrections to AI classifications and use them to improve future accuracy
+9. **Weekly Synthesis & Daily Briefing** — Automatically connect dots across the week's notes to surface recurring themes, contradictions, and action items
+
 # Build Order — AI-kms (Revised)
 
 > **Hard deadline: 30 June 2026** Today is 01 May. That is 60 working days. Day estimates below are per-phase budgets, not calendar days. If Phase 0 is already partially done (config.yaml, llm/ exist), subtract 1 day from the total.

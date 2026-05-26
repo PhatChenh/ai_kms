@@ -314,7 +314,7 @@ def test_watcher_module_has_no_pipeline_or_llm_imports() -> None:
     import ast
     import pathlib
 
-    watcher_src = pathlib.Path(__file__).parent.parent.parent / "vault" / "watcher.py"
+    watcher_src = pathlib.Path(__file__).parent.parent.parent / "src" / "vault" / "watcher.py"
     tree = ast.parse(watcher_src.read_text())
 
     forbidden_prefixes = ("pipelines", "llm")

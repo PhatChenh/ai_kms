@@ -1,37 +1,46 @@
 ## Obsidian vault layout (note that the outer folder could be named differently from "Vault")
 ```text
 Vault/
-├── Briefings/            ← place to report on the classification, vault status + Daily briefing (all in one place view of the most important information)
+├── Briefings/            ← daily AI reports on classification, vault status, and important tasks
 │   └── 2026/
 │       ├── 12_04.md
 ├── inbox/                      ← single drop zone
+│   ├── report.pdf
+│   └── .summaries/             ← pending-routing markers for CLUELESS binaries (AI-managed)
+│       └── report.pdf.md       ← status=pending-routing; attachment_path → inbox/report.pdf
 ├── Projects/                   ← active work + its materials
 │   └── Movies Q2 Strategy/
-│       ├── CLAUDE.md            ← AI-maintained index with link directly to the document, user primary view (also the project instructions/context for Claude products)
-│       ├── materials/                ← captures, emails, transcripts moved from inbox after categorizatoin by AI + notes from users. AI will use information in this folder as the sources for their responses
+│       ├── CLAUDE.md            ← AI-maintained index with links to documents; user primary view (also project instructions/context for Claude products)
+│       ├── <user notes>.md
+│       └── attachment/          ← per-project binaries (PDF, docs, etc.)
+│           ├── report.pdf
+│           └── .summaries/      ← hidden from Obsidian; sibling .md files indexed here
+│               └── report.pdf.md ← type=attachment-summary; attachment_path → binary
 ├── Domain/             ← durable knowledge per domain
 │   ├── Movies/
-│   │   ├── CLAUDE.md                  ← Basic context of the business line + index (also the domain instructions/context for Claude products)
+│   │   ├── CLAUDE.md                  ← Basic context of the business line + index (also domain instructions/context for Claude products)
 │   │   ├── context.yaml        ← people, metrics, vocabulary
-│   │   └── notes/              ← important materials, synthesize notes on active and past projects, notes on people, way of working, etc.
+│   │   ├── notes/              ← important materials, synthesized notes, industry reports, way of working, etc.
+│   │   ├── attachment/          ← per-domain binaries, same structure as Projects
+│   │   │   └── .summaries/
+│   │   └── Archive/             ← archived projects under this domain (auto-managed by AI)
 │   ├── Game/
 │   ├── Bill Payment/
 │   └── ...
-├── Documentation/              ← one living page per active project - user primary interface, collaborative input by AI and user. AI always read this to get the newest up to date information of project
-├── Synthesis/                  ← time-series reports (weekly journals)
-├── attachment/                 ← folder for all non-md files (PDF, docs)
-└── Archive/                    ← auto-archived, invisible to her
+├── Documentation/              ← one living page per active project — user primary interface; AI + user co-author; single source of truth for current project state
+└── Synthesis/                  ← time-series reports (weekly journals, written by AI)
 ```
+_(No global `attachment/` or `Archive/` — both are per-project / per-domain since Phase 1.5.)_
 **Briefings**: Daily report on
 - Note classification from inbox (where did the notes go, and if any notes unclear and need human audit)
 - Important tasks/Deadline of today, from across all projects and business line (each business line get 5 tasks)
 
-**inbox**: Place to dump all the new knowledge/notes/email/chat sessions, etc. and let AI to generate summaries, metadata, categorization, and move to the correct folder in **Domain**. 
+**inbox**: Place to dump all new knowledge/notes/email/chat sessions, etc. AI generates summaries, metadata, categorization, and moves to the correct folder in **Domain** or **Projects**.
 - For .md files: categorize, add frontmatter, and move
-- For .md files containing a Youtube/website link: Summarize YT/website content, rename (if appropriate), categorize, add frontmatter, and move
-- For non-md files (emails, docx, excel, pdf): create a sibling .md file, then:
-	- For the .md file: summarize the content of the non-md file (MUST HAVE link to the source material, using Obsidian link convention of brackets), rename (if appropriate, and make sure .md file and the source material have corresponding names - could be exact naming or not, but regardless should have some convention to easily identify and detect connection between them), categorize, add frontmatter, and move
-	- for the non-md file: rename (if appropriate), and move to **attachment**
+- For .md files containing a Youtube/website link: summarize YT/website content, rename (if appropriate), categorize, add frontmatter, and move
+- For non-md files (emails, docx, excel, pdf):
+  - If AI can resolve which project or domain the file belongs to: write sibling `.md` at `Projects/<A>/attachment/.summaries/<file>.md` or `Domain/<D>/attachment/.summaries/<file>.md`; move binary to the matching `attachment/` folder
+  - If AI cannot resolve (CLUELESS): binary stays in `inbox/`; write a pending-routing marker at `inbox/.summaries/<file>.md` with `status=pending-routing` and `attachment_path` pointing to the binary. Phase 2 Classify resolves these markers later.
 
 **Projects**: current active projects of each **Domain**. Each project get its own folder, within each folder will have `CLAUDE.md` to help navigating all the notes and material related to the project contained in the subfolder `materials`.
 - For AI: notes in `materials` will be the input to the model when answering or discussing with human, and will be the key ingredients for writing related synthesizing report in **Domain**, **Documentation** or **Synthesis** folders
@@ -51,15 +60,19 @@ Pending decisions: Should AI update it or human update it? What if the current u
 
 **Synthesis**: Weekly report of AI about the user's work over the week. This is written by AI, based on AI's observation of the user, and is meant for the user to reflect on their work over the week
 
-**attachment**: single source to contain all the non-md files. Used only when AI or human need to dig into the source material.
+**attachment** (per-project / per-domain, no longer global): contains binary source files (PDF, DOCX, XLSX, etc.) for that project or domain. Each `attachment/` folder has a `.summaries/` subfolder where AI writes the sibling `.md` file. The sibling carries `type=attachment-summary` and `attachment_path` frontmatter pointing back to the binary. `.summaries/` is hidden from Obsidian's graph view but indexed by the KMS for search.
 
 ## How each folders are used and managed:
-| Folder        | AI                                                           | User                                                      |
-| ------------- | ------------------------------------------------------------ | --------------------------------------------------------- |
-| Briefings     | Write daily reports                                          | Read to catch up with current work                        |
-| inbox         | Listen to input and do Capture and Categorization processing | One place to dump all notes and knowledge related to work |
-| Projects      | Manage entirely by AI                                        | View notes & scratchpad for thinking                      |
-| Domain        | Co-author                                                    | Co-author                                                 |
-| Documentation | Co-author                                                    | Co-author, and main interface                             |
-| Synthesis     | Manage entirely by AI                                        | Read to reflect & finding insights                        |
-| attachment    | Write .md summarize note, and move the source material here  | Source material for reference                             |
+| Folder                          | AI                                                                                           | User                                                        |
+| ------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Briefings                       | Write daily reports                                                                          | Read to catch up with current work                          |
+| inbox                           | Process drops; write pending-routing markers in `inbox/.summaries/` for CLUELESS binaries   | One place to dump all notes and binary files                |
+| inbox/.summaries/               | Write & resolve pending-routing markers; hidden from user                                    | Invisible (Obsidian hidden folder)                          |
+| Projects                        | Manage entirely by AI                                                                        | View notes & scratchpad for thinking                        |
+| Projects/\<A\>/attachment/      | Move resolved binaries here                                                                  | Source material for reference                               |
+| Projects/\<A\>/attachment/.summaries/ | Write sibling `.md` summary files here                                              | Invisible (Obsidian hidden folder); indexed by KMS search   |
+| Domain                          | Co-author                                                                                    | Co-author                                                   |
+| Domain/\<D\>/attachment/        | Same as Projects attachment                                                                  | Source material for reference                               |
+| Domain/\<D\>/Archive/           | Auto-archive inactive projects                                                               | Read historical project records                             |
+| Documentation                   | Co-author                                                                                    | Co-author; main interface                                   |
+| Synthesis                       | Manage entirely by AI                                                                        | Read to reflect & find insights                             |

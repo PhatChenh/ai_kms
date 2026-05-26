@@ -29,7 +29,7 @@ def test_pipeline_has_no_heavy_imports():
     import importlib.util
     from pathlib import Path
 
-    src = (Path(__file__).parents[2] / "core" / "pipeline.py").read_text()
+    src = (Path(__file__).parents[2] / "src" / "core" / "pipeline.py").read_text()
     forbidden = ["llm.", "vault.", "handlers.", "storage.", "core.audit"]
     for mod in forbidden:
         assert mod not in src, f"core/pipeline.py must not import {mod!r}"

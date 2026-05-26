@@ -8,7 +8,7 @@ import yaml
 
 from core.tags import TagTaxonomy, load_taxonomy, validate_tags
 
-TAGS_YAML = Path(__file__).parent.parent.parent / "config" / "tags.yaml"
+TAGS_YAML = Path(__file__).parent.parent.parent / "src" / "config" / "tags.yaml"
 
 SAMPLE_TAXONOMY = TagTaxonomy(
     allowed_types=frozenset(
