@@ -382,8 +382,9 @@ class ApiKeys(BaseSettings):
         extra="ignore",
     )
 
-    anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
-    openai_api_key:    str | None = Field(default=None, alias="OPENAI_API_KEY")
+    anthropic_api_key: str | None  = Field(default=None, alias="ANTHROPIC_API_KEY")
+    openai_api_key:    str | None  = Field(default=None, alias="OPENAI_API_KEY")
+    kms_db_path:       Path | None = Field(default=None, alias="KMS_DB_PATH")
 
     @field_validator("anthropic_api_key", "openai_api_key", mode="before")
     @classmethod
@@ -448,12 +449,15 @@ def load_config() -> "Config":
         from pydantic import ValidationError  # local import avoids circular risk
  
         try:
+            keys = ApiKeys()
             cfg = Config(
                 main=MainConfig(**raw_main),
                 thresholds=Thresholds(**raw_thresholds),
                 routing=Routing(**raw_routing),
-                keys=ApiKeys(),
+                keys=keys,
             )
+            if keys.kms_db_path is not None:
+                cfg.main.database.path = keys.kms_db_path
             # Warn once here — not in MainConfig.validate_para_context_path, because
             # Pydantic v2 re-runs model_validators when a nested model is passed to a
             # parent constructor, causing the warning to appear twice.

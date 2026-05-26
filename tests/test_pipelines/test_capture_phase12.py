@@ -315,7 +315,7 @@ def test_capture_file_has_single_stability_gate_string():
     import os
 
     capture_py = (
-        Path(__file__).parent.parent.parent / "pipelines" / "capture.py"
+        Path(__file__).parent.parent.parent / "src" / "pipelines" / "capture.py"
     )
     result = subprocess.run(
         ["grep", "-c", "file too recent", str(capture_py)],

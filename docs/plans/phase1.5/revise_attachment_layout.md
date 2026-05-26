@@ -23,6 +23,8 @@ BEFORE                              AFTER
 Vault/                              Vault/
 ├── inbox/                          ├── inbox/
 │   └── report.pdf  ← dropped here  │   └── report.pdf  ← dropped here
+│                                   │       └── .summaries/  
+│                                   │            └── .report.pdf.md/  
 ├── attachment/    ← ONE global     ├── Projects/
 │   └── report.pdf   folder for     │   └── Strategy/
 │       everything                  │       ├── my-notes.md
