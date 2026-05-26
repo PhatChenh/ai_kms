@@ -269,9 +269,9 @@ The following rules are enforced by hooks in `.claude/settings.json` — Claude 
 
 ## Build progress
 
-**Overall:** Phase 1.5 of 8 complete + Brief #2 done + Brief #3 done (2026-05-24). Next: Phase 2 — Classify pipeline.
+**Overall:** Phase 1 of 8 complete + Brief #2 done + Brief #3 done (2026-05-24). Next: Phase 2 — Classify pipeline.
 
-(Phase 0 + Phase 1 + Phase 1.5 checklists closed — see STATE.md for full history.)
+(Phase 0 + Phase 1 checklists closed — see STATE.md for full history.)
 
 **Brief #3 — attachment_sync_and_archive** _(complete 2026-05-24)_:
 - [x] Phase 1: watcher VaultConfig signature (TD-023), .summaries/ skip (TD-AS-1), false-success logging
@@ -279,8 +279,9 @@ The following rules are enforced by hooks in `.claude/settings.json` — Claude 
 - [x] Phase 3: _is_binary, _sibling_for, on_delete/on_move sync callbacks
 - [x] Phase 4: kms reconcile — 4-stage reconcile command (paths, orphan binaries, stale binaries, orphan siblings)
 
-**Pending re-make work** (see STATE.md for details):
+**Pending phase 1.5** (see STATE.md for details):
 - Rename gate logic: too liberal in some cases, too conservative in others
+- Claude CLI fix
 
 ---
 
