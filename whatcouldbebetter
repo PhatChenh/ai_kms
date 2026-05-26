@@ -5,3 +5,9 @@ Having an overall architecture, a single source of truth that is actively mainta
 A dictionary for technical terms that the AI randomly injects into the conversation.
 
 A user-side expected experience that get updated as we build. This is to verify with real-world actions.
+
+Vibe code system's wishlist:
+
+- how to instruct/force AI to surface all design decisions for users to choose instead of letting AI quietly assume some and only raise some
+- documentation practice
+- skill improving
