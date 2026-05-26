@@ -35,18 +35,14 @@ _Last updated: 2026-05-24 (Brief #4 — post-review bugfix pass: sibling naming,
 - [x] 487 tests pass (all capture pipeline phases verified)
 - [x] audit_log wired: every capture writes CAPTURED + TAG_VIOLATION entries
 
-**Phase 1.5 — Revise Attachment Layout Checklist** _(CLOSED — complete 2026-05-23; not in roadmap — design-change rework)_:
+**Phase 1.5 — Revise Attachment Layout Checklist** _(PENDING; not in roadmap — design-change rework)_:
 - [x] `core/config.py` — added `summaries_subdir: str = ".summaries"` Field; removed `attachment_path` @property; temporary callers in `capture.py:456`, `capture.py:627`, `cli/main.py:127` use `.root / .attachment_dir` with `# COUPLING:` comments marking Brief #2/#3 work. 576 tests pass.
 - [x] `vault/paths.py` — added `project_attachment`, `project_summaries`, `domain_attachment`, `domain_summaries` helpers reading `attachment_dir` + `summaries_subdir` from VaultConfig. No hardcoded subdir names. 8 new tests; 594 tests pass.
 - [x] `vault/indexer.py` — added `_DOT_ALLOWLIST: frozenset[str] = frozenset({".summaries"})`; updated both `dirnames[:] = [...]` prune expressions in `scan_non_md_drops` + `scan_vault` with scoped condition `(not d.startswith(".") or (d in _DOT_ALLOWLIST and dirpath.name == "attachment"))`. 99 vault tests pass, no regressions.
 - [x] `vault/frontmatter.py` — added `"attachment_path"` to `_KNOWN_KEYS`; added `attachment_path: str | None = None` field to `NoteMetadata` after `source_file`. 15 frontmatter tests pass.
 - [x] 4 architecture decisions recorded (DECISION-021 through -024); 5 TD items recorded (TD-020 through TD-024).
-
-### Re-make work
-
-Promoted to formal TD entries (see Technical Debt table below):
-- **TD-028** — Claude CLI provider: metadata JSON parse fails on short DOCX extracts (~29 chars). Prompt hardening or empty-metadata fallback needed.
-- **TD-029** — Rename gate logic mis-calibrated (too liberal / too conservative). Needs research on competitor approaches + confidence-scored suggestion model.
+- [ ] Claude CLI provider: metadata JSON parse fails on short DOCX extracts (~29 chars). Prompt hardening or empty-metadata fallback needed. (**TD-028**)
+- [ ] Rename gate logic mis-calibrated (too liberal / too conservative). Needs research on competitor approaches + confidence-scored suggestion model. (**TD-029**)
 
 Other in-flight notes:
 - Handlers extension: XLSX done; others pending sibling approach finalization.
