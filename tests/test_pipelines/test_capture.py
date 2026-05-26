@@ -82,6 +82,32 @@ def test_parse_metadata_json_strips_type_key():
     assert result.value["tags"] == ["type/report"]
 
 
+def test_parse_metadata_json_prose_response_falls_back_to_stem():
+    """LLM returns prose (not JSON) → Success with stem title and empty tags."""
+    from pipelines.capture import _parse_metadata_json
+
+    prose = (
+        'Need full note content. Headings alone ("Q1 performance", "Q2 Performance") '
+        "insufficient for metadata extraction.\n\nProvide:\n- Body text / data / findings"
+    )
+    result = _parse_metadata_json(prose, source_stem="finance")
+
+    assert isinstance(result, Success)
+    assert result.value["title"] == "finance"
+    assert result.value["tags"] == []
+
+
+def test_parse_metadata_json_empty_string_falls_back_to_stem():
+    """Empty LLM response → Success with stem title and empty tags."""
+    from pipelines.capture import _parse_metadata_json
+
+    result = _parse_metadata_json("", source_stem="report")
+
+    assert isinstance(result, Success)
+    assert result.value["title"] == "report"
+    assert result.value["tags"] == []
+
+
 # ===========================================================================
 # extract_metadata prompt render tests
 # ===========================================================================
@@ -94,6 +120,16 @@ def test_extract_metadata_prompt_renders_domain_list():
         text="t", summary="s", domain_list="finance, ops"
     )
     assert "finance, ops" in sys_str
+
+
+def test_extract_metadata_prompt_instructs_json_on_thin_content():
+    """Prompt system string must tell LLM to return JSON even for thin content."""
+    from llm.prompt_loader import PROMPTS
+
+    sys_str, _user = PROMPTS["extract_metadata"].render(
+        text="t", summary="s", domain_list="finance"
+    )
+    assert "too thin" in sys_str
 
 
 def test_extract_metadata_prompt_renders_empty_domain_list():

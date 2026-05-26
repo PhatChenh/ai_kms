@@ -21,6 +21,9 @@ system: |
       Must NOT start with any/ prefix (no "domain/", "type/", etc.).
 
   Return ONLY the JSON object. No markdown fences, no explanation.
+  If the content is too thin to extract meaningful metadata (e.g. headings only,
+  a few words), still return valid JSON with your best-effort title and an empty
+  tags list — never refuse or ask for more content.
 user: |
   Note content:
   {{ text }}
