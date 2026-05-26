@@ -280,7 +280,6 @@ The following rules are enforced by hooks in `.claude/settings.json` — Claude 
 - [x] Phase 4: kms reconcile — 4-stage reconcile command (paths, orphan binaries, stale binaries, orphan siblings)
 
 **Pending re-make work** (see STATE.md for details):
-- Claude CLI provider: metadata JSON parse fails on short DOCX extracts
 - Rename gate logic: too liberal in some cases, too conservative in others
 
 ---

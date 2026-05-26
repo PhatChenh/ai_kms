@@ -76,13 +76,15 @@ def test_parse_metadata_json_fenced_returns_success():
     assert result.value["title"] == "Fenced"
 
 
-def test_parse_metadata_json_bad_json_returns_failure():
+def test_parse_metadata_json_bad_json_falls_back_to_stem():
+    """Unparseable JSON → Success with stem title and empty tags (TD-028 fix)."""
     from pipelines.capture import _parse_metadata_json
 
     result = _parse_metadata_json("not json at all {{", source_stem="fallback")
 
-    assert isinstance(result, Failure)
-    assert result.recoverable is False
+    assert isinstance(result, Success)
+    assert result.value["title"] == "fallback"
+    assert result.value["tags"] == []
 
 
 def test_parse_metadata_json_missing_title_falls_back_to_stem_returns_success():
@@ -109,10 +111,10 @@ def test_parse_metadata_json_bad_tags_coerced_to_empty_returns_success():
 
 
 @pytest.mark.asyncio
-async def test_metadata_propagates_parse_failure_no_audit_row(
+async def test_metadata_falls_back_and_writes_audit_row_on_unparseable_json(
     vault_root, pipeline_ctx, monkeypatch
 ):
-    """When LLM returns unparseable JSON, metadata stage returns Failure and writes no audit row."""
+    """When LLM returns unparseable JSON, metadata stage falls back to stem title and writes audit row (TD-028 fix)."""
     from pipelines.capture import metadata, SummarizeResult
     from llm.provider import LLMResponse
     from storage.audit_log import query
@@ -129,12 +131,13 @@ async def test_metadata_propagates_parse_failure_no_audit_row(
 
     result = await metadata(sr, pipeline_ctx)
 
-    assert isinstance(result, Failure)
-    assert result.recoverable is False
+    assert isinstance(result, Success)
+    assert result.value.ai_title == "note"  # stem of note.md
+    assert result.value.ai_tags == []
 
     entries = query(pipeline="capture", db_path=pipeline_ctx.db_path)
     assert isinstance(entries, Success)
-    assert len(entries.value) == 0
+    assert len(entries.value) == 1
 
 
 # ===========================================================================

@@ -98,12 +98,13 @@ def _parse_metadata_json(content: str, source_stem: str = "") -> Result[dict]:
     cleaned = _FENCE_RE.sub("", content).strip()
     try:
         parsed = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        return Failure(
-            error=f"metadata JSON parse error: {exc}",
-            recoverable=False,
-            context={"content_preview": content[:200]},
+    except json.JSONDecodeError:
+        logger.warning(
+            "metadata.json_parse_failed.fallback",
+            source_stem=source_stem,
+            content_preview=content[:200],
         )
+        return Success({"title": source_stem, "tags": []})
 
     title = parsed.get("title", "")
     if not isinstance(title, str) or not title.strip():
