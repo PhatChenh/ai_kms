@@ -20,8 +20,8 @@ Box standard: ~20 char wide, ~7 row high. Full descriptions in Diagram Notes.
  │  │ ✅ [closed]          │                                                    │
  │  └──────────┬───────────┘                                                    │
  │             │ calls                                                          │
- │   ┌─────────┼──────────────────┐                                             │
- │   ▼         ▼                  ▼                                             │
+ │   ┌─────────────────────────────────────┬──────────────────┐                                             │
+ │   ▼                                     ▼                  ▼                                             │
  │  ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────────┐  │
  │  │ Handler Registry     │  │ Capture Pipeline     │  │ Reconcile        │  │
  │  │ handlers/            │  │ pipelines/capture.py │  │ Pipeline         │  │
@@ -35,7 +35,7 @@ Box standard: ~20 char wide, ~7 row high. Full descriptions in Diagram Notes.
  │  │ new type = new file  │  │ store                │  │ stale binaries   │  │
  │  │ no existing changes  │  │                      │  │ orphan siblings  │  │
  │  └──────────┬───────────┘  └──────────┬───────────┘  └──────────────────┘  │
- │             │ used by extract stage    │                                     │
+ │             │ used by extract stage   │                                     │
  │             └──────────────┬──────────┘                                     │
  │                            │ all write to                                   │
  │  ┌─────────────────────────▼────────────────────────────────────────────┐   │
