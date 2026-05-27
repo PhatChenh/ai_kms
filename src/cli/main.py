@@ -46,7 +46,7 @@ def cli() -> None:
 # ---------------------------------------------------------------------------
 
 @cli.command()
-@click.argument("file", type=click.Path(exists=True), required=False)
+@click.argument("file", type=str, required=False)
 @click.option("--scan", is_flag=True, default=False,
               help="Capture all un-indexed notes in vault. Modified notes are not re-captured.")
 def capture(file: str | None, scan: bool) -> None:
@@ -65,7 +65,13 @@ def capture(file: str | None, scan: bool) -> None:
                 click.echo(f"FAILED: {e}", err=True)
                 raise SystemExit(1)
     elif file:
-        capture_result = asyncio.run(capture_file(Path(file)))
+        from core.config import CONFIG
+        _path = Path(file)
+        if not _path.is_absolute():
+            _path = CONFIG.main.vault.root / _path
+        if not _path.exists():
+            raise click.BadParameter(f"File not found: {_path}", param_hint="FILE")
+        capture_result = asyncio.run(capture_file(_path))
         match capture_result:
             case Success(value=outcome):
                 click.echo(f"OK: {outcome}")
@@ -77,9 +83,15 @@ def capture(file: str | None, scan: bool) -> None:
 
 
 @cli.command()
-@click.argument("file", type=click.Path(exists=True))
+@click.argument("file", type=str)
 def classify(file: str) -> None:
     """Run the classify pipeline on a single file."""
+    from core.config import CONFIG
+    _path = Path(file)
+    if not _path.is_absolute():
+        _path = CONFIG.main.vault.root / _path
+    if not _path.exists():
+        raise click.BadParameter(f"File not found: {_path}", param_hint="FILE")
     raise NotImplementedError("Phase 2 — not yet built")
 
 
