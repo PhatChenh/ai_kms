@@ -323,3 +323,7 @@ from core.config import CONFIG
 - **Any code writing into `.summaries/` MUST set `type=attachment-summary` in frontmatter.** `reconcile_orphan_siblings` (Stage 4) requires both scope (`_is_managed_summaries_area`) and type guard before unlinking. Missing `type` → reconcile leaves the sibling alone (intended defense against user-placed `.md`). Phase 2 Classify must preserve the type when resolving CLUELESS markers. (DECISION-029)
 - **CLUELESS marker body is a one-line placeholder string, not `""`.** `pipelines/capture.py::_store_nonmd` CLUELESS path writes `_Pending classification — binary at: <vp>_` + handoff note. Phase 2 Classify is expected to overwrite the body when resolving the marker.
 - **`vault/watcher.py::on_deleted` and `on_moved` run binary sync BEFORE `_should_skip`.** Binary delete/move in `Projects/<A>/attachment/` MUST fire `_handle_binary_delete` / `_handle_binary_move` so the sibling DB row + audit log stay consistent. `_should_skip` only filters the user callback (indexer), not the internal sync. If you reorder these handlers and `_should_skip` runs first, you silently break sibling cleanup for the headline Brief #3 scenario. (TD-030 fix)
+
+
+## Constraint Index
+<!-- guardrail-check skill writes here when new constraint groups are added -->
