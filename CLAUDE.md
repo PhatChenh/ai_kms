@@ -18,9 +18,27 @@ AI-enhanced knowledge management system for busy managers. Watches an Obsidian v
 - M3 30 June — Full feature set (Promotion, Documentation, Self-learning, Briefing)
 
 **Reference docs** (read before changing architecture):
-- `docs/roadmap.md` — phase-by-phase build order and rules of the road
-- `docs/top-level_layout.md` — every folder explained, pattern-to-folder mapping
-- `STATE.md` — current position, architecture decisions, open questions, and technical debt; read at session start
+
+_Session orientation — read these first:_
+- `STATE.md` — current position, architecture decisions, open questions, and tech debt; read at session start
+- `CONTEXT.md` — key domain concepts and vocabulary
+- `CONSTRAINTS.md` — hard constraints; check before any design or code change
+- `OPEN_QUESTIONS.md` — unresolved decisions; check before making a new design call
+- `TECH_DEBT.md` — deferred tasks; check when touching related code
+
+_Architecture and design:_
+- `docs/roadmap/roadmap.md` — phase-by-phase build order and rules of the road
+- `docs/roadmap/design_artifacts/top-level_layout.md` — every folder explained, pattern-to-folder mapping
+- `docs/architecture/overall_design.md` — container-level architecture overview
+- `docs/architecture/system_diagram.md` — context diagram of the whole system
+- `docs/architecture/system_adr/` — system-wide Architecture Decision Records
+
+_Skill output folders (where skills read/write):_
+- `docs/design/` — output of `/codebase-design-analysis`; input to `/writing-detailed-specs`
+- `docs/specs/` — output of `/writing-detailed-specs`; input to `/research` and `/plan-from-specs`
+- `docs/research/` — output of `/research`; consumed by `/plan-from-specs`
+- `docs/plan/` — output of `/plan-from-specs`; executed by `/tdd-implement`
+- `docs/discussions/` — output of `/capture_discussion_v2`; historical design rationale
 ---
 
 ## Tech stack
@@ -40,24 +58,49 @@ AI-enhanced knowledge management system for busy managers. Watches an Obsidian v
 
 ---
 
+## Set up layout
+```
+/
+├── CONTEXT.md       ← context file with key concepts & domain language
+├── CLAUDE.md        ← behavioral contract:rules, conventions, preferences
+├── STATE.md         ← current implementation progress
+├── CONSTRAINTS.md   ← constraints that need to be respected or the system will break. Check these contraints when designing new features or making changes
+├── TECH_DEBT.md     ← deferred tasks that need to revisit and clear out in time
+├── OPEN_QUESTIONS.md  ← unresolved decisions
+└── docs/
+    ├── architecture/
+    │   ├── system_adr/              ← system-wide ADRs
+    │   ├── system_diagram.md        ← context diagram of whole system
+    │   ├── architecture_diagram.md  ← container diagram
+    │   └── phase0_foundations/      ← one folder per container/phase
+    │       ├── _OVERVIEW.md         ← component map for this phase
+    │       └── adr/                 ← domain-specific ADRs
+    ├── design/       ← design docs, contains output from /codebase-design-analysis, and required input for /writing-detailed-specs
+    ├── specs/        ← specs docs, contains specs written by /writing-detailed-specs, and to be verified by /research
+    ├── research/     ← research docs
+    ├── plan/         ← plan docs
+    └── roadmap/
+        └── design_artifacts/ ← designs produced while making roadmap
+└── src/                      ← source codes
+```
+
 ## Repository layout
 
 ```
 AI-kms/
-├── config/          ← tunable behavior ONLY (thresholds, routing, providers)
-├── prompts/         ← all AI prompts as YAML — edit here, never in code
-├── llm/             ← provider abstraction + prompt loader
-├── core/            ← shared primitives: result, audit, confidence, pipeline, config, logging
-├── handlers/        ← one class per input type; self-register at startup
-├── pipelines/       ← one file per roadmap feature; pure-function stages
-├── vault/           ← ALL Obsidian filesystem I/O; nothing else touches the vault directly
-├── storage/         ← SQLite state (audit log, embeddings, document index)
-├── retrieval/       ← keyword + semantic + hybrid + hot/warm/cold tiers
-├── briefings/       ← reads audit_log, writes to Vault/Briefings/
-├── mcp_server/      ← thin wrappers over pipelines; no logic here
-├── cli/             ← Click commands; each command just calls a pipeline
-├── scheduler/       ← cron-like runner; jobs.yaml defines triggers
-└── tests/           ← mirrors source layout; fixtures/ for test vault files
+├── src/
+│   ├── config/          ← tunable behavior ONLY (thresholds, routing, providers)
+│   ├── prompts/         ← all AI prompts as YAML — edit here, never in code
+│   ├── llm/             ← provider abstraction + prompt loader
+│   ├── core/            ← shared primitives: result, audit, confidence, pipeline, config, logging
+│   ├── handlers/        ← one class per input type; self-register at startup
+│   ├── pipelines/       ← one file per roadmap feature; pure-function stages
+│   ├── vault/           ← ALL Obsidian filesystem I/O; nothing else touches the vault directly
+│   ├── storage/         ← SQLite state (audit log, embeddings, document index)
+│   └── cli/             ← Click commands; each command just calls a pipeline
+├── tests/               ← mirrors src/ layout; fixtures/ for test vault files
+├── data/                ← runtime data (SQLite db, embeddings)
+└── logs/                ← runtime logs
 ```
 
 **Vault layout** (the Obsidian folder, separate from the repo):
@@ -327,3 +370,9 @@ from core.config import CONFIG
 
 ## Constraint Index
 <!-- guardrail-check skill writes here when new constraint groups are added -->
+- [Write Safety](CONSTRAINTS.md#write-safety) (3 rules) — vault-only writes, updated_by_human gate, write_note merge rule
+- [DB Integrity](CONSTRAINTS.md#db-integrity) (2 rules) — FK pragma, migration-only schema changes
+- [LLM & Providers](CONSTRAINTS.md#llm--providers) (4 rules) — factory dispatch, config thresholds, prompt YAML only, provider fields
+- [Async & CLI](CONSTRAINTS.md#async--cli) (2 rules) — asyncio.run pattern, load_dotenv placement
+- [Architecture](CONSTRAINTS.md#architecture) (5 rules) — Result returns, audit log, MCP logic-free, MCP pre-req, scheduler order
+- [Testing](CONSTRAINTS.md#testing) (1 rule) — CONFIG import scope
