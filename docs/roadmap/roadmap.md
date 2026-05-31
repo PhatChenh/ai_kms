@@ -42,21 +42,6 @@ This project is aimed at professional office workers, like managers and executiv
 
 # Build Order — AI-kms (Revised)
 
-> **Hard deadline: 30 June 2026** Today is 01 May. That is 60 working days. Day estimates below are per-phase budgets, not calendar days. If Phase 0 is already partially done (config.yaml, llm/ exist), subtract 1 day from the total.
-
----
-
-## Delivery Milestones
-
-| Milestone                 | Target       | What it unlocks                                                   |
-| ------------------------- | ------------ | ----------------------------------------------------------------- |
-| **M1 — First Delivery**   | ~15 May      | Capture + Classify + Search working end-to-end. System is useful. |
-| **M2 — Boss Demo**        | ~30 May      | MCP MVP live. Claude Desktop can search and discuss the vault.    |
-| **M3 — Full Feature Set** | 30 June      | Promotion, Documentation, Self-learning, Briefing complete.       |
-| Weekly Synthesis          | Post 30 June | Low urgency. Ship after deadline pressure drops.                  |
-
----
-
 ## Phase 0 — Foundations (no AI yet, just plumbing)
 
 

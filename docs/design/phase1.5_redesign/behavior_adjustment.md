@@ -9,6 +9,10 @@ Option selected: Let AI guess, but couple the tagging with the AI confidence rat
 - Files outside Projects/ or Domain/ (inbox, Documentation, Briefings) have no expected location — AI returns null confidence; pipeline must handle that without error
 - This confidence field is a Phase 2 input contract: Phase 2 reads `location_review: true` files and decides surface-to-user vs ignore
 
+## Detailed specs
+
+→ [docs/specs/phase1.5_domain_tagging_location_confidence.md](../../specs/phase1.5_domain_tagging_location_confidence.md)
+
 # Adding tags clean up in reconcile pipeline
 Desired outcome: Outdated domain/project tags will be cleaned up in the reconcile pipeline.
 **Implication**:
