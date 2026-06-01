@@ -1,47 +1,130 @@
 # Domain and project tagging rules:
-Desired outcome: If a file sit inside a project/domain, it must have a domain tag matching the project's domain
-Explored option to create rule-based tagging like inference through file_path, etc. but they are not very satisfactory, and too complex
-Option selected: Let AI guess, but couple the tagging with the AI confidence rating about the location of the file (Add to Phase 2: what AI should behave when the file already in the domain/project folder, but confidence rating of that location is not high)
-**Implication**:
-- Metadata prompt must include file's vault-relative path as a new variable — AI cannot assess location fit without knowing where the file lives
-- AI returns a `location_confidence` score alongside tags; low score → write `location_review: true` to frontmatter (not auto-move — surfaces to human via Phase 2 batch or daily briefing)
-- `location_confidence_min` threshold must live in `config/thresholds.yaml` (hook-enforced; no float literals in pipelines)
-- Files outside Projects/ or Domain/ (inbox, Documentation, Briefings) have no expected location — AI returns null confidence; pipeline must handle that without error
-- This confidence field is a Phase 2 input contract: Phase 2 reads `location_review: true` files and decides surface-to-user vs ignore
+## Intent & Rational:
+**Context**: When user drop a file directly into specific project or domain folder, it implicates user intentionally want the file to be there. Therefore, if the tag does not match with the project folder, it will be confusing to users
+**Goal**: Adjust domain and project tag behavior in the case of a file dropping directly into a specific folder. If the folder is a domain-type, tag will match that domain; If the folder is a project-type, tag will match that project and the domain of that project
+**Anti-goal**: Do not touch other tag that is unrelated to domain or project.
+## AI clarifying:
 
-## Detailed specs
+**Scope:** File under `Domain/<D>/` (any depth) OR `Projects/<A>/` (any depth). Inbox = no override.
 
-→ [docs/specs/phase1.5_domain_tagging_location_confidence.md](../../specs/phase1.5_domain_tagging_location_confidence.md)
+**What "tag" means here:**
+- Domain tag = `domain/<D>` entry inside `tags: list[str]` (Obsidian's special tag field)
+- Project tag = `project: "<A>"` separate frontmatter string field
+
+**Behavior per location:**
+- `Domain/<D>/…` → add `domain/<D>` to `tags` list. Multiple domain tags allowed — add without removing AI-inferred domain tags.
+- `Projects/<A>/…` → set `project: <A>` only. No domain tag override — AI infers domain from content. When TD-034 resolves (project registry exists), location stage will add the actual `domain/<D>` tag here.
+- `inbox/` → no override; normal AI behavior.
+
+**Conflict rules:**
+- If location tag already matches AI output → skip (no-op).
+- If `updated_by_human: true` guards the note → human wins, skip override. Mismatch tracked by **TD-035** (reconcile alert deferred).
+- Multiple `domain/` tags are allowed. Only `project:` is one-per-note.
+
+**Done when:** automated tests cover all cases + manual test script provided.
+
+## Design
+
+### Decision
+Option A — new `apply_location_tags` pipeline stage inserted between `metadata` and `store`. Chosen because the location logic is reusable across capture and Phase 2 Classify, and a named stage is testable in isolation without duplicating path-detection code in both `_store_md` and `_store_nonmd`.
+
+### Implications
+
+- `domain/<D>` goes in the `tags` list (Obsidian's tag field), NOT in the separate `domain:` field. `project:` is a separate string field — always has been, not in tags list.
+- `_store_nonmd` already detects location (`target_type`/`target_name` at `capture.py:461-470`) for **file routing** (where the binary moves on disk). That routing logic stays. `apply_location_tags` independently inspects the same path for **tag derivation** — these are separate concerns. The path inspection is duplicated, but it is cheap (pure path math) and the two uses cannot be merged without coupling tagging to file routing.
+- `_store_md` currently has NO location detection — new stage adds it for the first time.
+- `write_note(actor="ai")` already blocks writes to human-edited notes (`updated_by_human=True`). Human win is automatic — no special-casing needed.
+- `MetadataResult` needs a new `ai_project: str | None` field so the stage can pass project context through to `store()`.
+- `validate_tags` already checks `domain/<D>` against real `Domain/` folder names. Location stage must add only valid domain tags — validated against `ctx.taxonomy.valid_domains`.
+
+### Known tradeoffs
+
+- **Path inspection runs twice:** `apply_location_tags` inspects path for tagging; `_store_nonmd` inspects the same path again for file routing. Accepted in exchange for clean stage separation.
+- **`MetadataResult` grows a field:** `ai_project` is added to carry location-derived project to `store()`. Alternative (re-inspect in `store()`) avoids the field but makes data flow implicit.
+- **One more stage to own and test:** Pipeline grows from 5 to 6 stages. Accepted in exchange for reusability across capture and Phase 2 Classify.
+
+### Risks
+
+- `MetadataResult` is used in both `_store_md` and `_store_nonmd` — adding `ai_project` field requires updating those call sites and their tests.
+- For project files, location stage sets `project:` only. No synthetic `domain/Uncategorized` — AI handles domain inference. Blocker resolved.
+- Phase 2 Classify must import and call the shared `_location_context()` helper — otherwise it silently skips location tagging on CLUELESS resolutions.
+
+### Open questions
+
+- Should the location stage write a `LOCATION_OVERRIDE` audit entry when it adds/changes tags? Not required by C-13 (deterministic, not AI), but useful for Phase 8 observability.
+- `_location_context(path, vault_cfg) → (type: str|None, name: str|None)` is a new helper extracted from the inline path inspection in `_store_nonmd` (`capture.py:461-470`). Recommended home: `vault/paths.py` — already owns all path-to-domain-or-project helpers. Non-blocking; location confirmed during spec writing.
+
+### ADR references
+None yet — pending open question resolution.
+
+### Options explored
+- **Option B (inline in store):** Location logic folded into `_store_md`/`_store_nonmd` as a private helper. Rejected: Phase 2 Classify cannot access private helpers without import coupling; `_store_nonmd` is already long.
+- **Option C (prompt augmentation):** Inject `{{ location_hint }}` into AI prompt. Rejected: probabilistic guarantee, requires post-AI validation layer anyway, harder to test deterministically.
+
 
 # Adding tags clean up in reconcile pipeline
-Desired outcome: Outdated domain/project tags will be cleaned up in the reconcile pipeline.
-**Implication**:
-- "Outdated" = tag references a `domain/X` where `Domain/X/` folder no longer exists in vault
-- Reconcile must scan all indexed `.md` files, validate their `domain/` tags against current `valid_domains`, and flag or remove stale ones
-- Must NOT auto-remove if `updated_by_human = true` — surface as conflict instead
-- Touches `NoteMetadata` rewrite → same `updated_by_human` guard as any AI write
-- `valid_domains` is runtime-derived (vault scan), so reconcile must re-scan Domain/ folders at start
+## Intent & Rational:
+**Intent**: Notes that are associated with a domain/project would have their tags point to those. Then, when those domain/project get renamed, or deleted, those tags will be stale. Therefore we need a mechanic to update the stale tags
+**Goal**: Adding an update logic into `reconcile` pipeline that 1) delete the stale tags / project field 2) if that a domain tag: check if the field has a domain tag that matches the current note's location -> if yes then do nothing 3) add domain tag / project field based on the current location of that note
+**Anti-goal**: Tag update logic should not touch anything outside of domain tag and project frontmatter field (this means not touching any other tags and frontmatter field, and other elements of the note)
+## AI clarifying:
 
-**Potential option**:
-- **A (flag only):** reconcile writes a `tags_stale: true` frontmatter field + audit entry. Human or Phase 2 decides what to replace stale tag with. Safest — no data loss.
-- **B (remove + notify):** reconcile strips the stale `domain/X` tag, writes `TAGS_CLEANED` audit entry, logs affected files to stdout. Simple; loses the tag permanently with no replacement.
-- **C (remove + re-infer):** reconcile strips stale tag, then calls metadata stage (LLM) to re-suggest domain. Expensive; risks churn on files where no good domain match exists.
-- **Recommended: A for now.** Flag only; let Phase 2 / daily briefing surface stale-tag files to user for manual re-routing. Avoids silent data mutation in reconcile which already does destructive ops (sibling deletion).
+**Staleness definitions:**
+- `domain/<D>` tag is stale when `Domain/<D>/` folder no longer exists in the vault (not when the note moves away from it).
+- `project:` field is stale when its value doesn't match the note's current `Projects/<A>/` location — but only evaluated when the note is currently under `Projects/`. Notes outside `Projects/` have their `project:` field left untouched, even if the referenced project is deleted.
+
+**Behavior per location (runs on ALL notes, every reconcile run):**
+- `Domain/<D>/…` →
+  1. Remove any `domain/<X>` tag where `Domain/<X>/` no longer exists.
+  2. If `domain/<D>` is absent from the remaining tags → add it.
+- `Projects/<A>/…` →
+  1. Remove any `domain/<X>` tag where `Domain/<X>/` no longer exists.
+  2. Set `project: <A>` (overwrite whatever value was there).
+- `inbox/` or any other location →
+  1. Remove any `domain/<X>` tag where `Domain/<X>/` no longer exists.
+  2. `project:` field → leave alone.
+
+**Invariants:**
+- Multiple `domain/` tags are allowed. Reconcile only removes stale ones — AI-inferred tags that still point to valid folders are kept.
+- `updated_by_human: true` → `write_note(actor="ai")` blocks the write automatically. No special-casing needed.
+- Anti-goal: never touch any tag or frontmatter field outside of `domain/<D>` entries in `tags` list and the `project:` string field.
 
 
-
-- summary of files in the moment of adding them will not take any other inputs - pure summary
 
 # Folder handling in the capture pipeline?
+## Intent & Rational:
+**Intent**:
+**Goal**:
+**Anti-goal**:
+## AI clarifying:
 
 
 # Rename logic rework - deferred
+## Intent & Rational:
+**Intent**:
+**Goal**:
+**Anti-goal**:
+## AI clarifying:
+
+
+# Handle missing file while AI summarize (file drop, AI summrizing, but when done, file moved)
+## Intent & Rational:
+**Intent**:
+**Goal**:
+**Anti-goal**:
+## AI clarifying:
+
 
 
 # Handlers extension
 just need to implement
 
 # Idempotent for capturing flow
+## Intent & Rational:
+**Intent**:
+**Goal**:
+**Anti-goal**:
+## AI clarifying:
 
 **Diagnosis (2026-05-27):**
 
