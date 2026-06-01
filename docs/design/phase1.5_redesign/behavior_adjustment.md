@@ -1,3 +1,84 @@
+# Adding tags clean up in reconcile pipeline
+## Intent & Rational:
+**Intent**: Notes that are associated with a domain/project would have their tags point to those. Then, when those domain/project get renamed, or deleted, those tags will be stale. Therefore we need a mechanic to update the stale tags
+**Goal**: Adding an update logic into `reconcile` pipeline that 1) delete the stale tags / project field 2) if that a domain tag: check if the field has a domain tag that matches the current note's location -> if yes then do nothing 3) add domain tag / project field based on the current location of that note
+**Anti-goal**: Tag update logic should not touch anything outside of domain tag and project frontmatter field (this means not touching any other tags and frontmatter field, and other elements of the note)
+
+## AI clarifying:
+
+**Staleness definitions:**
+- `domain/<D>` tag is stale when `Domain/<D>/` folder no longer exists in the vault (not when the note moves away from it).
+- `project:` field is stale when its value doesn't match the note's current `Projects/<A>/` location — but only evaluated when the note is currently under `Projects/`. Notes outside `Projects/` have their `project:` field left untouched, even if the referenced project is deleted.
+
+**Behavior per location (runs on ALL notes, every reconcile run):**
+- `Domain/<D>/…` →
+  1. Remove any `domain/<X>` tag where `Domain/<X>/` no longer exists.
+  2. If `domain/<D>` is absent from the remaining tags → add it.
+- `Projects/<A>/…` →
+  1. Remove any `domain/<X>` tag where `Domain/<X>/` no longer exists.
+  2. Set `project: <A>` (overwrite whatever value was there).
+- `inbox/` or any other location →
+  1. Remove any `domain/<X>` tag where `Domain/<X>/` no longer exists.
+  2. `project:` field → leave alone.
+
+**Invariants:**
+- Multiple `domain/` tags are allowed. Reconcile only removes stale ones — AI-inferred tags that still point to valid folders are kept.
+- `updated_by_human: true` → `write_note(actor="ai")` blocks the write automatically. No special-casing needed.
+- Anti-goal: never touch any tag or frontmatter field outside of `domain/<D>` entries in `tags` list and the `project:` string field.
+
+## Design
+
+### Guardrail Checklist
+
+- [x] C-01 · vault writes via `vault/writer.py` — satisfies: stage uses `write_note()` exclusively
+- [x] C-02 · `updated_by_human` gate — auto-satisfies: `write_note(actor="ai")` blocks locked notes automatically
+- [x] C-03 · pipeline owns merge — **CRITICAL**: stage must call `read_note` first and pass ALL existing fields; only `tags` and `project` change. Omitting any field silently wipes it.
+- [x] C-12 · `Result` return type — satisfies: stage returns `Result[ReconcileResult]`
+- [ ] C-13 · audit log — not applicable: deterministic non-AI cleanup; no `audit.write()` required
+
+### Decision
+
+`reconcile()` hoists `scan_vault()` to the entry point and passes `entries` explicitly to Stage 1 and Stage 5. `reconcile()` replaces `run_pipeline()` with an explicit await-chain so stages with different signatures can coexist. `_location_context(path, vault_cfg)` extracted to `vault/paths.py` as shared seam for both this stage and the companion `apply_location_tags` capture feature.
+
+### Implications
+
+- "Stale domain tag" means a `domain/<X>` string in `NoteMetadata.tags` where `Vault/Domain/<X>/` no longer exists as a folder. Staleness is about folder existence, not note location. `load_valid_domains()` already exists at `vault/paths.py:87`.
+- `project:` field is `NoteMetadata.project: str | None` — a separate frontmatter field, NOT inside the `tags:` list. Both exist; this stage only touches `tags` list entries and `project:`.
+- "ALL notes" includes `.summaries/*.md` sibling files. `scan_vault()` already includes these via `_DOT_ALLOWLIST`. A sibling at `Projects/<A>/attachment/.summaries/foo.pdf.md` counts as location `Projects/<A>` → gets `project: <A>`.
+- `_location_context(path, vault_cfg) → tuple[str|None, str|None]` returns `("domain", "Engineering")` or `("project", "Alpha")` or `("inbox", None)` or `(None, None)`. Uses `vault_cfg.domain_dir`, `vault_cfg.projects_dir`, `vault_cfg.inbox_dir` — no hardcoded strings. Home: `vault/paths.py`.
+- `scan_vault()` called **once** in `reconcile()` entry point. Stage 1 (`reconcile_paths`) signature changes from `(result, ctx)` to `(result, ctx, entries)` — receives pre-computed entries instead of calling `scan_vault()` internally. Stage 5 (`reconcile_stale_tags`) also receives `entries`.
+- `reconcile()` drops `run_pipeline()` and uses an explicit await-chain. Stages 2–4 keep `(result, ctx)` signature and are called normally; Stages 1 and 5 receive the extra `entries` arg.
+- `read_note(path)` called only for notes that actually need updating (2-pass: scan metadata from `entries`, read content only for dirty notes).
+- `ReconcileResult` gets a new `tags_updated: int = 0` counter.
+
+### Known tradeoffs
+
+- **`reconcile_paths` signature change**: existing Stage 1 tests call `await reconcile_paths(initial, pipeline_ctx)` directly — must be updated to pass `entries`. All 2 Stage 1 tests break on the signature change (mechanical fix, not a logic change).
+- **`reconcile()` no longer uses `run_pipeline`**: explicit await-chain is more verbose but the only clean way to pass different args to different stages. Stages 2–4 are called in a loop; Stages 1 and 5 are called individually.
+- **Verbose NoteMetadata construction**: Pydantic model has no `.replace()`. Every `write_note` call requires constructing a new `NoteMetadata` copying all existing fields explicitly. Verbose but necessary for C-03.
+- **`_location_context` extracted early**: second caller (`apply_location_tags` capture stage) expected but not yet built. Accepted because the companion feature's design explicitly anticipates this helper.
+
+### Risks
+
+- **C-03 violation at implementation time**: easy to accidentally pass partial `NoteMetadata` and silently wipe `type`, `summary`, `source`, `attachment_path`, etc. Implementation must always `read_note(path)` first and pass every existing field.
+- **`load_valid_domains` inside note loop**: if accidentally placed per-note instead of once before the loop, causes O(N) filesystem scans.
+- **`.summaries/` siblings get `project:` updated**: semantically correct but untested until Stage 5 tests are written.
+
+### Open questions
+
+- Should Stage 5 write a `TAG_CLEANUP` audit entry when it changes a note? Not required by C-13 (deterministic, not AI), but useful for Phase 8 observability. Non-blocking.
+- TD-035 (mismatch alert for human-locked notes with location drift) remains open. Stage 5 silently skips locked notes per C-02. Separate concern, not in scope.
+
+### ADR references
+
+None yet. Offer: write ADR for extracting `_location_context` to `vault/paths.py` as shared seam (hard to reverse once both stages depend on it).
+
+### Options explored
+
+- **Option B (inline path detection)**: Stage 5 with location detection inlined, no helper extracted. Rejected: forces refactor when `apply_location_tags` capture stage is built.
+- **Option C (second scan)**: Stage 5 calls `scan_vault()` independently. Rejected: wasteful second vault walk; Stage 1's scan result is already available and unused.
+
+
 # Domain and project tagging rules:
 ## Intent & Rational:
 **Context**: When user drop a file directly into specific project or domain folder, it implicates user intentionally want the file to be there. Therefore, if the tag does not match with the project folder, it will be confusing to users
@@ -62,32 +143,6 @@ None yet — pending open question resolution.
 - **Option C (prompt augmentation):** Inject `{{ location_hint }}` into AI prompt. Rejected: probabilistic guarantee, requires post-AI validation layer anyway, harder to test deterministically.
 
 
-# Adding tags clean up in reconcile pipeline
-## Intent & Rational:
-**Intent**: Notes that are associated with a domain/project would have their tags point to those. Then, when those domain/project get renamed, or deleted, those tags will be stale. Therefore we need a mechanic to update the stale tags
-**Goal**: Adding an update logic into `reconcile` pipeline that 1) delete the stale tags / project field 2) if that a domain tag: check if the field has a domain tag that matches the current note's location -> if yes then do nothing 3) add domain tag / project field based on the current location of that note
-**Anti-goal**: Tag update logic should not touch anything outside of domain tag and project frontmatter field (this means not touching any other tags and frontmatter field, and other elements of the note)
-## AI clarifying:
-
-**Staleness definitions:**
-- `domain/<D>` tag is stale when `Domain/<D>/` folder no longer exists in the vault (not when the note moves away from it).
-- `project:` field is stale when its value doesn't match the note's current `Projects/<A>/` location — but only evaluated when the note is currently under `Projects/`. Notes outside `Projects/` have their `project:` field left untouched, even if the referenced project is deleted.
-
-**Behavior per location (runs on ALL notes, every reconcile run):**
-- `Domain/<D>/…` →
-  1. Remove any `domain/<X>` tag where `Domain/<X>/` no longer exists.
-  2. If `domain/<D>` is absent from the remaining tags → add it.
-- `Projects/<A>/…` →
-  1. Remove any `domain/<X>` tag where `Domain/<X>/` no longer exists.
-  2. Set `project: <A>` (overwrite whatever value was there).
-- `inbox/` or any other location →
-  1. Remove any `domain/<X>` tag where `Domain/<X>/` no longer exists.
-  2. `project:` field → leave alone.
-
-**Invariants:**
-- Multiple `domain/` tags are allowed. Reconcile only removes stale ones — AI-inferred tags that still point to valid folders are kept.
-- `updated_by_human: true` → `write_note(actor="ai")` blocks the write automatically. No special-casing needed.
-- Anti-goal: never touch any tag or frontmatter field outside of `domain/<D>` entries in `tags` list and the `project:` string field.
 
 
 
