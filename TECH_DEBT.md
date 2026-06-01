@@ -212,6 +212,28 @@
 
 ---
 
+### TD-035 · Reconcile: location-tag mismatch when human has overridden domain/project
+**Status:** OPEN
+**Phase:** Phase 1.5 reconcile (deferred)
+**Risk if triggered early:** Silent inconsistency. A file can sit in `Projects/Alpha/` with `project: Beta` set by human and the system will never surface the conflict.
+**What:** When location-confidence tagging runs, if `updated_by_human: true` guards a `project:` or `domain/X` tag, the pipeline skips the override (human wins). But the mismatch — file location contradicts human-set tags — is never surfaced. The reconcile pipeline should detect this case and either alert the user or offer to override.
+**Why deferred:** Reconcile alert/override logic is a separate concern from the capture-time tagging decision. Build capture behavior first, then extend reconcile.
+**Unblock condition:** Extend reconcile pipeline to compare file location against `project:` / domain tags when `updated_by_human: true`. Emit a mismatch audit entry or user-visible alert.
+**Source:** Phase 1.5 domain/project tagging design session 2026-06-01
+
+---
+
+### TD-034 · Project-to-domain mapping registry
+**Status:** OPEN
+**Phase:** Phase 1.5 / deferred
+**Risk if triggered early:** No domain→project mapping exists in code. Active projects live flat under `Projects/<A>/` with no domain in path. Any feature that needs "which domain does project A belong to" will silently fall back to `Uncategorized` until this is resolved.
+**What:** When a file lands under `Projects/<A>/`, the capture pipeline needs to set a `domain/<D>` tag. Currently no registry stores which domain an active project belongs to. Interim rule: domain tag is set to `domain/Uncategorized` for project-scoped files.
+**Why deferred:** Two clean options exist (a `projects` DB table or `Projects/<A>/meta.yaml`), but picking one requires design work. `Projects/<A>/CLAUDE.md` was rejected — it's prose, not structured, and TD-015 means AI can overwrite human edits there.
+**Unblock condition:** Design and implement a project registry (DB table preferred) that stores `project_name → domain_name`. Update location-confidence tagging to do a registry lookup instead of defaulting to `Uncategorized`.
+**Source:** Phase 1.5 domain/project tagging design session 2026-06-01
+
+---
+
 ## Archive
 
 ### TD-001 · core/pipeline.py
