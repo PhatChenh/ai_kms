@@ -412,10 +412,10 @@ async def test_reconcile_orphan_siblings_skips_human_edited(
 
 
 @pytest.mark.asyncio
-async def test_reconcile_runs_all_five_stages(
+async def test_reconcile_runs_all_six_stages(
     vault_root, db_path, pipeline_ctx, monkeypatch
 ):
-    """reconcile() chains all 5 stages and returns ReconcileResult with counts.
+    """reconcile() chains all 6 stages and returns ReconcileResult with counts.
 
     Stages covered:
       1. reconcile_paths      — delete on disk → removed from DB
@@ -735,3 +735,190 @@ async def test_reconcile_stale_tags_load_valid_domains_called_once(
             pytest.fail(f"Stage 5 failed: {f}")
 
     assert call_count == 1, f"load_valid_domains should be called once, called {call_count} times"
+
+
+# ---------------------------------------------------------------------------
+# Stage 6 — reconcile_stale_batch_refs
+# ---------------------------------------------------------------------------
+
+
+def _insert_batch(conn, destination_type: str, destination_name: str) -> int:
+    """Helper: insert a batches row, return batch_id."""
+    cur = conn.execute(
+        """
+        INSERT INTO batches
+            (folder_name, destination_type, destination_name,
+             confidence, status, file_count, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        """,
+        ("test_folder", destination_type, destination_name, 1.0, "COMPLETE", 1),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def _insert_document(conn, vault_path: str, batch_id: int | None = None) -> None:
+    """Helper: insert a documents row with an optional batch_id."""
+    conn.execute(
+        """
+        INSERT INTO documents
+            (vault_path, title, note_type, confidence, created_at, updated_at)
+        VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+        """,
+        (vault_path, "Test Note", "note", 0.9),
+    )
+    if batch_id is not None:
+        conn.execute(
+            "UPDATE documents SET batch_id = ? WHERE vault_path = ?",
+            (batch_id, vault_path),
+        )
+    conn.commit()
+
+
+def _get_batch_id(conn, vault_path: str) -> int | None:
+    """Helper: return current batch_id for a documents row."""
+    row = conn.execute(
+        "SELECT batch_id FROM documents WHERE vault_path = ?",
+        (vault_path,),
+    ).fetchone()
+    return row[0] if row else None
+
+
+@pytest.mark.asyncio
+async def test_stale_batch_refs_file_still_at_destination(db_path, pipeline_ctx):
+    """Stage 6: file still under its batch destination → batch_id preserved, count=0."""
+    import sqlite3
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_batch_refs
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        batch_id = _insert_batch(conn, "project", "Alpha")
+        _insert_document(conn, "Projects/Alpha/note.md", batch_id)
+    finally:
+        conn.close()
+
+    initial = ReconcileResult()
+    match await reconcile_stale_batch_refs(initial, pipeline_ctx):
+        case Success(value=r):
+            assert r.batch_refs_cleared == 0, "File still at destination — should not clear"
+        case Failure(error=e):
+            pytest.fail(f"Stage 6 failed: {e}")
+
+    conn2 = sqlite3.connect(str(db_path))
+    try:
+        stored_bid = _get_batch_id(conn2, "Projects/Alpha/note.md")
+        assert stored_bid == batch_id, "batch_id should be preserved"
+    finally:
+        conn2.close()
+
+
+@pytest.mark.asyncio
+async def test_stale_batch_refs_file_moved_away(db_path, pipeline_ctx):
+    """Stage 6: file moved to wrong project → batch_id nulled, count=1."""
+    import sqlite3
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_batch_refs
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        batch_id = _insert_batch(conn, "project", "Alpha")
+        _insert_document(conn, "Projects/Beta/note.md", batch_id)
+    finally:
+        conn.close()
+
+    initial = ReconcileResult()
+    match await reconcile_stale_batch_refs(initial, pipeline_ctx):
+        case Success(value=r):
+            assert r.batch_refs_cleared == 1, "Moved file should increment counter"
+        case Failure(error=e):
+            pytest.fail(f"Stage 6 failed: {e}")
+
+    conn2 = sqlite3.connect(str(db_path))
+    try:
+        stored_bid = _get_batch_id(conn2, "Projects/Beta/note.md")
+        assert stored_bid is None, "batch_id should be nulled after move"
+    finally:
+        conn2.close()
+
+
+@pytest.mark.asyncio
+async def test_stale_batch_refs_file_moved_to_inbox(db_path, pipeline_ctx):
+    """Stage 6: domain-batch file moved to inbox → batch_id nulled."""
+    import sqlite3
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_batch_refs
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        batch_id = _insert_batch(conn, "domain", "Engineering")
+        _insert_document(conn, "inbox/note.md", batch_id)
+    finally:
+        conn.close()
+
+    initial = ReconcileResult()
+    match await reconcile_stale_batch_refs(initial, pipeline_ctx):
+        case Success(value=r):
+            assert r.batch_refs_cleared == 1
+        case Failure(error=e):
+            pytest.fail(f"Stage 6 failed: {e}")
+
+    conn2 = sqlite3.connect(str(db_path))
+    try:
+        stored_bid = _get_batch_id(conn2, "inbox/note.md")
+        assert stored_bid is None
+    finally:
+        conn2.close()
+
+
+@pytest.mark.asyncio
+async def test_stale_batch_refs_null_batch_id_untouched(db_path, pipeline_ctx):
+    """Stage 6: document with batch_id=NULL → untouched, count=0."""
+    import sqlite3
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_batch_refs
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        _insert_document(conn, "inbox/no_batch.md", batch_id=None)
+    finally:
+        conn.close()
+
+    initial = ReconcileResult()
+    match await reconcile_stale_batch_refs(initial, pipeline_ctx):
+        case Success(value=r):
+            assert r.batch_refs_cleared == 0
+        case Failure(error=e):
+            pytest.fail(f"Stage 6 failed: {e}")
+
+
+@pytest.mark.asyncio
+async def test_stale_batch_refs_no_batches_table(tmp_path, monkeypatch):
+    """Stage 6: batches table absent → returns Success unchanged (safe no-op)."""
+    import sqlite3
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_batch_refs
+    from core.pipeline import PipelineContext
+    from core.config import VaultConfig
+    from unittest.mock import MagicMock
+
+    # Create a DB with only schema.sql applied — no migrations (no batches table)
+    from storage.db import _connect, _SCHEMA_FILE
+    bare_db = tmp_path / "bare.db"
+    conn = _connect(bare_db)
+    conn.executescript(_SCHEMA_FILE.read_text())
+    conn.close()
+
+    # Build a minimal ctx pointing at this bare DB
+    vc = VaultConfig(root=tmp_path / "vault")
+    (tmp_path / "vault").mkdir(exist_ok=True)
+    config = MagicMock()
+    config.vault = vc
+    ctx = PipelineContext(config=config, correlation_id="test-no-table", db_path=bare_db)
+
+    initial = ReconcileResult()
+    match await reconcile_stale_batch_refs(initial, ctx):
+        case Success(value=r):
+            assert r.batch_refs_cleared == 0, "No-op when batches table absent"
+            assert r is initial or r == initial, "Result should be unchanged"
+        case Failure(error=e):
+            pytest.fail(f"Stage 6 should not fail when batches table absent: {e}")
