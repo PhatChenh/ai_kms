@@ -245,3 +245,51 @@ def test_unknown_keys_still_go_to_extra_with_attachment_path_known(tmp_path):
     meta, _ = r.value
     assert meta.attachment_path == "Projects/A/attachment/f.pdf"
     assert meta.extra == {"weirdo": 42}
+
+
+# ---------------------------------------------------------------------------
+# source_hash field (Phase 6 — Idempotent Capture)
+# ---------------------------------------------------------------------------
+
+
+def test_source_hash_round_trips(tmp_path):
+    """source_hash survives dumps → parse unchanged."""
+    from vault.frontmatter import NoteMetadata, dumps, parse
+
+    fake_hash = "a" * 64  # 64 hex chars = sha256 digest length
+    meta = NoteMetadata(source_hash=fake_hash)
+    rendered = dumps(meta, "body")
+    f = write_file(tmp_path, "sh.md", rendered)
+    r = parse(f)
+    assert isinstance(r, Success)
+    assert r.value[0].source_hash == fake_hash
+
+
+def test_source_hash_none_does_not_appear_in_yaml(tmp_path):
+    """source_hash=None (default) must NOT write the key to YAML output."""
+    from vault.frontmatter import NoteMetadata, dumps, parse
+
+    meta = NoteMetadata(type="note")  # source_hash not set → default None
+    rendered = dumps(meta, "body")
+    assert "source_hash" not in rendered
+
+    f = write_file(tmp_path, "no_hash.md", rendered)
+    r = parse(f)
+    assert isinstance(r, Success)
+    assert r.value[0].source_hash is None
+
+
+def test_source_hash_field_parsed_not_in_extra(tmp_path):
+    """source_hash in frontmatter lands on metadata field, not in extra."""
+    from vault.frontmatter import parse
+
+    fake_hash = "b" * 64
+    f = write_file(
+        tmp_path, "n.md",
+        f"---\nsource_hash: {fake_hash}\n---\nbody"
+    )
+    r = parse(f)
+    assert isinstance(r, Success)
+    meta, _ = r.value
+    assert meta.source_hash == fake_hash
+    assert "source_hash" not in meta.extra

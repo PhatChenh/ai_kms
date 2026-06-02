@@ -39,6 +39,7 @@ _KNOWN_KEYS: frozenset[str] = frozenset(
         "source_file",
         "attachment_path",
         "status",
+        "source_hash",
     }
 )
 
@@ -61,6 +62,7 @@ class NoteMetadata(BaseModel):
     source_file: str | None = None
     attachment_path: str | None = None
     status: str | None = None
+    source_hash: str | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("type", "project", "domain", "summary", "source", "source_file", "attachment_path", "status", mode="before")
