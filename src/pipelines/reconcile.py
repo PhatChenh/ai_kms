@@ -1,6 +1,6 @@
 """pipelines/reconcile.py
 
-4-stage reconcile pipeline: paths → orphan_binaries → stale_binaries → orphan_siblings.
+5-stage reconcile pipeline: paths → orphan_binaries → stale_binaries → orphan_siblings → stale_tags.
 Entry point: reconcile(ctx) -> Result[ReconcileResult]
 """
 
@@ -12,7 +12,7 @@ from pathlib import Path
 
 from core.audit import write as audit_write
 from core.confidence import AIDecision
-from core.pipeline import PipelineContext, run_pipeline
+from core.pipeline import PipelineContext
 from core.result import Failure, Result, Success
 from pipelines.capture import capture_file
 from vault.paths import _is_in_managed_attachment, _is_managed_summaries_area
@@ -25,18 +25,20 @@ __all__ = [
     "reconcile_orphan_binaries",
     "reconcile_stale_binaries",
     "reconcile_orphan_siblings",
+    "reconcile_stale_tags",
     "reconcile",
 ]
 
 
 @dataclass(frozen=True)
 class ReconcileResult:
-    """Counters accumulated across the 4 reconcile stages."""
+    """Counters accumulated across the 5 reconcile stages."""
 
     paths_reconciled: int = 0
     new_captures: int = 0
     restale_count: int = 0
     orphans_cleaned: int = 0
+    tags_updated: int = 0
 
     def replace(self, **kwargs: int) -> ReconcileResult:
         return replace(self, **kwargs)
@@ -48,23 +50,20 @@ class ReconcileResult:
 
 
 async def reconcile_paths(
-    result: ReconcileResult, ctx: PipelineContext
+    result: ReconcileResult, ctx: PipelineContext, entries: list
 ) -> Result[ReconcileResult]:
     """Diff vault against DB mirror; apply renames and deletes.
 
     Uses the same detect_changes + scan_vault logic as ``kms capture --scan``,
     applied here as the first step of every reconcile run.
+
+    Args:
+        entries: Pre-scanned VaultEntry list from reconcile() entry point.
     """
-    from vault.indexer import detect_changes, scan_vault
+    from vault.indexer import detect_changes
 
     vault_root = ctx.config.vault.root
     db_path = ctx.db_path
-
-    match scan_vault(vault_root):
-        case Failure() as f:
-            return f
-        case Success(entries):
-            pass
 
     match detect_changes(entries, db_path=db_path):
         case Failure() as f:
@@ -286,12 +285,99 @@ async def reconcile_orphan_siblings(
 
 
 # ---------------------------------------------------------------------------
+# Stage 5 — fix stale domain/<X> tags and project: fields vault-wide
+# ---------------------------------------------------------------------------
+
+
+async def reconcile_stale_tags(
+    result: ReconcileResult, ctx: PipelineContext, entries: list
+) -> Result[ReconcileResult]:
+    """Remove stale domain/<X> tags and fix stale project: fields for every note.
+
+    For each .md note in entries:
+    - Strips any domain/<X> tag where X is no longer a valid domain folder.
+    - Adds missing domain/<X> tag when the note lives under Domain/<X>/.
+    - Sets project: to the folder name when the note lives under Projects/<A>/.
+    - Skips notes with updated_by_human=True (write_note returns Failure recoverable=True).
+
+    Args:
+        entries: Pre-scanned VaultEntry list from reconcile() entry point.
+    """
+    from vault.paths import _location_context, load_valid_domains
+    from vault.reader import read_note
+    from vault.writer import write_note
+
+    vault_cfg = ctx.config.vault
+    valid_domains = load_valid_domains(vault_cfg.root)
+    tags_updated = 0
+
+    for entry in entries:
+        if not entry.vault_path.lower().endswith(".md"):
+            continue
+
+        # Skip sibling summaries — Stage 5 must not touch attachment-summary files
+        # or set project: on them (they live under attachment/.summaries/, not Projects/<A>/).
+        if vault_cfg.summaries_subdir in entry.vault_path.split("/"):
+            continue
+
+        match read_note(entry.path):
+            case Failure() as f:
+                _log.warning("reconcile_stale_tags.read_failed path=%s error=%s",
+                             entry.vault_path, f.error)
+                continue
+            case Success(note):
+                pass
+
+        dirty = False
+        new_tags = list(note.metadata.tags)
+        new_project = note.metadata.project
+
+        # Remove stale domain/<X> tags (domains that no longer exist as folders)
+        cleaned_tags = [
+            t for t in new_tags
+            if not (t.startswith("domain/") and t[len("domain/"):] not in valid_domains)
+        ]
+        if len(cleaned_tags) != len(new_tags):
+            new_tags = cleaned_tags
+            dirty = True
+
+        # Apply location context: add missing domain tag or fix project field
+        loc_type, loc_name = _location_context(entry.path, vault_cfg)
+        if loc_type == "domain" and loc_name is not None:
+            domain_tag = f"domain/{loc_name}"
+            if domain_tag not in new_tags:
+                new_tags.append(domain_tag)
+                dirty = True
+        elif loc_type == "project" and loc_name is not None:
+            if note.metadata.project != loc_name:
+                new_project = loc_name
+                dirty = True
+
+        if not dirty:
+            continue
+
+        new_meta = note.metadata.model_copy(update={"tags": new_tags, "project": new_project})
+        match write_note(entry.path, note.content, new_meta, actor="ai"):
+            case Success():
+                tags_updated += 1
+            case Failure(recoverable=False) as f if "human" in str(f.error).lower():
+                # updated_by_human=True — write_note returns recoverable=False with
+                # "note locked by human edit". Skip silently; no retry will fix this.
+                pass
+            case Failure() as f:
+                _log.warning("reconcile_stale_tags.write_failed path=%s error=%s",
+                             entry.vault_path, f.error)
+
+    return Success(result.replace(tags_updated=result.tags_updated + tags_updated))
+
+
+# ---------------------------------------------------------------------------
 # Pipeline entry point
 # ---------------------------------------------------------------------------
 
 
 async def reconcile(ctx: PipelineContext) -> Result[ReconcileResult]:
-    """Run all 4 reconcile stages in sequence.
+    """Run all 5 reconcile stages in sequence.
 
     Args:
         ctx: PipelineContext with config, correlation_id, and db_path.
@@ -299,10 +385,38 @@ async def reconcile(ctx: PipelineContext) -> Result[ReconcileResult]:
     Returns:
         Success(ReconcileResult) with per-stage counts, or Failure.
     """
-    return await run_pipeline(
-        "reconcile",
-        [reconcile_paths, reconcile_orphan_binaries,
-         reconcile_stale_binaries, reconcile_orphan_siblings],
-        ReconcileResult(),
-        context=ctx,
-    )
+    from vault.indexer import scan_vault
+
+    match scan_vault(ctx.config.vault.root):
+        case Failure() as f:
+            return f
+        case Success(entries):
+            pass
+
+    result = ReconcileResult()
+    match await reconcile_paths(result, ctx, entries):
+        case Failure() as f:
+            return f
+        case Success(value=r):
+            result = r
+    match await reconcile_orphan_binaries(result, ctx):
+        case Failure() as f:
+            return f
+        case Success(value=r):
+            result = r
+    match await reconcile_stale_binaries(result, ctx):
+        case Failure() as f:
+            return f
+        case Success(value=r):
+            result = r
+    match await reconcile_orphan_siblings(result, ctx):
+        case Failure() as f:
+            return f
+        case Success(value=r):
+            result = r
+    match await reconcile_stale_tags(result, ctx, entries):
+        case Failure() as f:
+            return f
+        case Success(value=r):
+            result = r
+    return Success(result)
