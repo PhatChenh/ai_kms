@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.config import CaptureConfig, HandlersConfig, VaultConfig
+from core.config import CaptureConfig, HandlersConfig, Thresholds, VaultConfig
 from core.pipeline import PipelineContext
 from core.result import Success
 from structlog.contextvars import bind_contextvars, clear_contextvars
@@ -60,6 +60,7 @@ def pipeline_ctx(vault_root: Path, db_path: Path, monkeypatch):  # type: ignore[
     import core.config as cfg_module
     fake_full = MagicMock()
     fake_full.main = config
+    fake_full.thresholds = Thresholds()  # real thresholds so routing in capture_folder works
     monkeypatch.setattr(cfg_module, "_CONFIG", fake_full)
 
     cid = "test-correlation-id"

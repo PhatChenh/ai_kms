@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import json
 import re
+import shutil
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -33,11 +34,12 @@ import core.audit as audit
 from core.logging_setup import new_correlation_id
 from core.rename_gate import RenameDecision, decide_rename
 from core.tags import validate_tags
+import storage.batches as batches
 import storage.documents as documents
 
 logger = structlog.get_logger(__name__)
 
-__all__ = ["capture_file", "scan_capture"]
+__all__ = ["capture_file", "capture_folder", "scan_capture"]
 
 # ---------------------------------------------------------------------------
 # Private intermediate dataclasses (not exported)
@@ -1054,3 +1056,295 @@ async def scan_capture(
                         pass
 
             return Success(outcomes)
+
+
+# ---------------------------------------------------------------------------
+# Folder capture entry point (Phase 4.2 — Folder Handling)
+# ---------------------------------------------------------------------------
+
+
+def _build_vault_context(vault_cfg) -> str:
+    """Return a human-readable listing of existing domain + project folders.
+
+    Used to ground the classify_folder LLM prompt. Missing Domain/ or Projects/
+    directories degrade gracefully to an empty list.
+    """
+
+    def _names(path: Path) -> list[str]:
+        if not path.is_dir():
+            return []
+        return sorted(
+            p.name
+            for p in path.iterdir()
+            if p.is_dir() and not p.name.startswith(".")
+        )
+
+    domains = ", ".join(_names(vault_cfg.domain_path)) or "(none)"
+    projects = ", ".join(_names(vault_cfg.projects_path)) or "(none)"
+    return f"Domains: {domains}\nProjects: {projects}"
+
+
+def _collect_folder_files(folder_path: Path) -> list[Path]:
+    """Walk folder_path, returning capturable files.
+
+    Skips: directories, dotfiles, and any path passing through an IGNORE_DIRS part.
+    """
+    from vault.indexer import IGNORE_DIRS
+
+    files: list[Path] = []
+    for p in sorted(folder_path.rglob("*")):
+        if p.is_dir():
+            continue
+        if p.name.startswith("."):
+            continue
+        rel_parts = p.relative_to(folder_path).parts
+        if any(part in IGNORE_DIRS for part in rel_parts):
+            continue
+        files.append(p)
+    return files
+
+
+def _parse_classify_json(content: str) -> tuple[str | None, str | None, float]:
+    """Parse a classify_folder LLM response.
+
+    Returns (target_type, target_name, confidence). On any parse/validation
+    failure returns (None, None, 0.0) so the caller routes as CLUELESS.
+    """
+    cleaned = _FENCE_RE.sub("", content).strip()
+    try:
+        parsed = json.loads(cleaned)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("classify_folder.json_parse_failed", content_preview=content[:200])
+        return (None, None, 0.0)
+
+    target_type = parsed.get("target_type")
+    target_name = parsed.get("target_name")
+    confidence = parsed.get("confidence", 0.0)
+    if target_type not in ("domain", "project") or not isinstance(target_name, str):
+        return (None, None, 0.0)
+    try:
+        confidence = float(confidence)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return (target_type, target_name, confidence)
+
+
+def _folder_destination(target_type: str, target_name: str, vault_cfg) -> Path:
+    """Resolve the destination *folder path* for a routed drop."""
+    base = vault_cfg.projects_path if target_type == "project" else vault_cfg.domain_path
+    return base / target_name
+
+
+def _move_folder(folder_path: Path, destination: Path) -> Path:
+    """Move folder_path under destination.parent, returning the new folder path.
+
+    On collision (destination already exists), append -2, -3, ... to the name.
+    """
+    dest_parent = destination.parent
+    dest_parent.mkdir(parents=True, exist_ok=True)
+    final = dest_parent / folder_path.name
+    counter = 1
+    while final.exists():
+        counter += 1
+        final = dest_parent / f"{folder_path.name}-{counter}"
+    shutil.move(str(folder_path), str(final))
+    return final
+
+
+async def _capture_folder_files(
+    folder_path: Path,
+    files: list[Path],
+    ctx: PipelineContext,
+) -> Result[list[WriteOutcome]]:
+    """Stage 2: capture each file via capture_file, then mark batch COMPLETE/PARTIAL.
+
+    Failures (including FILE_LOST) are counted but never abort the loop. Returns
+    Success of the successful WriteOutcomes.
+    """
+    outcomes: list[WriteOutcome] = []
+    failures = 0
+    for f in files:
+        try:
+            result = await capture_file(f, ctx)
+        except Exception as exc:  # defensive: a file capture must not kill the batch
+            failures += 1
+            logger.warning("capture_folder.file_exception", path=str(f), error=str(exc))
+            continue
+        match result:
+            case Success(value=outcome):
+                outcomes.append(outcome)
+            case Failure(error=e):
+                failures += 1
+                logger.info("capture_folder.file_failed", path=str(f), error=e)
+
+    if ctx.batch_id is not None:
+        status = "PARTIAL" if failures else "COMPLETE"
+        match batches.update_status(ctx.batch_id, status, db_path=ctx.db_path):
+            case Failure(error=e):
+                logger.warning(
+                    "capture_folder.batch_status_failed",
+                    batch_id=ctx.batch_id,
+                    status=status,
+                    error=e,
+                )
+            case Success():
+                pass
+
+    return Success(outcomes)
+
+
+def _insert_batch(
+    folder_name: str,
+    destination_type: str | None,
+    destination_name: str | None,
+    confidence: float,
+    status: str,
+    file_count: int,
+    ctx: PipelineContext,
+) -> int | None:
+    """Insert a batches row; return batch_id or None on failure (logged, non-fatal)."""
+    match batches.insert(
+        folder_name=folder_name,
+        destination_type=destination_type,
+        destination_name=destination_name,
+        confidence=confidence,
+        status=status,
+        file_count=file_count,
+        db_path=ctx.db_path,
+    ):
+        case Failure(error=e):
+            logger.warning("capture_folder.batch_insert_failed", folder=folder_name, error=e)
+            return None
+        case Success(value=batch_id):
+            return batch_id
+
+
+def _audit_folder_classified(
+    folder_name: str, target_type: str | None, target_name: str | None,
+    confidence: float, outcome: str, ctx: PipelineContext,
+) -> None:
+    """Write one FOLDER_CLASSIFIED audit row (best-effort)."""
+    decision = AIDecision(
+        action="capture:classify_folder",
+        confidence=confidence,
+        reasoning=f"Folder '{folder_name}' routed to {target_type}/{target_name}",
+        source_ids=[folder_name],
+    )
+    match audit.write(
+        decision,
+        pipeline="capture",
+        stage="classify_folder",
+        outcome=outcome,
+        db_path=ctx.db_path,
+    ):
+        case Failure(error=e):
+            logger.warning("capture_folder.audit_failed", folder=folder_name, error=e)
+        case Success():
+            pass
+
+
+async def capture_folder(
+    folder_path: Path,
+    context: PipelineContext | None = None,
+) -> Result[list[WriteOutcome]]:
+    """Entry point: classify a dropped folder and capture its files.
+
+    NOT a pipeline stage. Orchestrates: collect files → determine location →
+    (inbox) classify via LLM + route by confidence band, or (project/domain)
+    skip the LLM → write a batches row → delegate per-file capture to capture_file.
+
+    Args:
+        folder_path: Absolute path to the dropped folder.
+        context:     PipelineContext for tests. None → built from CONFIG.
+
+    Returns:
+        Success([WriteOutcome, ...]) — captured files (possibly empty).
+        Failure only on unrecoverable orchestration errors.
+    """
+    from core.config import RouteDecision
+
+    if context is None:
+        context = await _build_default_context()
+    ctx = context
+
+    # Stage 1: collect capturable files.
+    files = _collect_folder_files(folder_path)
+    if not files:
+        logger.info("capture_folder.empty", folder=str(folder_path))
+        return Success([])
+
+    # Stage 2: determine location.
+    vault_cfg = ctx.config.vault
+    loc_type, loc_name = _location_context(folder_path, vault_cfg)
+
+    # ── Case B: project/domain drop — skip LLM, route by path. ──────────────
+    if loc_type in ("project", "domain"):
+        batch_id = _insert_batch(
+            folder_path.name, loc_type, loc_name, 1.0, "ROUTING", len(files), ctx
+        )
+        ctx_with_batch = replace(ctx, batch_id=batch_id)
+        return await _capture_folder_files(folder_path, files, ctx_with_batch)
+
+    # ── Case A: inbox (or unknown) drop — classify via LLM. ─────────────────
+    file_manifest = "\n".join(f.name for f in files)
+    vault_context = _build_vault_context(vault_cfg)
+    system, user = PROMPTS["classify_folder"].render(
+        folder_name=folder_path.name,
+        file_manifest=file_manifest,
+        vault_context=vault_context,
+    )
+
+    # LLM failure → treat as CLUELESS (confidence 0.0), never abort.
+    match await get_provider("capture", ctx.config).complete(system, user):
+        case Failure(error=e):
+            logger.warning("capture_folder.llm_failed", folder=str(folder_path), error=e)
+            target_type, target_name, confidence = None, None, 0.0
+        case Success(value=resp):
+            target_type, target_name, confidence = _parse_classify_json(resp.content)
+
+    from core.config import CONFIG as _CONFIG  # lazy — thresholds not on MainConfig
+    decision = _CONFIG.thresholds.for_pipeline("classify").route(confidence)
+
+    if decision is RouteDecision.AUTO and target_type and target_name:
+        destination = _folder_destination(target_type, target_name, vault_cfg)
+        new_folder = _move_folder(folder_path, destination)
+        new_files = _collect_folder_files(new_folder)
+        batch_id = _insert_batch(
+            folder_path.name, target_type, target_name, confidence,
+            "ROUTING", len(new_files), ctx,
+        )
+        _audit_folder_classified(
+            folder_path.name, target_type, target_name, confidence,
+            "FOLDER_CLASSIFIED", ctx,
+        )
+        ctx_with_batch = replace(ctx, batch_id=batch_id)
+        return await _capture_folder_files(new_folder, new_files, ctx_with_batch)
+
+    if decision is RouteDecision.SUGGEST:
+        _insert_batch(
+            folder_path.name, target_type, target_name, confidence,
+            "PENDING_REVIEW", len(files), ctx,
+        )
+        _audit_folder_classified(
+            folder_path.name, target_type, target_name, confidence,
+            "FOLDER_CLASSIFIED", ctx,
+        )
+        return Success([])
+
+    # CLUELESS (or AUTO without a valid target): write per-file CLUELESS markers
+    # through the existing capture pipeline, then record a CLUELESS batch.
+    batch_id = _insert_batch(
+        folder_path.name, target_type, target_name, confidence,
+        "CLUELESS", len(files), ctx,
+    )
+    ctx_with_batch = replace(ctx, batch_id=batch_id)
+    for f in files:
+        match await capture_file(f, ctx_with_batch):
+            case Failure(error=e):
+                logger.info("capture_folder.clueless_file_failed", path=str(f), error=e)
+            case Success():
+                pass
+    _audit_folder_classified(
+        folder_path.name, target_type, target_name, confidence, "CLUELESS", ctx
+    )
+    return Success([])
