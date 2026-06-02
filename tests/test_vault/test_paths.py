@@ -295,6 +295,80 @@ class TestIsInManagedAttachment:
         assert _is_in_managed_attachment(pdf, vc) is False
 
 
+class TestLocationContext:
+    """Tests for the private _location_context() helper."""
+
+    def test_path_under_domain_returns_domain_tuple(self, tmp_path: Path):
+        from core.config import VaultConfig
+        from vault.paths import _location_context
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        path = root / "Domain" / "Engineering" / "foo.md"
+        result = _location_context(path, vc)
+        assert result == ("domain", "Engineering")
+
+    def test_path_under_project_returns_project_tuple(self, tmp_path: Path):
+        from core.config import VaultConfig
+        from vault.paths import _location_context
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        path = root / "Projects" / "Alpha" / "bar.md"
+        result = _location_context(path, vc)
+        assert result == ("project", "Alpha")
+
+    def test_path_under_inbox_returns_inbox_tuple(self, tmp_path: Path):
+        from core.config import VaultConfig
+        from vault.paths import _location_context
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        path = root / "inbox" / "baz.md"
+        result = _location_context(path, vc)
+        assert result == ("inbox", None)
+
+    def test_path_elsewhere_returns_none_tuple(self, tmp_path: Path):
+        from core.config import VaultConfig
+        from vault.paths import _location_context
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        path = root / "Documentation" / "some-note.md"
+        result = _location_context(path, vc)
+        assert result == (None, None)
+
+    def test_deeply_nested_domain_path_returns_top_level_domain(self, tmp_path: Path):
+        from core.config import VaultConfig
+        from vault.paths import _location_context
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        path = root / "Domain" / "Engineering" / "subdir" / "deep.md"
+        result = _location_context(path, vc)
+        assert result == ("domain", "Engineering")
+
+    def test_deeply_nested_project_path_returns_top_level_project(self, tmp_path: Path):
+        from core.config import VaultConfig
+        from vault.paths import _location_context
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        path = root / "Projects" / "Alpha" / "attachment" / "file.pdf"
+        result = _location_context(path, vc)
+        assert result == ("project", "Alpha")
+
+    def test_respects_custom_domain_and_projects_dirs(self, tmp_path: Path):
+        from core.config import VaultConfig
+        from vault.paths import _location_context
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root, domain_dir="Domains", projects_dir="Work")
+        path = root / "Domains" / "Finance" / "report.md"
+        result = _location_context(path, vc)
+        assert result == ("domain", "Finance")
+
+
 class TestDomainArchive:
     def test_returns_correct_path_for_domain(self, tmp_path: Path):
         from core.config import VaultConfig

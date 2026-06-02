@@ -10,7 +10,7 @@ import asyncio
 import json
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import structlog
@@ -58,6 +58,7 @@ class MetadataResult:
     ai_domain: str | None
     ai_tags: list[str]
     decision: AIDecision
+    ai_project: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +272,50 @@ async def metadata(sr: SummarizeResult, ctx: PipelineContext) -> Result[Metadata
             )
 
 
+async def apply_location_tags(mr: MetadataResult, ctx: PipelineContext) -> Result[MetadataResult]:
+    """Stage 5: derive domain/project tags from file location and set them on the note.
+
+    Inspects the source path against the vault layout:
+    - Domain/<D>/  → append "domain/<D>" to ai_tags (if D is a valid domain)
+    - Projects/<A>/→ set ai_project = <A>
+    - inbox/       → no change
+    - elsewhere    → no change
+
+    Returns Success(MetadataResult) in all cases — location inference is
+    best-effort and never blocks the pipeline.
+    """
+    from vault.paths import _location_context
+
+    location_type, location_name = _location_context(
+        mr.raw.source_path, ctx.config.vault
+    )
+
+    if location_type == "domain" and location_name is not None:
+        valid_domains = (
+            ctx.taxonomy.valid_domains
+            if ctx.taxonomy is not None
+            else frozenset()
+        )
+        if location_name not in valid_domains:
+            logger.warning(
+                "apply_location_tags.invalid_domain path=%s domain=%s",
+                str(mr.raw.source_path),
+                location_name,
+            )
+            return Success(mr)
+        tag = f"domain/{location_name}"
+        if tag in mr.ai_tags:
+            return Success(mr)
+        new_tags = list(mr.ai_tags) + [tag]
+        return Success(replace(mr, ai_tags=new_tags))
+
+    if location_type == "project" and location_name is not None:
+        return Success(replace(mr, ai_project=location_name))
+
+    # inbox or unknown — no change
+    return Success(mr)
+
+
 def _audit_rename_gate(
     decision: RenameDecision, src: Path, ctx: PipelineContext
 ) -> None:
@@ -351,13 +396,14 @@ def _find_rename_dst(parent: Path, sanitized_stem: str) -> Path | None:
 
 
 async def store(mr: MetadataResult, ctx: PipelineContext) -> Result[WriteOutcome]:
-    """Stage 5: write note to vault and upsert documents row."""
+    """Stage 6: write note to vault and upsert documents row."""
     note_meta = NoteMetadata(
         summary=mr.summary,
         type=mr.ai_type,
         domain=mr.ai_domain,
         tags=mr.ai_tags,
         confidence=mr.decision.confidence,
+        project=mr.ai_project,
     )
 
     if mr.raw.is_md:
@@ -763,7 +809,7 @@ async def capture_file(
 
     return await run_pipeline(
         "capture",
-        [extract, enrich_urls, summarize, metadata, store],  # type: ignore[list-item]
+        [extract, enrich_urls, summarize, metadata, apply_location_tags, store],  # type: ignore[list-item]
         path,
         context=context,
     )
