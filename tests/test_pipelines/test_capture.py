@@ -967,3 +967,347 @@ async def test_audit_file_lost_fails_silently(vault_root, pipeline_ctx, monkeypa
 
     assert isinstance(result, Failure)
     assert result.recoverable is True
+
+
+# ===========================================================================
+# Phase 6 — Idempotent Capture
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_idempotent_md_unchanged_returns_skipped(vault_root, pipeline_ctx, monkeypatch):
+    """.md with hash matching DB → SKIPPED audit written, run_pipeline NOT called, Success returned."""
+    from pipelines.capture import capture_file
+    from vault.writer import WriteOutcome, write_note
+    from vault.frontmatter import NoteMetadata
+    from vault.reader import read_note
+    import storage.documents as docs_mod
+    from unittest.mock import MagicMock
+    from storage.audit_log import query
+
+    md_file = vault_root / "inbox" / "unchanged-note.md"
+    md_file.write_text("# Unchanged\n\nThis body will not change.", encoding="utf-8")
+
+    # Seed DB: write note then upsert into documents table with its current content_hash
+    meta = NoteMetadata(type="note")
+    write_note(md_file, "This body will not change.", meta, actor="ai")
+    note_result = read_note(md_file)
+    assert isinstance(note_result, Success)
+    note = note_result.value
+    upsert_outcome = WriteOutcome(
+        vault_path="inbox/unchanged-note.md",
+        absolute_path=md_file,
+        content_hash=note.content_hash,
+        metadata=note.metadata,
+    )
+    docs_mod.upsert(upsert_outcome, db_path=pipeline_ctx.db_path)
+
+    # Make file appear old enough to pass cooldown
+    mtime = md_file.stat().st_mtime
+    monkeypatch.setattr("pipelines.capture.time", MagicMock(time=lambda: mtime + 120))
+
+    run_pipeline_called = []
+
+    async def mock_run_pipeline(*args, **kwargs):
+        run_pipeline_called.append(True)
+        return Failure(error="should not be called", recoverable=False, context={})
+
+    monkeypatch.setattr("pipelines.capture.run_pipeline", mock_run_pipeline)
+
+    result = await capture_file(md_file, context=pipeline_ctx)
+
+    assert isinstance(result, Success)
+    assert isinstance(result.value, WriteOutcome)
+    assert result.value.vault_path == "inbox/unchanged-note.md"
+    assert len(run_pipeline_called) == 0, "pipeline must NOT run when content hash matches DB"
+
+    # SKIPPED audit row written
+    entries = query(pipeline="capture", db_path=pipeline_ctx.db_path)
+    assert isinstance(entries, Success)
+    skipped = [e for e in entries.value if e.outcome == "SKIPPED"]
+    assert len(skipped) == 1
+    assert skipped[0].stage == "entry"
+
+
+@pytest.mark.asyncio
+async def test_idempotent_md_edited_runs_pipeline(vault_root, pipeline_ctx, monkeypatch):
+    """.md with hash differing from DB → pipeline runs normally."""
+    from pipelines.capture import capture_file
+    from vault.writer import WriteOutcome
+    from vault.reader import read_note
+    import storage.documents as docs_mod
+    from unittest.mock import MagicMock
+
+    md_file = vault_root / "inbox" / "edited-note.md"
+    md_file.write_text("# Old Content\n\nOld body.", encoding="utf-8")
+
+    # Seed DB with OLD body hash
+    note_result = read_note(md_file)
+    assert isinstance(note_result, Success)
+    upsert_outcome = WriteOutcome(
+        vault_path="inbox/edited-note.md",
+        absolute_path=md_file,
+        content_hash=note_result.value.content_hash,
+        metadata=note_result.value.metadata,
+    )
+    docs_mod.upsert(upsert_outcome, db_path=pipeline_ctx.db_path)
+
+    # Now change the file content — DB hash is stale
+    md_file.write_text("# New Content\n\nNew body that changed.", encoding="utf-8")
+
+    mtime = md_file.stat().st_mtime
+    monkeypatch.setattr("pipelines.capture.time", MagicMock(time=lambda: mtime + 120))
+
+    run_pipeline_called = []
+
+    async def tracking_run_pipeline(*args, **kwargs):
+        run_pipeline_called.append(True)
+        return Failure(error="pipeline ran (expected)", recoverable=False, context={})
+
+    monkeypatch.setattr("pipelines.capture.run_pipeline", tracking_run_pipeline)
+
+    await capture_file(md_file, context=pipeline_ctx)
+
+    # Pipeline was called (content changed → not skipped)
+    assert len(run_pipeline_called) == 1, "pipeline MUST run when content hash differs"
+
+
+@pytest.mark.asyncio
+async def test_idempotent_md_not_in_db_runs_pipeline(vault_root, pipeline_ctx, monkeypatch):
+    """.md not yet in DB (first capture) → pipeline runs normally."""
+    from pipelines.capture import capture_file
+    from unittest.mock import MagicMock
+
+    md_file = vault_root / "inbox" / "new-note.md"
+    md_file.write_text("# Brand New\n\nNever captured before.", encoding="utf-8")
+
+    mtime = md_file.stat().st_mtime
+    monkeypatch.setattr("pipelines.capture.time", MagicMock(time=lambda: mtime + 120))
+
+    run_pipeline_called = []
+
+    async def tracking_run_pipeline(*args, **kwargs):
+        run_pipeline_called.append(True)
+        return Failure(error="pipeline ran (expected)", recoverable=False, context={})
+
+    monkeypatch.setattr("pipelines.capture.run_pipeline", tracking_run_pipeline)
+
+    await capture_file(md_file, context=pipeline_ctx)
+
+    assert len(run_pipeline_called) == 1, "pipeline MUST run when file is not in DB"
+
+
+@pytest.mark.asyncio
+async def test_idempotent_binary_matching_source_hash_skipped(vault_root, pipeline_ctx, monkeypatch):
+    """Binary with sibling whose source_hash matches → SKIPPED, pipeline not called."""
+    from pipelines.capture import capture_file
+    from vault.writer import WriteOutcome, write_note
+    from vault.frontmatter import NoteMetadata
+    from unittest.mock import MagicMock
+    from storage.audit_log import query
+    import hashlib
+
+    # Create a binary in inbox
+    binary_file = vault_root / "inbox" / "report.pdf"
+    binary_file.write_bytes(b"PDF binary content here")
+
+    # Create sibling with source_hash matching the binary
+    source_hash = hashlib.sha256(b"PDF binary content here").hexdigest()
+    summaries_dir = vault_root / "inbox" / ".summaries"
+    summaries_dir.mkdir(parents=True, exist_ok=True)
+    sibling_path = summaries_dir / "report.pdf.md"
+
+    sibling_meta = NoteMetadata(
+        type="attachment-summary",
+        attachment_path="inbox/report.pdf",
+        source_hash=source_hash,
+        tags=["type/attachment-summary"],
+    )
+    write_note(sibling_path, "Existing sibling body.", sibling_meta, actor="ai")
+
+    # Make file appear old enough
+    mtime = binary_file.stat().st_mtime
+    monkeypatch.setattr("pipelines.capture.time", MagicMock(time=lambda: mtime + 120))
+
+    run_pipeline_called = []
+
+    async def mock_run_pipeline(*args, **kwargs):
+        run_pipeline_called.append(True)
+        return Failure(error="should not be called", recoverable=False, context={})
+
+    monkeypatch.setattr("pipelines.capture.run_pipeline", mock_run_pipeline)
+
+    result = await capture_file(binary_file, context=pipeline_ctx)
+
+    assert isinstance(result, Success)
+    assert len(run_pipeline_called) == 0, "pipeline must NOT run when source_hash matches"
+    assert result.value.vault_path == "inbox/.summaries/report.pdf.md"
+
+    entries = query(pipeline="capture", db_path=pipeline_ctx.db_path)
+    assert isinstance(entries, Success)
+    skipped = [e for e in entries.value if e.outcome == "SKIPPED"]
+    assert len(skipped) == 1
+
+
+@pytest.mark.asyncio
+async def test_idempotent_binary_differing_source_hash_runs_pipeline(vault_root, pipeline_ctx, monkeypatch):
+    """Binary with sibling whose source_hash differs → pipeline runs normally."""
+    from pipelines.capture import capture_file
+    from vault.writer import write_note
+    from vault.frontmatter import NoteMetadata
+    from unittest.mock import MagicMock
+    import hashlib
+
+    binary_file = vault_root / "inbox" / "changed.pdf"
+    binary_file.write_bytes(b"Updated PDF content")
+
+    # Create sibling with STALE source_hash
+    stale_hash = hashlib.sha256(b"Old PDF content").hexdigest()
+    summaries_dir = vault_root / "inbox" / ".summaries"
+    summaries_dir.mkdir(parents=True, exist_ok=True)
+    sibling_path = summaries_dir / "changed.pdf.md"
+
+    sibling_meta = NoteMetadata(
+        type="attachment-summary",
+        attachment_path="inbox/changed.pdf",
+        source_hash=stale_hash,
+        tags=["type/attachment-summary"],
+    )
+    write_note(sibling_path, "Old sibling body.", sibling_meta, actor="ai")
+
+    mtime = binary_file.stat().st_mtime
+    monkeypatch.setattr("pipelines.capture.time", MagicMock(time=lambda: mtime + 120))
+
+    run_pipeline_called = []
+
+    async def tracking_run_pipeline(*args, **kwargs):
+        run_pipeline_called.append(True)
+        return Failure(error="pipeline ran (expected)", recoverable=False, context={})
+
+    monkeypatch.setattr("pipelines.capture.run_pipeline", tracking_run_pipeline)
+
+    await capture_file(binary_file, context=pipeline_ctx)
+
+    assert len(run_pipeline_called) == 1, "pipeline MUST run when source_hash differs"
+
+
+@pytest.mark.asyncio
+async def test_idempotent_binary_no_sibling_runs_pipeline(vault_root, pipeline_ctx, monkeypatch):
+    """Binary with no sibling at all → first capture, pipeline runs."""
+    from pipelines.capture import capture_file
+    from unittest.mock import MagicMock
+
+    binary_file = vault_root / "inbox" / "fresh.pdf"
+    binary_file.write_bytes(b"Fresh PDF content")
+
+    mtime = binary_file.stat().st_mtime
+    monkeypatch.setattr("pipelines.capture.time", MagicMock(time=lambda: mtime + 120))
+
+    run_pipeline_called = []
+
+    async def tracking_run_pipeline(*args, **kwargs):
+        run_pipeline_called.append(True)
+        return Failure(error="pipeline ran (expected)", recoverable=False, context={})
+
+    monkeypatch.setattr("pipelines.capture.run_pipeline", tracking_run_pipeline)
+
+    await capture_file(binary_file, context=pipeline_ctx)
+
+    assert len(run_pipeline_called) == 1, "pipeline MUST run when no sibling exists"
+
+
+@pytest.mark.asyncio
+async def test_audit_skipped_fails_silently_success_still_returned(vault_root, pipeline_ctx, monkeypatch):
+    """_audit_skipped failure must not abort the SKIPPED path — Success still returned."""
+    from pipelines.capture import capture_file
+    from vault.writer import WriteOutcome, write_note
+    from vault.frontmatter import NoteMetadata
+    from vault.reader import read_note
+    import storage.documents as docs_mod
+    from unittest.mock import MagicMock
+
+    md_file = vault_root / "inbox" / "audit-fail-test.md"
+    md_file.write_text("# Audit Fail Test\n\nBody content.", encoding="utf-8")
+
+    # Seed DB
+    meta = NoteMetadata(type="note")
+    write_note(md_file, "Body content.", meta, actor="ai")
+    note_result = read_note(md_file)
+    assert isinstance(note_result, Success)
+    upsert_outcome = WriteOutcome(
+        vault_path="inbox/audit-fail-test.md",
+        absolute_path=md_file,
+        content_hash=note_result.value.content_hash,
+        metadata=note_result.value.metadata,
+    )
+    docs_mod.upsert(upsert_outcome, db_path=pipeline_ctx.db_path)
+
+    mtime = md_file.stat().st_mtime
+    monkeypatch.setattr("pipelines.capture.time", MagicMock(time=lambda: mtime + 120))
+
+    # Make audit.write always fail
+    monkeypatch.setattr("pipelines.capture.audit.write", lambda *a, **kw: Failure(
+        error="audit db unavailable", recoverable=False, context={}
+    ))
+
+    run_pipeline_called = []
+
+    async def mock_run_pipeline(*args, **kwargs):
+        run_pipeline_called.append(True)
+        return Failure(error="should not run", recoverable=False, context={})
+
+    monkeypatch.setattr("pipelines.capture.run_pipeline", mock_run_pipeline)
+
+    result = await capture_file(md_file, context=pipeline_ctx)
+
+    # Should still return Success SKIPPED despite audit failure
+    assert isinstance(result, Success)
+    assert len(run_pipeline_called) == 0
+
+
+@pytest.mark.asyncio
+async def test_idempotent_located_binary_matching_hash_skipped(vault_root, pipeline_ctx, monkeypatch):
+    """LOCATED binary (Projects/Alpha/attachment/) with sibling at .summaries/ whose source_hash matches → SKIPPED, pipeline not called."""
+    from pipelines.capture import capture_file
+    from vault.writer import WriteOutcome, write_note
+    from vault.frontmatter import NoteMetadata
+    from unittest.mock import MagicMock
+    import hashlib
+
+    # Binary at a LOCATED path (already in attachment/)
+    att_dir = vault_root / "Projects" / "Alpha" / "attachment"
+    att_dir.mkdir(parents=True, exist_ok=True)
+    binary_file = att_dir / "report.pdf"
+    binary_bytes = b"LOCATED PDF binary content"
+    binary_file.write_bytes(binary_bytes)
+
+    # Sibling at Projects/Alpha/attachment/.summaries/report.pdf.md
+    summaries_dir = att_dir / ".summaries"
+    summaries_dir.mkdir(parents=True, exist_ok=True)
+    sibling_path = summaries_dir / "report.pdf.md"
+    source_hash = hashlib.sha256(binary_bytes).hexdigest()
+
+    sibling_meta = NoteMetadata(
+        type="attachment-summary",
+        attachment_path="Projects/Alpha/attachment/report.pdf",
+        source_hash=source_hash,
+        tags=["type/attachment-summary"],
+    )
+    write_note(sibling_path, "Existing LOCATED sibling body.", sibling_meta, actor="ai")
+
+    # Make file appear old enough to pass cooldown
+    mtime = binary_file.stat().st_mtime
+    monkeypatch.setattr("pipelines.capture.time", MagicMock(time=lambda: mtime + 120))
+
+    run_pipeline_called = []
+
+    async def mock_run_pipeline(*args, **kwargs):
+        run_pipeline_called.append(True)
+        return Failure(error="should not be called", recoverable=False, context={})
+
+    monkeypatch.setattr("pipelines.capture.run_pipeline", mock_run_pipeline)
+
+    result = await capture_file(binary_file, context=pipeline_ctx)
+
+    assert isinstance(result, Success)
+    assert len(run_pipeline_called) == 0, "pipeline must NOT run when LOCATED source_hash matches"
