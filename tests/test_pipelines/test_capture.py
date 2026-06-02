@@ -877,9 +877,12 @@ async def test_apply_location_tags_domain_file_no_duplicate_tag(vault_root, pipe
 
 
 @pytest.mark.asyncio
-async def test_apply_location_tags_invalid_domain_skips_tag(vault_root, pipeline_ctx):
+async def test_apply_location_tags_invalid_domain_skips_tag(vault_root, pipeline_ctx, monkeypatch):
     """Domain folder not in valid_domains → tag NOT added, result still Success."""
     from pipelines.capture import apply_location_tags
+
+    warning_calls: list[tuple] = []
+    monkeypatch.setattr("pipelines.capture.logger.warning", lambda *args, **kwargs: warning_calls.append(args))
 
     ctx = _make_taxonomy_ctx(pipeline_ctx, frozenset(["Finance"]))  # Engineering not valid
     path = vault_root / "Domain" / "Engineering" / "note.md"
@@ -891,6 +894,10 @@ async def test_apply_location_tags_invalid_domain_skips_tag(vault_root, pipeline
     assert "domain/Engineering" not in result.value.ai_tags
     # Existing tags preserved unmodified
     assert result.value.ai_tags == ["type/report"]
+    # Warning must be emitted for the invalid domain
+    assert len(warning_calls) == 1
+    assert "apply_location_tags.invalid_domain" in warning_calls[0][0]
+    assert "Engineering" in warning_calls[0][2]
 
 
 @pytest.mark.asyncio
