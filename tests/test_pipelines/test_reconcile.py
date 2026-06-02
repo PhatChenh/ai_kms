@@ -73,7 +73,7 @@ async def test_reconcile_paths_moved_note_updates_db(
     shutil.move(str(src), str(dst))
 
     initial = ReconcileResult()
-    match await reconcile_paths(initial, pipeline_ctx):
+    match await reconcile_paths(initial, pipeline_ctx, []):
         case Success(value=r):
             assert isinstance(r, ReconcileResult)
             assert r.paths_reconciled > 0
@@ -114,7 +114,7 @@ async def test_reconcile_paths_deleted_note_removes_db_row(
     note.unlink()
 
     initial = ReconcileResult()
-    match await reconcile_paths(initial, pipeline_ctx):
+    match await reconcile_paths(initial, pipeline_ctx, []):
         case Success(value=r):
             assert r.paths_reconciled > 0
         case Failure(error=e):
@@ -412,10 +412,18 @@ async def test_reconcile_orphan_siblings_skips_human_edited(
 
 
 @pytest.mark.asyncio
-async def test_reconcile_runs_all_four_stages(
+async def test_reconcile_runs_all_five_stages(
     vault_root, db_path, pipeline_ctx, monkeypatch
 ):
-    """reconcile() chains all 4 stages and returns ReconcileResult with counts."""
+    """reconcile() chains all 5 stages and returns ReconcileResult with counts.
+
+    Stages covered:
+      1. reconcile_paths      — delete on disk → removed from DB
+      2. reconcile_orphan_binaries — (no orphan binaries; count stays 0)
+      3. reconcile_stale_binaries  — (no stale binaries; count stays 0)
+      4. reconcile_orphan_siblings — (no orphan siblings; count stays 0)
+      5. reconcile_stale_tags      — tags_updated is an int
+    """
     from pipelines.reconcile import ReconcileResult, reconcile
     from vault.writer import write_note
     from vault.frontmatter import NoteMetadata
@@ -445,10 +453,11 @@ async def test_reconcile_runs_all_four_stages(
             assert isinstance(r, ReconcileResult)
             # Stage 1 should have reconciled the deleted note
             assert r.paths_reconciled >= 1, f"Expected paths_reconciled >= 1, got {r.paths_reconciled}"
-            # Counts should be ints
+            # All stage counters should be ints
             assert isinstance(r.new_captures, int)
             assert isinstance(r.restale_count, int)
             assert isinstance(r.orphans_cleaned, int)
+            assert isinstance(r.tags_updated, int)
         case Failure(error=e):
             pytest.fail(f"reconcile() failed: {e}")
 
@@ -456,3 +465,273 @@ async def test_reconcile_runs_all_four_stages(
     match documents.get_by_path(vp, db_path=db_path):
         case Success(value=row):
             assert row is None, f"Deleted note {vp} should be gone from DB"
+
+
+# ---------------------------------------------------------------------------
+# Stage 5 — reconcile_stale_tags
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stale_tags_removes_stale_domain_tag(
+    vault_root, db_path, pipeline_ctx
+):
+    """Stage 5: note with domain/OldDomain tag (folder deleted) → tag removed."""
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_tags
+    from vault.writer import write_note
+    from vault.frontmatter import NoteMetadata
+    from vault.indexer import scan_vault
+    from core.result import Success
+
+    # Note in Projects/Alpha/ with a stale domain tag (OldDomain folder does not exist)
+    note_path = vault_root / "Projects" / "Alpha" / "note.md"
+    note_path.parent.mkdir(parents=True, exist_ok=True)
+    meta = NoteMetadata(tags=["domain/OldDomain", "some-other-tag"])
+    result = write_note(note_path, "hello", meta, actor="ai")
+    assert isinstance(result, Success)
+
+    match scan_vault(vault_root):
+        case Success(entries):
+            pass
+        case f:
+            pytest.fail(f"scan_vault failed: {f}")
+
+    initial = ReconcileResult()
+    match await reconcile_stale_tags(initial, pipeline_ctx, entries):
+        case Success(value=r):
+            assert r.tags_updated >= 1, "Expected at least one tag update"
+        case f:
+            pytest.fail(f"Stage 5 failed: {f}")
+
+    # Verify stale tag is gone from the written note
+    from vault.reader import read_note
+    match read_note(note_path):
+        case Success(note):
+            assert "domain/OldDomain" not in note.metadata.tags, \
+                "Stale domain tag should have been removed"
+            assert "some-other-tag" in note.metadata.tags, \
+                "Non-domain tags should be preserved"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stale_tags_adds_missing_domain_tag(
+    vault_root, db_path, pipeline_ctx
+):
+    """Stage 5: note in Domain/Engineering/ missing domain/Engineering tag → tag added."""
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_tags
+    from vault.writer import write_note
+    from vault.frontmatter import NoteMetadata
+    from vault.indexer import scan_vault
+    from core.result import Success
+
+    # Create Engineering domain folder
+    eng_dir = vault_root / "Domain" / "Engineering"
+    eng_dir.mkdir(parents=True, exist_ok=True)
+
+    note_path = eng_dir / "spec.md"
+    # Note has no domain tag
+    meta = NoteMetadata(tags=["some-tag"])
+    result = write_note(note_path, "spec content", meta, actor="ai")
+    assert isinstance(result, Success)
+
+    match scan_vault(vault_root):
+        case Success(entries):
+            pass
+        case f:
+            pytest.fail(f"scan_vault failed: {f}")
+
+    initial = ReconcileResult()
+    match await reconcile_stale_tags(initial, pipeline_ctx, entries):
+        case Success(value=r):
+            assert r.tags_updated >= 1
+        case f:
+            pytest.fail(f"Stage 5 failed: {f}")
+
+    from vault.reader import read_note
+    match read_note(note_path):
+        case Success(note):
+            assert "domain/Engineering" in note.metadata.tags, \
+                "domain/Engineering tag should have been added"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stale_tags_sets_project_field(
+    vault_root, db_path, pipeline_ctx
+):
+    """Stage 5: note in Projects/Alpha/ → project: Alpha set on frontmatter."""
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_tags
+    from vault.writer import write_note
+    from vault.frontmatter import NoteMetadata
+    from vault.indexer import scan_vault
+    from core.result import Success
+
+    note_path = vault_root / "Projects" / "Alpha" / "note.md"
+    note_path.parent.mkdir(parents=True, exist_ok=True)
+    # Note has no project field
+    meta = NoteMetadata(project=None)
+    result = write_note(note_path, "project note", meta, actor="ai")
+    assert isinstance(result, Success)
+
+    match scan_vault(vault_root):
+        case Success(entries):
+            pass
+        case f:
+            pytest.fail(f"scan_vault failed: {f}")
+
+    initial = ReconcileResult()
+    match await reconcile_stale_tags(initial, pipeline_ctx, entries):
+        case Success(value=r):
+            assert r.tags_updated >= 1
+        case f:
+            pytest.fail(f"Stage 5 failed: {f}")
+
+    from vault.reader import read_note
+    match read_note(note_path):
+        case Success(note):
+            assert note.metadata.project == "Alpha", \
+                f"Expected project=Alpha, got {note.metadata.project}"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stale_tags_inbox_note_unchanged(
+    vault_root, db_path, pipeline_ctx
+):
+    """Stage 5: note in inbox/ → project: unchanged (inbox location does not set project)."""
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_tags
+    from vault.writer import write_note
+    from vault.frontmatter import NoteMetadata
+    from vault.indexer import scan_vault
+    from core.result import Success
+
+    note_path = vault_root / "inbox" / "drop.md"
+    original_project = "SomeOtherProject"
+    meta = NoteMetadata(project=original_project, tags=[])
+    result = write_note(note_path, "inbox note", meta, actor="ai")
+    assert isinstance(result, Success)
+
+    match scan_vault(vault_root):
+        case Success(entries):
+            pass
+        case f:
+            pytest.fail(f"scan_vault failed: {f}")
+
+    initial = ReconcileResult()
+    match await reconcile_stale_tags(initial, pipeline_ctx, entries):
+        case Success(value=r):
+            # No dirty change — project should be untouched
+            pass
+        case f:
+            pytest.fail(f"Stage 5 failed: {f}")
+
+    from vault.reader import read_note
+    match read_note(note_path):
+        case Success(note):
+            assert note.metadata.project == original_project, \
+                "inbox note project field should be unchanged"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stale_tags_skips_human_edited(
+    vault_root, db_path, pipeline_ctx, monkeypatch
+):
+    """Stage 5: note with updated_by_human=True → write_note skips silently.
+
+    Expects:
+    - tags_updated NOT incremented
+    - NO warning logged (the human-lock path is expected, not a warning condition)
+    """
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_tags
+    from vault.writer import write_note
+    from vault.frontmatter import NoteMetadata
+    from vault.indexer import scan_vault
+    from core.result import Success
+    import pipelines.reconcile as reconcile_mod
+
+    # Create Engineering domain so domain/Engineering would normally be added
+    eng_dir = vault_root / "Domain" / "Engineering"
+    eng_dir.mkdir(parents=True, exist_ok=True)
+
+    note_path = eng_dir / "human_note.md"
+    # Human-edited note, missing domain tag (would normally be dirty)
+    meta = NoteMetadata(tags=[], updated_by_human=True)
+    result = write_note(note_path, "human content", meta, actor="human")
+    assert isinstance(result, Success)
+
+    match scan_vault(vault_root):
+        case Success(entries):
+            pass
+        case f:
+            pytest.fail(f"scan_vault failed: {f}")
+
+    warning_calls = []
+    original_warning = reconcile_mod._log.warning
+
+    def capturing_warning(msg, *args, **kwargs):
+        warning_calls.append((msg, args, kwargs))
+        return original_warning(msg, *args, **kwargs)
+
+    monkeypatch.setattr(reconcile_mod._log, "warning", capturing_warning)
+
+    initial = ReconcileResult()
+    match await reconcile_stale_tags(initial, pipeline_ctx, entries):
+        case Success(value=r):
+            assert r.tags_updated == 0, \
+                "Human-edited note should not increment tags_updated"
+        case f:
+            pytest.fail(f"Stage 5 failed: {f}")
+
+    # Verify no warning was emitted for the human-edited note (it's expected — not an error)
+    stale_tag_warnings = [
+        (msg, args) for msg, args, _ in warning_calls
+        if "reconcile_stale_tags" in msg
+    ]
+    assert len(stale_tag_warnings) == 0, \
+        f"Expected no reconcile_stale_tags warnings for human-edited note, got: {stale_tag_warnings}"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stale_tags_load_valid_domains_called_once(
+    vault_root, db_path, pipeline_ctx, monkeypatch
+):
+    """Stage 5: load_valid_domains called once regardless of number of notes."""
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_tags
+    from vault.writer import write_note
+    from vault.frontmatter import NoteMetadata
+    from vault.indexer import scan_vault
+    from core.result import Success
+    from unittest.mock import patch
+
+    # Create a few notes in different locations
+    for name in ["a.md", "b.md", "c.md"]:
+        p = vault_root / "inbox" / name
+        write_note(p, "content", NoteMetadata(), actor="ai")
+
+    match scan_vault(vault_root):
+        case Success(entries):
+            pass
+        case f:
+            pytest.fail(f"scan_vault failed: {f}")
+
+    call_count = 0
+    original_load = None
+
+    import vault.paths as vp_module
+    original_load = vp_module.load_valid_domains
+
+    def counting_load(vault_root_arg):
+        nonlocal call_count
+        call_count += 1
+        return original_load(vault_root_arg)
+
+    # load_valid_domains is imported inside the function body (from vault.paths import ...),
+    # so we patch the source module attribute. The top-level module patch would be a no-op.
+    monkeypatch.setattr(vp_module, "load_valid_domains", counting_load)
+
+    initial = ReconcileResult()
+    match await reconcile_stale_tags(initial, pipeline_ctx, entries):
+        case Success():
+            pass
+        case f:
+            pytest.fail(f"Stage 5 failed: {f}")
+
+    assert call_count == 1, f"load_valid_domains should be called once, called {call_count} times"
