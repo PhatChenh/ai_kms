@@ -1,6 +1,6 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-06-02 (Phase 1.5 pay-debt Phase 1 complete — FILE_LOST guard)_
+_Last updated: 2026-06-02 (Phase 4.3 Folder Handling — watcher pending-folder registry + ThreadPoolExecutor dispatch complete)_
 
 ## Current Position
 **Phase**: Phase 1 — Capture ✅ **Complete as of 2026-05-21**
@@ -87,7 +87,7 @@ Triggered by `/superpowers:requesting-code-review`. Applied subset of review fin
 - [x] Phase 1 — FILE_LOST guard (`capture_file` entry + store guards)
 - [ ] Phase 2 — `_location_context` + `apply_location_tags` capture stage
 - [ ] Phase 3 — `reconcile_stale_tags` Stage 5 + reconcile signature changes
-- [ ] Phase 4 — `capture_folder` + watcher `DirCreatedEvent` + `batches` SQLite table
+- [x] Phase 4 — `capture_folder` + watcher `DirCreatedEvent` + `batches` SQLite table (4.1+4.2 done; 4.3 watcher registry done 2026-06-02)
 - [ ] Phase 5 — Handlers extension (see `docs/research/phase1.5_redesign/handlers_extended.md`)
 - [ ] Phase 6 — Idempotent capture (content-hash early exit; `source_hash` in sibling frontmatter)
 - [ ] Phase 7 — `reconcile_stale_batch_refs` Stage 6 (TD-036; requires Phase 4)
