@@ -84,6 +84,49 @@ def _is_managed_summaries_area(path: Path, vault_cfg: VaultConfig) -> bool:
     return _is_in_managed_attachment(path, vault_cfg)
 
 
+def _location_context(
+    path: Path, vault_cfg: "VaultConfig"
+) -> tuple[str | None, str | None]:
+    """Return the location context for a vault path.
+
+    Inspects the path against vault_cfg layout to determine whether the file
+    lives inside a known domain folder, project folder, or the inbox.
+
+    Args:
+        path:      Absolute path to the file.
+        vault_cfg: VaultConfig with domain_path, projects_path, inbox_path.
+
+    Returns:
+        ("domain", "<D>")   — path is under Domain/<D>/
+        ("project", "<A>")  — path is under Projects/<A>/
+        ("inbox", None)     — path is under inbox/
+        (None, None)        — path does not match any known location
+    """
+    domain_path = vault_cfg.domain_path
+    projects_path = vault_cfg.projects_path
+    inbox_path = vault_cfg.inbox_path
+
+    # Check domain first: path must have domain_path as a parent,
+    # and the immediate child of domain_path is the domain name.
+    if domain_path in path.parents:
+        # path relative to domain_path gives ("<D>", ...)
+        rel = path.relative_to(domain_path)
+        if rel.parts:
+            return ("domain", rel.parts[0])
+
+    # Check projects: same pattern
+    if projects_path in path.parents:
+        rel = path.relative_to(projects_path)
+        if rel.parts:
+            return ("project", rel.parts[0])
+
+    # Inbox fallback
+    if inbox_path == path.parent or inbox_path in path.parents:
+        return ("inbox", None)
+
+    return (None, None)
+
+
 def load_valid_domains(vault_root: Path) -> frozenset[str]:
     """Return folder names directly under vault_root/Domain/ as the valid domain set.
 

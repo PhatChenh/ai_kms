@@ -802,6 +802,148 @@ async def test_store_guard_no_documents_row_inserted(
     assert len(rows.value) == 0
 
 
+# ===========================================================================
+# apply_location_tags stage
+# ===========================================================================
+
+
+def _make_mr(
+    source_path: Path,
+    ai_tags: list[str] | None = None,
+    ai_project: str | None = None,
+) -> "MetadataResult":
+    """Build a minimal MetadataResult for apply_location_tags tests."""
+    from pipelines.capture import MetadataResult
+    from core.confidence import AIDecision
+
+    return MetadataResult(
+        raw=_make_raw(source_path),
+        summary="Summary.",
+        ai_title="Title",
+        ai_type=None,
+        ai_domain=None,
+        ai_tags=ai_tags if ai_tags is not None else [],
+        decision=AIDecision(action="capture:metadata", confidence=0.9, reasoning="ok", source_ids=[]),
+        ai_project=ai_project,
+    )
+
+
+def _make_taxonomy_ctx(pipeline_ctx, valid_domains: frozenset[str]):
+    """Return a PipelineContext with a real TagTaxonomy."""
+    from core.tags import TagTaxonomy
+    from core.pipeline import PipelineContext
+
+    taxonomy = TagTaxonomy(
+        allowed_types=frozenset(["report"]),
+        valid_domains=valid_domains,
+    )
+    return PipelineContext(
+        config=pipeline_ctx.config,
+        correlation_id=pipeline_ctx.correlation_id,
+        db_path=pipeline_ctx.db_path,
+        taxonomy=taxonomy,
+    )
+
+
+@pytest.mark.asyncio
+async def test_apply_location_tags_domain_file_adds_tag(vault_root, pipeline_ctx):
+    """File under Domain/Engineering/ → domain/Engineering tag appended."""
+    from pipelines.capture import apply_location_tags
+
+    ctx = _make_taxonomy_ctx(pipeline_ctx, frozenset(["Engineering"]))
+    path = vault_root / "Domain" / "Engineering" / "note.md"
+    mr = _make_mr(path, ai_tags=["type/report"])
+
+    result = await apply_location_tags(mr, ctx)
+
+    assert isinstance(result, Success)
+    assert "domain/Engineering" in result.value.ai_tags
+    assert "type/report" in result.value.ai_tags  # existing tag preserved
+
+
+@pytest.mark.asyncio
+async def test_apply_location_tags_domain_file_no_duplicate_tag(vault_root, pipeline_ctx):
+    """File already tagged domain/Engineering → no duplicate added."""
+    from pipelines.capture import apply_location_tags
+
+    ctx = _make_taxonomy_ctx(pipeline_ctx, frozenset(["Engineering"]))
+    path = vault_root / "Domain" / "Engineering" / "note.md"
+    mr = _make_mr(path, ai_tags=["domain/Engineering", "type/report"])
+
+    result = await apply_location_tags(mr, ctx)
+
+    assert isinstance(result, Success)
+    assert result.value.ai_tags.count("domain/Engineering") == 1
+
+
+@pytest.mark.asyncio
+async def test_apply_location_tags_invalid_domain_skips_tag(vault_root, pipeline_ctx):
+    """Domain folder not in valid_domains → tag NOT added, result still Success."""
+    from pipelines.capture import apply_location_tags
+
+    ctx = _make_taxonomy_ctx(pipeline_ctx, frozenset(["Finance"]))  # Engineering not valid
+    path = vault_root / "Domain" / "Engineering" / "note.md"
+    mr = _make_mr(path, ai_tags=["type/report"])
+
+    result = await apply_location_tags(mr, ctx)
+
+    assert isinstance(result, Success)
+    assert "domain/Engineering" not in result.value.ai_tags
+    # Existing tags preserved unmodified
+    assert result.value.ai_tags == ["type/report"]
+
+
+@pytest.mark.asyncio
+async def test_apply_location_tags_project_file_sets_ai_project(vault_root, pipeline_ctx):
+    """File under Projects/Alpha/ → ai_project set, no domain tag added."""
+    from pipelines.capture import apply_location_tags
+
+    ctx = _make_taxonomy_ctx(pipeline_ctx, frozenset(["Engineering"]))
+    path = vault_root / "Projects" / "Alpha" / "note.md"
+    mr = _make_mr(path, ai_tags=["type/report"])
+
+    result = await apply_location_tags(mr, ctx)
+
+    assert isinstance(result, Success)
+    assert result.value.ai_project == "Alpha"
+    # No domain tag added for project files
+    assert not any(t.startswith("domain/") for t in result.value.ai_tags)
+
+
+@pytest.mark.asyncio
+async def test_apply_location_tags_inbox_file_no_changes(vault_root, pipeline_ctx):
+    """File under inbox/ → no ai_tags or ai_project changes."""
+    from pipelines.capture import apply_location_tags
+
+    ctx = _make_taxonomy_ctx(pipeline_ctx, frozenset(["Engineering"]))
+    path = vault_root / "inbox" / "note.md"
+    original_tags = ["type/report", "quarterly"]
+    mr = _make_mr(path, ai_tags=list(original_tags))
+
+    result = await apply_location_tags(mr, ctx)
+
+    assert isinstance(result, Success)
+    assert result.value.ai_tags == original_tags
+    assert result.value.ai_project is None
+
+
+@pytest.mark.asyncio
+async def test_apply_location_tags_taxonomy_none_skips_domain_tag(vault_root, pipeline_ctx):
+    """taxonomy=None → treat as no valid_domains → skip domain tag for domain file."""
+    from pipelines.capture import apply_location_tags
+
+    # pipeline_ctx has taxonomy=None by default
+    assert pipeline_ctx.taxonomy is None
+
+    path = vault_root / "Domain" / "Engineering" / "note.md"
+    mr = _make_mr(path, ai_tags=["type/report"])
+
+    result = await apply_location_tags(mr, pipeline_ctx)
+
+    assert isinstance(result, Success)
+    assert "domain/Engineering" not in result.value.ai_tags
+
+
 @pytest.mark.asyncio
 async def test_audit_file_lost_fails_silently(vault_root, pipeline_ctx, monkeypatch):
     """_audit_file_lost audit write failure must not propagate — Failure still returned."""
