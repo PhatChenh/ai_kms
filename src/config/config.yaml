@@ -4,6 +4,8 @@ capture:
   rename_gate:
     office_extensions: [".md", ".docx", ".xlsx", ".pptx", ".txt"]
     max_stem_length: 120
+  folder_cooldown_seconds: 5.0
+  folder_max_workers: 4
 claude:
   max_tokens: 1024
   model: claude-haiku-4-5-20251001

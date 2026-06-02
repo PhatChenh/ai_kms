@@ -218,6 +218,8 @@ class CaptureConfig(BaseModel):
     cooldown_seconds: int = Field(60, ge=0)
     max_urls_per_note: int = Field(3, ge=0)
     rename_gate: RenameGateConfig = Field(default_factory=RenameGateConfig)  # type: ignore[arg-type]
+    folder_cooldown_seconds: float = Field(5.0, ge=0.0)
+    folder_max_workers: int = Field(4, ge=1)
 
 
 class MainConfig(BaseModel):

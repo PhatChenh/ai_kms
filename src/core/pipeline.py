@@ -59,6 +59,7 @@ class PipelineContext:
     correlation_id: str
     db_path: Path | None = field(default=None)
     taxonomy: "TagTaxonomy | None" = field(default=None)
+    batch_id: int | None = field(default=None)
 
 
 # ---------------------------------------------------------------------------

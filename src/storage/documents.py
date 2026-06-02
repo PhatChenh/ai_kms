@@ -36,6 +36,7 @@ class DocumentRow:
     updated_at: str
     updated_by_human: bool
     content_hash: str | None
+    batch_id: int | None = None
 
 
 def _row_from_sqlite(row: sqlite3.Row) -> DocumentRow:
@@ -50,6 +51,7 @@ def _row_from_sqlite(row: sqlite3.Row) -> DocumentRow:
         updated_at=row["updated_at"],
         updated_by_human=bool(row["updated_by_human"]),
         content_hash=row["content_hash"],
+        batch_id=row["batch_id"] if "batch_id" in row.keys() else None,
     )
 
 
@@ -57,13 +59,18 @@ def _derive_title(outcome: WriteOutcome) -> str:
     return outcome.metadata.extra.get("title") or Path(outcome.vault_path).stem
 
 
-def upsert(outcome: WriteOutcome, db_path: Path | None = None) -> Result[int]:
+def upsert(
+    outcome: WriteOutcome,
+    db_path: Path | None = None,
+    batch_id: int | None = None,
+) -> Result[int]:
     """
     Insert or replace a documents row from a WriteOutcome.
 
     Args:
         outcome:  Result of write_note or move_note.
         db_path:  Override DB path; defaults to CONFIG.main.database.path.
+        batch_id: FK to batches.batch_id for folder-batch tracking. None → column stays NULL.
 
     Returns:
         Success(rowid) or Failure(recoverable=False) on sqlite3.Error.
@@ -78,8 +85,8 @@ def upsert(outcome: WriteOutcome, db_path: Path | None = None) -> Result[int]:
                 """
                 INSERT OR REPLACE INTO documents
                     (vault_path, title, summary, note_type, confidence,
-                     updated_at, updated_by_human, content_hash, created_at)
-                VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?, COALESCE(?, datetime('now')))
+                     updated_at, updated_by_human, content_hash, created_at, batch_id)
+                VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?, COALESCE(?, datetime('now')), ?)
                 """,
                 (
                     outcome.vault_path,
@@ -90,6 +97,7 @@ def upsert(outcome: WriteOutcome, db_path: Path | None = None) -> Result[int]:
                     1 if meta.updated_by_human else 0,
                     outcome.content_hash,
                     created_at,
+                    batch_id,
                 ),
             )
             rowid: int = cur.lastrowid  # type: ignore[assignment]
@@ -187,7 +195,10 @@ def delete_by_path(
 
 
 def replace_path(
-    old_vault_path: str, outcome: WriteOutcome, db_path: Path | None = None
+    old_vault_path: str,
+    outcome: WriteOutcome,
+    db_path: Path | None = None,
+    batch_id: int | None = None,
 ) -> Result[None]:
     """Atomically delete the old documents row and upsert from outcome.
 
@@ -198,6 +209,7 @@ def replace_path(
         old_vault_path: vault_path of the row to remove.
         outcome:        WriteOutcome from write_note on the new path.
         db_path:        Override DB path.
+        batch_id:       FK to batches.batch_id. None → column stays NULL.
 
     Returns:
         Success(None) or Failure(recoverable=False) on sqlite3.Error.
@@ -215,8 +227,8 @@ def replace_path(
                 """
                 INSERT OR REPLACE INTO documents
                     (vault_path, title, summary, note_type, confidence,
-                     updated_at, updated_by_human, content_hash, created_at)
-                VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?, COALESCE(?, datetime('now')))
+                     updated_at, updated_by_human, content_hash, created_at, batch_id)
+                VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?, COALESCE(?, datetime('now')), ?)
                 """,
                 (
                     outcome.vault_path,
@@ -227,6 +239,7 @@ def replace_path(
                     1 if meta.updated_by_human else 0,
                     outcome.content_hash,
                     created_at,
+                    batch_id,
                 ),
             )
         return Success(None)

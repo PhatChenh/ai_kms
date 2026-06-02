@@ -26,7 +26,7 @@ def test_init_db_creates_file(db_path: Path) -> None:
         ).fetchall()
     }
     conn.close()
-    assert tables == {"documents", "audit_log", "corrections", "schema_version"}
+    assert tables == {"documents", "audit_log", "corrections", "schema_version", "batches"}
 
 
 def test_init_db_is_idempotent(db_path: Path) -> None:

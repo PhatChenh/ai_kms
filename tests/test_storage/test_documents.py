@@ -134,6 +134,52 @@ def test_rename_updates_vault_path_preserves_id(db):
     assert new.value.id == original_id  # same row, just renamed
 
 
+def test_upsert_with_batch_id(db):
+    """upsert with a real batch_id FK → row.batch_id matches."""
+    from storage.batches import insert as insert_batch
+    from storage.documents import get_by_path, upsert
+
+    # Insert a real batch row first so FK constraint is satisfied.
+    r_batch = insert_batch(
+        folder_name="test-folder",
+        destination_type=None,
+        destination_name=None,
+        confidence=0.9,
+        status="ROUTING",
+        file_count=1,
+        db_path=db,
+    )
+    assert isinstance(r_batch, Success)
+    batch_id = r_batch.value
+
+    outcome = _outcome("inbox/with_batch.md", content_hash="batchhash")
+    r = upsert(outcome, db_path=db, batch_id=batch_id)
+
+    assert isinstance(r, Success)
+
+    row_r = get_by_path("inbox/with_batch.md", db_path=db)
+    assert isinstance(row_r, Success)
+    row = row_r.value
+    assert row is not None
+    assert row.batch_id == batch_id
+
+
+def test_upsert_without_batch_id(db):
+    """upsert without batch_id → row.batch_id is None."""
+    from storage.documents import get_by_path, upsert
+
+    outcome = _outcome("inbox/no_batch.md", content_hash="nobatch")
+    r = upsert(outcome, db_path=db)
+
+    assert isinstance(r, Success)
+
+    row_r = get_by_path("inbox/no_batch.md", db_path=db)
+    assert isinstance(row_r, Success)
+    row = row_r.value
+    assert row is not None
+    assert row.batch_id is None
+
+
 def test_upsert_returns_failure_on_locked_db(db, monkeypatch):
     """get_connection raising OperationalError → Failure(recoverable=False)."""
     import storage.documents as docs_mod
