@@ -1,6 +1,6 @@
 # Plan: Phase 1.5 Pay-Debt
 _Last updated: 2026-06-02_
-_Status: [~] in progress_
+_Status: [x] complete_
 
 Source spec: `docs/design/phase1.5_redesign/behavior_adjustment.md`
 
@@ -439,7 +439,8 @@ Each phase is independently committable and testable before the next starts.
 - [ ] `updated_by_human: true` note → skipped by `write_note` automatically
 - [ ] All existing capture tests still pass (no regression from `ai_project=None` default)
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-06-02
 
 ---
 
@@ -526,7 +527,8 @@ Each phase is independently committable and testable before the next starts.
 - [ ] 2 Stage 1 tests updated and passing
 - [ ] Full reconcile end-to-end: 5-stage pipeline completes without regression
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-06-02
 
 ---
 
@@ -624,7 +626,8 @@ Each phase is independently committable and testable before the next starts.
 - [ ] `ThreadPoolExecutor` caps concurrent folder pipelines (mock `max_workers=1`, drop 2 folders, second queues)
 - [ ] C-10: `asyncio.run()` only called from worker thread, never from watchdog observer thread
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-06-02
 
 ---
 
@@ -640,7 +643,8 @@ Cancelled plan skeleton at `docs/plans/phase1.5_redesign/handlers_extended.md` (
 - Add deps to `pyproject.toml`: `openpyxl>=3.1`, `python-pptx>=1.0`, `extract-msg>=0.28`
 - Tests: `tests/test_handlers/` — one test file per handler
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-06-02
 
 ---
 
@@ -786,7 +790,8 @@ NoteMetadata (vault/frontmatter.py)  [one field added]
 - [ ] Phase 8 invariant: `SKIPPED` outcome not counted as new knowledge (test Phase 8 filter separately, but document the string here)
 - [ ] All 650+ existing tests still pass
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-06-02
 
 ---
 
@@ -877,7 +882,8 @@ NoteMetadata (vault/frontmatter.py)  [one field added]
 - [ ] Full 7-stage reconcile pipeline completes without regression
 - [ ] `ReconcileResult.batch_refs_cleared` included in CLI output (update `kms reconcile` log line)
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-06-02
 
 ---
 
