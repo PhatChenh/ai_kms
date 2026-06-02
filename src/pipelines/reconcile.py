@@ -1,6 +1,6 @@
 """pipelines/reconcile.py
 
-5-stage reconcile pipeline: paths → orphan_binaries → stale_binaries → orphan_siblings → stale_tags.
+6-stage reconcile pipeline: paths → orphan_binaries → stale_binaries → orphan_siblings → stale_tags → stale_batch_refs.
 Entry point: reconcile(ctx) -> Result[ReconcileResult]
 """
 
@@ -26,19 +26,21 @@ __all__ = [
     "reconcile_stale_binaries",
     "reconcile_orphan_siblings",
     "reconcile_stale_tags",
+    "reconcile_stale_batch_refs",
     "reconcile",
 ]
 
 
 @dataclass(frozen=True)
 class ReconcileResult:
-    """Counters accumulated across the 5 reconcile stages."""
+    """Counters accumulated across the 6 reconcile stages."""
 
     paths_reconciled: int = 0
     new_captures: int = 0
     restale_count: int = 0
     orphans_cleaned: int = 0
     tags_updated: int = 0
+    batch_refs_cleared: int = 0
 
     def replace(self, **kwargs: int) -> ReconcileResult:
         return replace(self, **kwargs)
@@ -372,12 +374,82 @@ async def reconcile_stale_tags(
 
 
 # ---------------------------------------------------------------------------
+# Stage 6 — null out batch_id on documents that moved away from batch destination
+# ---------------------------------------------------------------------------
+
+
+async def reconcile_stale_batch_refs(
+    result: ReconcileResult, ctx: PipelineContext
+) -> Result[ReconcileResult]:
+    """Stage 6: null out batch_id on documents that moved away from their batch destination.
+
+    For each documents row with a non-NULL batch_id, computes the expected
+    vault_path prefix from batches.destination_type + destination_name.
+    If the row's vault_path no longer starts with that prefix, sets batch_id = NULL.
+
+    Safe to run before Phase 4 is deployed: if the batches table does not exist,
+    returns Success(result) unchanged.
+    """
+    import sqlite3
+
+    from storage.db import get_connection
+
+    counter = 0
+    try:
+        with get_connection(ctx.db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT d.vault_path, b.destination_type, b.destination_name
+                FROM documents d
+                JOIN batches b ON d.batch_id = b.batch_id
+                WHERE d.batch_id IS NOT NULL
+                """,
+            ).fetchall()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc).lower():
+            return Success(result)
+        return Failure(
+            error=str(exc),
+            recoverable=False,
+            context={"stage": "reconcile_stale_batch_refs"},
+        )
+
+    stale_paths = []
+    for vault_path, destination_type, destination_name in rows:
+        if destination_type == "project":
+            expected_prefix = f"Projects/{destination_name}/"
+        else:
+            expected_prefix = f"Domain/{destination_name}/"
+
+        if not vault_path.startswith(expected_prefix):
+            stale_paths.append(vault_path)
+
+    if stale_paths:
+        try:
+            with get_connection(ctx.db_path) as conn:
+                for vault_path in stale_paths:
+                    conn.execute(
+                        "UPDATE documents SET batch_id = NULL WHERE vault_path = ?",
+                        (vault_path,),
+                    )
+                    counter += 1
+        except sqlite3.OperationalError as exc:
+            return Failure(
+                error=str(exc),
+                recoverable=False,
+                context={"stage": "reconcile_stale_batch_refs"},
+            )
+
+    return Success(replace(result, batch_refs_cleared=result.batch_refs_cleared + counter))
+
+
+# ---------------------------------------------------------------------------
 # Pipeline entry point
 # ---------------------------------------------------------------------------
 
 
 async def reconcile(ctx: PipelineContext) -> Result[ReconcileResult]:
-    """Run all 5 reconcile stages in sequence.
+    """Run all 6 reconcile stages in sequence.
 
     Args:
         ctx: PipelineContext with config, correlation_id, and db_path.
@@ -415,6 +487,11 @@ async def reconcile(ctx: PipelineContext) -> Result[ReconcileResult]:
         case Success(value=r):
             result = r
     match await reconcile_stale_tags(result, ctx, entries):
+        case Failure() as f:
+            return f
+        case Success(value=r):
+            result = r
+    match await reconcile_stale_batch_refs(result, ctx):
         case Failure() as f:
             return f
         case Success(value=r):

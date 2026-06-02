@@ -130,7 +130,9 @@ def reconcile() -> None:
                     f"OK: {r.paths_reconciled} paths reconciled, "
                     f"{r.new_captures} new binary captured, "
                     f"{r.restale_count} stale binaries re-summarized, "
-                    f"{r.orphans_cleaned} orphans cleaned"
+                    f"{r.orphans_cleaned} orphans cleaned, "
+                    f"{r.tags_updated} tags updated, "
+                    f"{r.batch_refs_cleared} stale batch refs cleared"
                 )
             case Failure(error=e):
                 click.echo(f"FAILED: {e}", err=True)
