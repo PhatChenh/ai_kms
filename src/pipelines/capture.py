@@ -1,6 +1,6 @@
 """pipelines/capture.py
 
-5-stage async capture pipeline: extract → enrich_urls → summarize → metadata → store.
+6-stage async capture pipeline: extract → enrich_urls → summarize → metadata → apply_location_tags → store.
 Entry point: capture_file(path, context=None) -> Result[WriteOutcome]
 """
 
@@ -25,7 +25,7 @@ from handlers.url_fetcher import detect_urls, fetch_url_content
 from llm.prompt_loader import PROMPTS
 from llm.provider import LLMResponse, get_provider
 from vault.frontmatter import NoteMetadata
-from vault.paths import to_vault_path
+from vault.paths import _location_context, to_vault_path
 from vault.reader import read_note
 from vault.writer import WriteOutcome, move_attachment, move_note, write_note
 import core.audit as audit
@@ -284,8 +284,6 @@ async def apply_location_tags(mr: MetadataResult, ctx: PipelineContext) -> Resul
     Returns Success(MetadataResult) in all cases — location inference is
     best-effort and never blocks the pipeline.
     """
-    from vault.paths import _location_context
-
     location_type, location_name = _location_context(
         mr.raw.source_path, ctx.config.vault
     )
@@ -298,16 +296,16 @@ async def apply_location_tags(mr: MetadataResult, ctx: PipelineContext) -> Resul
         )
         if location_name not in valid_domains:
             logger.warning(
-                "apply_location_tags.invalid_domain path=%s domain=%s",
-                str(mr.raw.source_path),
-                location_name,
+                "apply_location_tags.invalid_domain",
+                path=str(mr.raw.source_path),
+                domain=location_name,
             )
             return Success(mr)
         tag = f"domain/{location_name}"
         if tag in mr.ai_tags:
             return Success(mr)
         new_tags = list(mr.ai_tags) + [tag]
-        return Success(replace(mr, ai_tags=new_tags))
+        return Success(replace(mr, ai_tags=new_tags, ai_domain=location_name))
 
     if location_type == "project" and location_name is not None:
         return Success(replace(mr, ai_project=location_name))

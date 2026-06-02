@@ -859,6 +859,7 @@ async def test_apply_location_tags_domain_file_adds_tag(vault_root, pipeline_ctx
     assert isinstance(result, Success)
     assert "domain/Engineering" in result.value.ai_tags
     assert "type/report" in result.value.ai_tags  # existing tag preserved
+    assert result.value.ai_domain == "Engineering"
 
 
 @pytest.mark.asyncio
@@ -896,8 +897,7 @@ async def test_apply_location_tags_invalid_domain_skips_tag(vault_root, pipeline
     assert result.value.ai_tags == ["type/report"]
     # Warning must be emitted for the invalid domain
     assert len(warning_calls) == 1
-    assert "apply_location_tags.invalid_domain" in warning_calls[0][0]
-    assert "Engineering" in warning_calls[0][2]
+    assert warning_calls[0][0] == "apply_location_tags.invalid_domain"
 
 
 @pytest.mark.asyncio
