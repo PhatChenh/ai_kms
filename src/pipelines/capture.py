@@ -7,6 +7,7 @@ Entry point: capture_file(path, context=None) -> Result[WriteOutcome]
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import time
@@ -377,6 +378,31 @@ def _audit_file_lost(path: Path, stage: str, ctx: PipelineContext) -> None:
             pass
 
 
+def _audit_skipped(path: Path, ctx: PipelineContext) -> None:
+    """Write one audit_log row for a SKIPPED idempotent-check event.
+
+    Best-effort — failures are logged and silently discarded so the caller
+    always returns Success(SKIPPED) without worrying about audit write errors.
+    """
+    ai_decision = AIDecision(
+        action="capture:idempotent_skip",
+        confidence=1.0,
+        reasoning="file unchanged since last capture (content hash match)",
+        source_ids=[to_vault_path(path)],
+    )
+    match audit.write(
+        ai_decision,
+        pipeline="capture",
+        stage="entry",
+        outcome="SKIPPED",
+        db_path=ctx.db_path,
+    ):
+        case Failure(error=e):
+            logger.warning("idempotent_skip.audit_failed", path=str(path), error=e)
+        case Success():
+            pass
+
+
 def _find_rename_dst(parent: Path, sanitized_stem: str) -> Path | None:
     """Find a non-colliding destination path for a note rename.
 
@@ -604,6 +630,11 @@ async def _store_nonmd(
         # that report.pdf and report.docx never collide on the same sibling.
         sibling_path = sum_dir / f"{attachment_dst.name}.md"
         attachment_vault_path = to_vault_path(attachment_dst)
+        # Compute source_hash from the binary at its FINAL destination path.
+        # If needs_move is True, the binary hasn't been moved yet — hash src now.
+        # After the move, the bytes are identical, so src hash == dst hash.
+        _src_for_hash = src if needs_move else attachment_dst
+        _source_hash = hashlib.sha256(_src_for_hash.read_bytes()).hexdigest()
         sibling_meta = NoteMetadata(
             type="attachment-summary",
             attachment_path=attachment_vault_path,
@@ -612,6 +643,7 @@ async def _store_nonmd(
             + ([f"domain/{note_meta.domain}"] if note_meta.domain else []),
             domain=note_meta.domain,
             confidence=note_meta.confidence,
+            source_hash=_source_hash,
         )
         match write_note(sibling_path, rich_body, sibling_meta, actor="ai"):
             case Failure() as f:
@@ -804,6 +836,74 @@ async def capture_file(
                         recoverable=True,
                         context={"path": str(path), "marker": str(marker)},
                     )
+
+    # Idempotent-capture guard: skip if file content is unchanged since last capture.
+    # For .md files: compare body hash (same method as write_note) against DB content_hash.
+    # For binary files: compare file-level hash against source_hash stored in sibling frontmatter.
+    if path.suffix.lower() == ".md":
+        match read_note(path):
+            case Success(value=_existing_note):
+                # read_note already computes sha256(body.rstrip("\n").encode()) —
+                # same method as write_note, so directly compare against DB content_hash.
+                _current_hash = _existing_note.content_hash
+                _db_result = documents.get_by_path(to_vault_path(path), db_path=context.db_path)
+                if (
+                    _db_result.is_success()
+                    and _db_result.value is not None
+                    and _db_result.value.content_hash == _current_hash
+                ):
+                    _audit_skipped(path, context)
+                    return Success(
+                        WriteOutcome(
+                            vault_path=to_vault_path(path),
+                            absolute_path=path,
+                            content_hash=_current_hash,
+                            metadata=_existing_note.metadata,
+                        )
+                    )
+            case _:
+                pass  # parse failure → let pipeline handle it
+    else:
+        _vault_cfg = context.config.vault
+        _sibling_path = (
+            _vault_cfg.inbox_path
+            / _vault_cfg.summaries_subdir
+            / f"{path.name}.md"
+        )
+        # Also check LOCATED sibling (may be in project/domain summaries dir).
+        # Try to find sibling by looking in known summaries locations.
+        if not _sibling_path.exists():
+            # Try LOCATED summaries: Projects/<A>/attachment/.summaries/<name>.md
+            # and Domain/<D>/attachment/.summaries/<name>.md — scan parents.
+            for _parent in path.parents:
+                _candidate = _parent / _vault_cfg.summaries_subdir / f"{path.name}.md"
+                if _candidate.exists():
+                    _sibling_path = _candidate
+                    break
+        if _sibling_path.exists():
+            match read_note(_sibling_path):
+                case Success(value=_sibling_note) if _sibling_note.metadata.source_hash:
+                    try:
+                        _current_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+                    except FileNotFoundError:
+                        _audit_file_lost(path, "entry", context)
+                        return Failure(
+                            error="file not found at capture entry",
+                            recoverable=True,
+                            context={"path": str(path)},
+                        )
+                    if _sibling_note.metadata.source_hash == _current_hash:
+                        _audit_skipped(path, context)
+                        return Success(
+                            WriteOutcome(
+                                vault_path=to_vault_path(_sibling_path),
+                                absolute_path=_sibling_path,
+                                content_hash=_sibling_note.content_hash,
+                                metadata=_sibling_note.metadata,
+                            )
+                        )
+                case _:
+                    pass  # no source_hash or parse failure → let pipeline run
 
     return await run_pipeline(
         "capture",
