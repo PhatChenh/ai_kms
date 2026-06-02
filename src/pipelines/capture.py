@@ -309,6 +309,31 @@ def _audit_rename_gate(
     )
 
 
+def _audit_file_lost(path: Path, stage: str, ctx: PipelineContext) -> None:
+    """Write one audit_log row for a FILE_LOST event.
+
+    Best-effort — failures are logged and silently discarded so the caller
+    can always return Failure without worrying about audit write errors.
+    """
+    ai_decision = AIDecision(
+        action=f"file_lost:{stage}",
+        confidence=0.0,
+        reasoning=f"file not found at capture {stage}",
+        source_ids=[to_vault_path(path)],
+    )
+    match audit.write(
+        ai_decision,
+        pipeline="capture",
+        stage=stage,
+        outcome="FILE_LOST",
+        db_path=ctx.db_path,
+    ):
+        case Failure(error=e):
+            logger.warning("file_lost.audit_failed", path=str(path), stage=stage, error=e)
+        case Success():
+            pass
+
+
 def _find_rename_dst(parent: Path, sanitized_stem: str) -> Path | None:
     """Find a non-colliding destination path for a note rename.
 
@@ -345,6 +370,14 @@ async def _store_md(
     mr: MetadataResult, note_meta: NoteMetadata, ctx: PipelineContext
 ) -> Result[WriteOutcome]:
     """Handle .md files: in-place write or rename when AI title differs."""
+    if not mr.raw.source_path.exists():
+        _audit_file_lost(mr.raw.source_path, "store", ctx)
+        return Failure(
+            error="file disappeared during pipeline",
+            recoverable=False,
+            context={"path": str(mr.raw.source_path)},
+        )
+
     match read_note(mr.raw.source_path):
         case Failure() as f:
             return f
@@ -472,6 +505,13 @@ async def _store_nonmd(
     if target_type is not None:
         # LOCATED path: rename gate + rich sibling body + binary move
         # Non-md files are never re-processed (DECISION-018) — is_existing_doc=False always.
+        if not src.exists():
+            _audit_file_lost(src, "store", ctx)
+            return Failure(
+                error="file disappeared during pipeline",
+                recoverable=False,
+                context={"path": str(src)},
+            )
         decision = decide_rename(
             src, mr.ai_title, is_existing_doc=False, config=ctx.config.capture.rename_gate
         )
@@ -691,7 +731,15 @@ async def capture_file(
         context = await _build_default_context()
 
     cooldown = context.config.capture.cooldown_seconds
-    age = time.time() - path.stat().st_mtime
+    try:
+        age = time.time() - path.stat().st_mtime
+    except FileNotFoundError:
+        _audit_file_lost(path, "entry", context)
+        return Failure(
+            error="file not found at capture entry",
+            recoverable=True,
+            context={"path": str(path)},
+        )
     if age < cooldown:
         return Failure(
             error=f"file too recent (age={age:.1f}s < cooldown={cooldown}s); retry later",

@@ -697,3 +697,124 @@ async def test_capture_file_with_explicit_context_does_not_scan_domain_folder(
 
     assert isinstance(result, Success)
     assert scan_called is False, "load_valid_domains must NOT be called when context is provided"
+
+
+# ===========================================================================
+# Phase 1 — FILE_LOST guard
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_capture_file_entry_guard_fires_when_file_not_found(
+    vault_root, pipeline_ctx, monkeypatch
+):
+    """path.stat() raises FileNotFoundError → entry guard fires, Failure(recoverable=True) returned, FILE_LOST audit written."""
+    from pipelines.capture import capture_file
+    from storage.audit_log import query
+
+    md_file = vault_root / "inbox" / "ghost.md"
+    # File does NOT exist on disk
+
+    run_pipeline_called = []
+
+    async def mock_run_pipeline(*args, **kwargs):
+        run_pipeline_called.append(True)
+        return Failure(error="should not be called", recoverable=False, context={})
+
+    monkeypatch.setattr("pipelines.capture.run_pipeline", mock_run_pipeline)
+
+    result = await capture_file(md_file, context=pipeline_ctx)
+
+    assert isinstance(result, Failure)
+    assert result.recoverable is True
+    assert len(run_pipeline_called) == 0, "pipeline must not run when file not found at entry"
+
+    entries = query(pipeline="capture", db_path=pipeline_ctx.db_path)
+    assert isinstance(entries, Success)
+    file_lost = [e for e in entries.value if e.outcome == "FILE_LOST"]
+    assert len(file_lost) == 1
+    assert file_lost[0].stage == "entry"
+
+
+@pytest.mark.asyncio
+async def test_store_guard_fires_when_file_gone_during_pipeline(
+    vault_root, pipeline_ctx, monkeypatch
+):
+    """store() guard: source_path gone → Failure(recoverable=False), FILE_LOST audit at stage='store', no vault write."""
+    from pipelines.capture import store, MetadataResult
+    from storage.audit_log import query
+    from core.confidence import AIDecision as _AIDecision
+
+    # Path that never exists on disk
+    gone_path = vault_root / "inbox" / "gone.md"
+
+    mr = MetadataResult(
+        raw=_make_raw(gone_path),
+        summary="Summary.",
+        ai_title="Gone",
+        ai_type="note",
+        ai_domain=None,
+        ai_tags=[],
+        decision=_AIDecision(action="auto", confidence=0.9, reasoning="ok", source_ids=[]),
+    )
+
+    write_note_called = []
+    monkeypatch.setattr("pipelines.capture.write_note", lambda *a, **kw: write_note_called.append(True))
+
+    result = await store(mr, pipeline_ctx)
+
+    assert isinstance(result, Failure)
+    assert result.recoverable is False
+    assert len(write_note_called) == 0
+
+    entries = query(pipeline="capture", db_path=pipeline_ctx.db_path)
+    assert isinstance(entries, Success)
+    file_lost = [e for e in entries.value if e.outcome == "FILE_LOST"]
+    assert len(file_lost) == 1
+    assert file_lost[0].stage == "store"
+
+
+@pytest.mark.asyncio
+async def test_store_guard_no_documents_row_inserted(
+    vault_root, pipeline_ctx
+):
+    """store() guard fires → no documents row inserted into DB."""
+    from pipelines.capture import store, MetadataResult
+    from core.confidence import AIDecision as _AIDecision
+    import storage.documents as docs_mod
+
+    gone_path = vault_root / "inbox" / "gone2.md"
+
+    mr = MetadataResult(
+        raw=_make_raw(gone_path),
+        summary="Summary.",
+        ai_title="Gone2",
+        ai_type="note",
+        ai_domain=None,
+        ai_tags=[],
+        decision=_AIDecision(action="auto", confidence=0.9, reasoning="ok", source_ids=[]),
+    )
+
+    await store(mr, pipeline_ctx)
+
+    rows = docs_mod.all_paths(db_path=pipeline_ctx.db_path)
+    assert isinstance(rows, Success)
+    assert len(rows.value) == 0
+
+
+@pytest.mark.asyncio
+async def test_audit_file_lost_fails_silently(vault_root, pipeline_ctx, monkeypatch):
+    """_audit_file_lost audit write failure must not propagate — Failure still returned."""
+    from pipelines.capture import capture_file
+
+    md_file = vault_root / "inbox" / "ghost2.md"
+    # File does not exist
+
+    monkeypatch.setattr("pipelines.capture.audit.write", lambda *a, **kw: Failure(
+        error="audit db unavailable", recoverable=False, context={}
+    ))
+
+    result = await capture_file(md_file, context=pipeline_ctx)
+
+    assert isinstance(result, Failure)
+    assert result.recoverable is True
