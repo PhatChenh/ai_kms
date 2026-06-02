@@ -223,6 +223,17 @@
 
 ---
 
+### TD-036 · Reconcile: stale batch_id on documents after file moves
+**Status:** OPEN
+**Phase:** Phase 1.5 (folder handling) / post-MVP
+**Risk if triggered early:** Low. `batch_id` is observability metadata; stale refs don't affect routing. Phase 8 Briefing would group a moved file under its original batch, which is misleading but not harmful.
+**What:** When a file captured as part of a folder batch is later moved out of the batch destination (e.g. from `Projects/A/` to `Projects/B/`), the `documents.batch_id` FK is preserved by `rename_doc` (which only updates `vault_path`). The file now has a stale batch association pointing to its original folder group. Add a reconcile stage (`reconcile_stale_batch_refs`) that: (1) JOINs `documents` with `batches` on `batch_id`, (2) checks if `documents.vault_path` still falls under `batches.destination_type`/`destination_name` prefix, (3) nulls out `batch_id` on rows where location no longer matches, (4) optionally sets `batches.status = STALE` when all member docs have drifted.
+**Why deferred:** `batches` table and `batch_id` column not yet implemented. Add this stage when folder-handling spec ships. Eventual consistency (stale for minutes between reconcile runs) is acceptable for `batch_id`.
+**Unblock condition:** `batches` table and `documents.batch_id` column exist. Then add Stage 6 to `reconcile()` in `pipelines/reconcile.py` and add `batch_refs_cleared: int = 0` to `ReconcileResult`.
+**Source:** Phase 1.5 folder handling design session 2026-06-02
+
+---
+
 ### TD-034 · Project-to-domain mapping registry
 **Status:** OPEN
 **Phase:** Phase 1.5 / deferred

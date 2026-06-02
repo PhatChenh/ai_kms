@@ -1,6 +1,6 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-05-24 (Brief #4 — post-review bugfix pass: sibling naming, reconcile guards, watcher refactor)_
+_Last updated: 2026-06-02 (Phase 1.5 pay-debt Phase 1 complete — FILE_LOST guard)_
 
 ## Current Position
 **Phase**: Phase 1 — Capture ✅ **Complete as of 2026-05-21**
@@ -82,6 +82,15 @@ Triggered by `/superpowers:requesting-code-review`. Applied subset of review fin
 - [x] Tests updated: `test_watcher.py` monkeypatch targets retargeted to `vault.watcher.<name>` (top-level imports broke source-module patching — same gotcha as Q13); `_sibling_for` tests now assert `<filename>.md`; 1 new test for stem-collision distinctness. Phase-3, phase-9, phase-12, phase-rename, reconcile, indexer tests updated to new sibling pattern. 650 tests pass.
 
 - [x] **Critical #1** (TD-030) resolved 2026-05-24: `on_deleted` reorder — binary sync now runs before `_should_skip`. Regression test added.
+
+**[Phase 1.5 Pay-Debt — in progress 2026-06-02]** _(in progress)_:
+- [x] Phase 1 — FILE_LOST guard (`capture_file` entry + store guards)
+- [ ] Phase 2 — `_location_context` + `apply_location_tags` capture stage
+- [ ] Phase 3 — `reconcile_stale_tags` Stage 5 + reconcile signature changes
+- [ ] Phase 4 — `capture_folder` + watcher `DirCreatedEvent` + `batches` SQLite table
+- [ ] Phase 5 — Handlers extension (see `docs/research/phase1.5_redesign/handlers_extended.md`)
+- [ ] Phase 6 — Idempotent capture (content-hash early exit; `source_hash` in sibling frontmatter)
+- [ ] Phase 7 — `reconcile_stale_batch_refs` Stage 6 (TD-036; requires Phase 4)
 
 **Not applied (deferred to user decision)**:
 - Issue #8 — `move_attachment` TOCTOU window (existence check then `os.replace`). Tracked as **TD-031**.
