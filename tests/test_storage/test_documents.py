@@ -180,6 +180,25 @@ def test_upsert_without_batch_id(db):
     assert row.batch_id is None
 
 
+def test_documents_table_has_project_status_key_topics(tmp_path: Path):
+    """After init_db, PRAGMA table_info(documents) includes project, status, key_topics."""
+    import sqlite3
+
+    db_path = tmp_path / "kb.db"
+    init_db(db_path)
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        rows = conn.execute("PRAGMA table_info(documents)").fetchall()
+        col_names = {row[1] for row in rows}
+    finally:
+        conn.close()
+
+    assert "project" in col_names, f"expected 'project' column, got {col_names}"
+    assert "status" in col_names, f"expected 'status' column, got {col_names}"
+    assert "key_topics" in col_names, f"expected 'key_topics' column, got {col_names}"
+
+
 def test_upsert_returns_failure_on_locked_db(db, monkeypatch):
     """get_connection raising OperationalError → Failure(recoverable=False)."""
     import storage.documents as docs_mod
