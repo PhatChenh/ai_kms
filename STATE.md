@@ -1,9 +1,9 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-06-03 (Phase 1.5 Pay-Debt complete + code-review clean — commit b41caf1, 2 critical + 4 important + 2 minor fixed; TD-037/TD-038 logged)_
+_Last updated: 2026-06-03 (Phase Pre-2 complete — TD-008 DB columns + TD-038 domain scalar cleanup; 5 commits, 797 tests pass)_
 
 ## Current Position
-**Phase**: Phase 1 — Capture ✅ **Complete as of 2026-05-21**
+**Phase**: Phase Pre-2 — DB Schema Prep + Domain Scalar Cleanup ✅ **Complete as of 2026-06-03**
 
 **Phase 0 Final Checklist** _(CLOSED)_:
 - [x] core/exceptions.py
@@ -56,7 +56,16 @@ Other in-flight notes:
     FAILED: metadata JSON parse error: Expecting value: line 1 column 1 (char 0)
 -->
 
-
+**Phase Pre-2 — DB Schema Prep + Domain Scalar Cleanup** _(complete — 2026-06-03, 5 commits, 797 tests pass)_:
+- [x] **Phase 1 — TD-008 Migration files**: 3 new SQL migration files (003_add_project, 004_add_status, 005_add_key_topics) + schema-presence test. Commit: e83c7cd.
+- [x] **Phase 2 — TD-008 Extend documents.py**: DocumentRow + `project`, `status`, `key_topics` fields; `_row_from_sqlite` reads new columns; `upsert` and `replace_path` write them (key_topics = tags minus domain/ and type/ prefixes). 6 new tests. Commit: e3a52ff.
+- [x] **Phase 3 — TD-038 frontmatter.py**: `_DEPRECATED_KEYS = frozenset({"domain"})` + dumps() filter strips domain on write (lazy migration). Removed `domain` field from NoteMetadata, _KNOWN_KEYS, field_validator. Domain in YAML routes to extra. 3 new tests, 2 existing fixed. Commits: f25d64a (3A), f8cd23e (3B).
+- [x] **Phase 4 — TD-038 Fix pipeline consumers**: Removed domain kwarg from store(), _merge_metadata(). _store_nonmd() uses tag-based filter `[t for t in tags if t.startswith("domain/")]` with COUPLING comment. Test assertion changed to tag membership. Commit: e87364a.
+- [x] **Phase 5 — Full suite green**: 797 passed, 0 failures, 1 skipped (+10 tests from pre-phase baseline of 787).
+- **Plan**: `docs/plans/phase_pre_2/td_008_and_td_038.md`
+- **TD-008 closed** — documents table now has project, status, key_topics columns.
+- **TD-038 closed** — domain scalar removed; lazy migration via _DEPRECATED_KEYS dumps() filter.
+- **Deferred**: Backfill existing rows (NULL → Phase 3 Search), status vocabulary CHECK constraint (Phase 2 Classify), one-shot vault migration (C-03 violation), rename() in documents.py (path-only UPDATE, not touched).
 
 **Brief #2 — attachment_capture_pipeline** _(complete — 2026-05-24)_:
 - [x] Phase 1 (Taxonomy): `attachment-summary` added to `config/tags.yaml`; count tests updated to 9
@@ -110,4 +119,11 @@ Triggered by `/superpowers:requesting-code-review`. Applied subset of review fin
 - Issue #8 — `move_attachment` TOCTOU window (existence check then `os.replace`). Tracked as **TD-031**.
 - Issue #9 — `kms migrate-attachments` for legacy `Vault/attachment/`+`Vault/Archive/` layout. Deferred greenfield — no production users. Tracked as **TD-032**.
 
-**Next roadmap work**: Phase 2 — Classify pipeline (per CLAUDE.md). Phase 1.5 pay-debt now complete + review-clean; branch `fix/phase1.5-codereview` awaiting user push.
+**Next roadmap work**: Phase Pre-2 (TD-008 + TD-038) — plan written 2026-06-03, then Phase 2 — Classify pipeline. Branch `fix/phase1.5-codereview` awaiting user push.
+
+**[Phase Pre-2 — TD-008 + TD-038 — Plan written 2026-06-03]** _(PENDING implementation)_:
+- [ ] Phase 1 — TD-008: Migration files (003/004/005 SQL)
+- [ ] Phase 2 — TD-008: Extend documents.py (DocumentRow + _row_from_sqlite + upsert + replace_path)
+- [ ] Phase 3 — TD-038: frontmatter.py changes (dumps() filter + remove domain field; fix 2 existing tests)
+- [ ] Phase 4 — TD-038: Fix pipeline consumers (capture.py + writer.py; fix 1 existing test)
+- [ ] Phase 5 — Full suite green

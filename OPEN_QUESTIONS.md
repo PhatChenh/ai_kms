@@ -55,3 +55,11 @@
 **Status:** 🔴 Open
 **Question:** Does the `summarize_attachment` prompt (3-section: What this file is / Key content / Key facts) produce useful output across diverse binary types — PDF financial reports, DOCX meeting notes, XLSX data tables?
 **Context:** Prompt structure was designed without testing against real vault files. May need iteration after first real vault run. The 3-section template is a reasonable starting point; thin-content files (short DOCX) already have a fallback via TD-028 fix. Real-world quality assessment deferred to post-Brief-#2 ship.
+
+---
+
+### OQ-008 · Detecting human edits to capture-excluded AI-output folders during co-authoring
+**Blocks:** Co-author phase
+**Status:** 🔴 Open
+**Question:** The vault-restructure design adds a capture-excluded class for AI-output folders (`Briefings/`, `Synthesis/`, `Documentation/`) — the watcher and `scan_capture` skip them entirely so the AI's own outputs are never re-captured. But co-authoring means the human will edit these files (e.g. correct a Documentation page). With capture excluded, how does the system learn a human touched the file? Should a watcher/capture path listen for changes in these folders specifically to flag `updated_by_human`, or is a different detection mechanism needed?
+**Context:** Capture-exclusion (decided in the vault-restructure grill) is correct for preventing the briefing→re-capture feedback loop, but it blinds the system to legitimate human edits in those same folders. The two needs conflict: "never re-capture AI output" vs "detect human co-author edits." Related to OQ-005 (updated_by_human locking granularity) and OQ-002 (per-section authorship). Revisit when co-authoring is designed — likely needs an edit-detection path that sets the human-edit flag without triggering a capture.

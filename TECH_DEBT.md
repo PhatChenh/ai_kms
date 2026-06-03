@@ -2,6 +2,16 @@
 
 ## Active
 
+### TD-039 · Windows support for binary content-change detection + atomic-save handling
+**Status:** OPEN
+**Phase:** Vault-restructure (post-Mac-ship)
+**Risk if triggered early:** Designing Windows handling before the macOS change-detection layer exists wastes effort; the abstraction must settle on Mac first.
+**What:** Content-change detection (draft Task T9) is Mac-first by decision. Windows needs its own work before any Windows user: (1) a real-vault event probe for Windows Office atomic-save sequences (differs from macOS — `~WRDxxxx.tmp` rename dance), (2) a read-when-unlocked retry path (Windows holds an exclusive lock on open Office files, so the file can't be hashed until released), (3) Windows temp-file ignore patterns (`~WRD*.tmp`, `~$*`). `watchdog` unifies the API but NOT the event sequences or locking semantics.
+**Why deferred:** Target user confirmed Mac-first for the June demo. No Windows user until later.
+**Source:** Grilling session 2026-06-03; `docs/draft/vault-restructure-editable-noedit-split.md` (T9, TD-W1 placeholder).
+
+---
+
 ### TD-004 · embeddings table + FTS5 virtual table
 **Status:** OPEN
 **Phase:** Phase 3
@@ -261,7 +271,9 @@
 **Phase:** Phase 2 (Classify) pre-req or dedicated cleanup phase
 **Risk if triggered early:** Drift. Domain is stored in two places — the scalar `domain:` property (`NoteMetadata.domain`, written by `store()` from `mr.ai_domain`) and the `domain/<D>` tag in the unified `tags:` list (written by `apply_location_tags`). `apply_location_tags` syncs both at capture time, but `reconcile_stale_tags` (Stage 5) only touches `tags` + `project` — it does NOT re-sync the scalar `domain:`. So after a domain folder is renamed/removed, the tag can be corrected while the scalar silently keeps a stale value.
 **What:** Per Obsidian convention there is one canonical tag field (`tags:`). The scalar `domain:` field is redundant with the `domain/<D>` tag. Decision (user, 2026-06-03): drop the scalar `domain:` entirely; domain lives only as a `domain/<D>` tag in `tags:`.
-**Why deferred:** Multi-file refactor: remove `domain` from `NoteMetadata` (`frontmatter.py`) + `_KNOWN_KEYS` + `field_validator`; drop `ai_domain` from `MetadataResult` and the `domain=` arg in `store()`; stop setting `ai_domain` in `apply_location_tags` and the metadata stage; migration/cleanup pass for existing notes carrying `domain:`. Out of scope for the Phase 1.5 fix batch.
+**Why deferred:** Multi-file refactor: remove `domain` from `NoteMetadata` (`frontmatter.py`) + `_KNOWN_KEYS` + `field_validator`; remove the `domain=mr.ai_domain` kwarg from `store()`; add `_DEPRECATED_KEYS` filter in `dumps()` for lazy migration of existing notes; migration/cleanup pass for existing notes carrying `domain:`. Out of scope for the Phase 1.5 fix batch.
+
+Note: `MetadataResult.ai_domain` is **kept** as internal pipeline state — `apply_location_tags` uses it to append the `domain/<D>` tag. Only the frontmatter scalar `NoteMetadata.domain` is dropped. (Resolved in design: `docs/design/phase_pre_2/td_038_drop_domain_scalar.md`)
 **Unblock condition:** Confirm no consumer (Phase 2 Classify, search, briefing) depends on the scalar `domain:`; then remove the field, update the metadata stage to emit only the `domain/<D>` tag, and add a one-shot pass to strip `domain:` from existing frontmatter.
 **Source:** Code review 2026-06-03 (I3); user decision to override AI domain via location tag
 

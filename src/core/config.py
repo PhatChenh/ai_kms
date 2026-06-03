@@ -31,6 +31,7 @@ from core.exceptions import ConfigError
 # Resolve config dir relative to this file — works regardless of cwd.
 # ---------------------------------------------------------------------------
 _PROJECT_ROOT = Path(__file__).parent.parent
+_REPO_ROOT = _PROJECT_ROOT.parent          # one level above src/ — anchor for relative data paths
 _CONFIG_DIR = _PROJECT_ROOT / "config"
 
 # ---------------------------------------------------------------------------
@@ -97,7 +98,22 @@ class VaultConfig(BaseModel):
     @property
     def briefings_path(self)     -> Path: return self.root / self.briefings_dir
 class DatabaseConfig(BaseModel):
+    # validate_assignment so the KMS_DB_PATH env override in load_config() is
+    # resolved the same way as a YAML value.
+    model_config = {"validate_assignment": True}
+
     path: Path = Path("./data/kb.db")
+
+    @field_validator("path")
+    @classmethod
+    def _resolve_relative_to_repo_root(cls, v: Path) -> Path:
+        """Anchor a relative db path at the repo root, not the process cwd.
+
+        Without this, `kms` launched from any directory other than the repo
+        root resolved `./data/kb.db` against the wrong cwd and sqlite failed
+        with 'unable to open database file'.
+        """
+        return v if v.is_absolute() else (_REPO_ROOT / v).resolve()
 
 
 class ProvidersConfig(BaseModel):
