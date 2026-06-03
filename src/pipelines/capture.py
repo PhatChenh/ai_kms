@@ -429,8 +429,6 @@ async def store(mr: MetadataResult, ctx: PipelineContext) -> Result[WriteOutcome
         confidence=mr.decision.confidence,
         project=mr.ai_project,
     )
-    if mr.ai_domain:
-        note_meta.extra["domain"] = mr.ai_domain
 
     if mr.raw.is_md:
         return await _store_md(mr, note_meta, ctx)
@@ -643,8 +641,9 @@ async def _store_nonmd(
             type="attachment-summary",
             attachment_path=attachment_vault_path,
             summary=mr.summary,
+            # COUPLING: apply_location_tags must run before _store_nonmd; domain/<D> tag must be in note_meta.tags
             tags=["type/attachment-summary"]
-            + ([f"domain/{note_meta.extra.get('domain')}"] if note_meta.extra.get("domain") else []),
+            + [t for t in note_meta.tags if t.startswith("domain/")],
             confidence=note_meta.confidence,
             source_hash=_source_hash,
         )
