@@ -300,7 +300,7 @@ async def reconcile_stale_tags(
     - Strips any domain/<X> tag where X is no longer a valid domain folder.
     - Adds missing domain/<X> tag when the note lives under Domain/<X>/.
     - Sets project: to the folder name when the note lives under Projects/<A>/.
-    - Skips notes with updated_by_human=True (write_note returns Failure recoverable=True).
+    - Skips notes with updated_by_human=True (write_note returns Failure recoverable=False).
 
     Args:
         entries: Pre-scanned VaultEntry list from reconcile() entry point.
@@ -362,9 +362,12 @@ async def reconcile_stale_tags(
         match write_note(entry.path, note.content, new_meta, actor="ai"):
             case Success():
                 tags_updated += 1
-            case Failure(recoverable=False) as f if "human" in str(f.error).lower():
-                # updated_by_human=True — write_note returns recoverable=False with
-                # "note locked by human edit". Skip silently; no retry will fix this.
+            case Failure(recoverable=False, context=fc) as f if fc and "vault_path" in fc:
+                # updated_by_human=True — write_note's human-lock branch is the
+                # only recoverable=False failure that carries a "vault_path"
+                # context key (writer.py human-lock guard). Keying off that
+                # context key avoids coupling to the prose error message.
+                # Skip silently; no retry will fix this.
                 pass
             case Failure() as f:
                 _log.warning("reconcile_stale_tags.write_failed path=%s error=%s",
@@ -414,12 +417,17 @@ async def reconcile_stale_batch_refs(
             context={"stage": "reconcile_stale_batch_refs"},
         )
 
+    vault_cfg = ctx.config.vault
     stale_paths = []
     for vault_path, destination_type, destination_name in rows:
+        # Derive the prefix from config (not hardcoded "Projects/"/"Domain/"),
+        # so non-default projects_dir/domain_dir deployments still match. Keep
+        # the trailing slash so Projects/Alpha/ does not match Projects/AlphaBeta/.
         if destination_type == "project":
-            expected_prefix = f"Projects/{destination_name}/"
+            top_dir = vault_cfg.projects_dir
         else:
-            expected_prefix = f"Domain/{destination_name}/"
+            top_dir = vault_cfg.domain_dir
+        expected_prefix = f"{top_dir}/{destination_name}/"
 
         if not vault_path.startswith(expected_prefix):
             stale_paths.append(vault_path)

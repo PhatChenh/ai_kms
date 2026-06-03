@@ -155,3 +155,27 @@ class TestXlsxHandlerExtract:
         result = XlsxHandler().extract(tmp_path / "ghost.xlsx")
         assert isinstance(result, Failure)
         assert result.recoverable is False
+
+    def test_file_too_large_returns_failure(
+        self, xlsx_path: Path, monkeypatch
+    ) -> None:
+        import core.config as cfg_module
+        from unittest.mock import MagicMock
+
+        import handlers.xlsx_handler as xlsx_module
+        from core.config import HandlersConfig
+
+        fake = MagicMock()
+        fake.main.handlers = HandlersConfig(max_file_size_bytes=1)
+        monkeypatch.setattr(cfg_module, "_CONFIG", fake)
+
+        # Guard rejects before any parse — load_workbook must not be reached.
+        def _boom(*args, **kwargs):  # pragma: no cover - must not run
+            raise AssertionError("load_workbook should not be called")
+
+        monkeypatch.setattr(xlsx_module.openpyxl, "load_workbook", _boom)
+
+        result = XlsxHandler().extract(xlsx_path)
+        assert isinstance(result, Failure)
+        assert result.recoverable is False
+        assert "too large" in result.error

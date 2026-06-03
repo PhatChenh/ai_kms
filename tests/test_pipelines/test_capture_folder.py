@@ -64,6 +64,15 @@ def _batches_rows(db_path: Path) -> list[dict]:
         return list(conn.execute("SELECT * FROM batches"))
 
 
+def _documents_rows(db_path: Path) -> list[dict]:
+    """Read all documents rows as dicts (test-only DB inspection)."""
+    from storage.db import get_connection
+
+    with get_connection(db_path) as conn:
+        conn.row_factory = lambda c, r: {d[0]: r[i] for i, d in enumerate(c.description)}
+        return list(conn.execute("SELECT * FROM documents"))
+
+
 # ===========================================================================
 # Tracer bullet — inbox AUTO confidence moves folder and captures files
 # ===========================================================================
@@ -268,6 +277,71 @@ async def test_partial_failure_marks_batch_partial(folder_ctx, vault_root, monke
     rows = _batches_rows(folder_ctx.db_path)
     assert len(rows) == 1
     assert rows[0]["status"] == "PARTIAL"
+
+
+# ===========================================================================
+# C1 — batch_id is written onto each captured document row
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_project_drop_writes_batch_id_on_document_rows(
+    folder_ctx, vault_root, monkeypatch
+):
+    """Folder capture: every captured documents row carries the batch's id (C1).
+
+    Regression for batch_id never being threaded into the document-write sites —
+    Phase 7 reconcile_stale_batch_refs JOINs documents.batch_id and got zero rows.
+    """
+    from pipelines.capture import capture_folder
+
+    folder = vault_root / "Projects" / "Alpha" / "sub-drop"
+    _make_old_file(folder / "a.md", "# A\n\nbody a")
+    _make_old_file(folder / "b.md", "# B\n\nbody b")
+
+    provider = AsyncMock()
+    provider.complete.return_value = Success(
+        LLMResponse(content=json.dumps({"title": "T", "tags": ["test"]}), model="t", usage={})
+    )
+    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: provider)
+
+    result = await capture_folder(folder, context=folder_ctx)
+    assert isinstance(result, Success)
+
+    batch_rows = _batches_rows(folder_ctx.db_path)
+    assert len(batch_rows) == 1
+    batch_id = batch_rows[0]["batch_id"]
+
+    doc_rows = _documents_rows(folder_ctx.db_path)
+    assert len(doc_rows) == 2
+    assert all(r["batch_id"] == batch_id for r in doc_rows), (
+        f"Expected every documents.batch_id == {batch_id}, got {[r['batch_id'] for r in doc_rows]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_single_file_capture_leaves_batch_id_null(
+    folder_ctx, vault_root, monkeypatch
+):
+    """capture_file (no batch context) must leave documents.batch_id NULL (C1)."""
+    from pipelines.capture import capture_file
+
+    note = _make_old_file(vault_root / "inbox" / "solo.md", "# Solo\n\nbody")
+
+    provider = AsyncMock()
+    provider.complete.return_value = Success(
+        LLMResponse(content=json.dumps({"title": "T", "tags": ["test"]}), model="t", usage={})
+    )
+    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: provider)
+
+    result = await capture_file(note, folder_ctx)
+    assert isinstance(result, Success)
+
+    doc_rows = _documents_rows(folder_ctx.db_path)
+    assert len(doc_rows) == 1
+    assert doc_rows[0]["batch_id"] is None, (
+        f"Single-file capture must leave batch_id NULL, got {doc_rows[0]['batch_id']}"
+    )
 
 
 class _UnifiedProvider:
