@@ -13,8 +13,9 @@ Pipelines can override by setting extra["title"] before calling upsert.
 
 from __future__ import annotations
 
+import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from core.result import Failure, Result, Success
@@ -37,6 +38,9 @@ class DocumentRow:
     updated_by_human: bool
     content_hash: str | None
     batch_id: int | None = None
+    project: str | None = None
+    status: str | None = None
+    key_topics: list[str] = field(default_factory=list)
 
 
 def _row_from_sqlite(row: sqlite3.Row) -> DocumentRow:
@@ -52,6 +56,13 @@ def _row_from_sqlite(row: sqlite3.Row) -> DocumentRow:
         updated_by_human=bool(row["updated_by_human"]),
         content_hash=row["content_hash"],
         batch_id=row["batch_id"] if "batch_id" in row.keys() else None,
+        project=row["project"] if "project" in row.keys() else None,
+        status=row["status"] if "status" in row.keys() else None,
+        key_topics=(
+            json.loads(row["key_topics"])
+            if "key_topics" in row.keys() and row["key_topics"]
+            else []
+        ),
     )
 
 
@@ -85,8 +96,10 @@ def upsert(
                 """
                 INSERT OR REPLACE INTO documents
                     (vault_path, title, summary, note_type, confidence,
-                     updated_at, updated_by_human, content_hash, created_at, batch_id)
-                VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?, COALESCE(?, datetime('now')), ?)
+                     updated_at, updated_by_human, content_hash, created_at,
+                     batch_id, project, status, key_topics)
+                VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?, COALESCE(?, datetime('now')),
+                        ?, ?, ?, ?)
                 """,
                 (
                     outcome.vault_path,
@@ -98,6 +111,15 @@ def upsert(
                     outcome.content_hash,
                     created_at,
                     batch_id,
+                    meta.project,
+                    meta.status,
+                    json.dumps(
+                        [
+                            t
+                            for t in meta.tags
+                            if not t.startswith("domain/") and not t.startswith("type/")
+                        ]
+                    ),
                 ),
             )
             rowid: int = cur.lastrowid  # type: ignore[assignment]
@@ -227,8 +249,10 @@ def replace_path(
                 """
                 INSERT OR REPLACE INTO documents
                     (vault_path, title, summary, note_type, confidence,
-                     updated_at, updated_by_human, content_hash, created_at, batch_id)
-                VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?, COALESCE(?, datetime('now')), ?)
+                     updated_at, updated_by_human, content_hash, created_at,
+                     batch_id, project, status, key_topics)
+                VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?, COALESCE(?, datetime('now')),
+                        ?, ?, ?, ?)
                 """,
                 (
                     outcome.vault_path,
@@ -240,6 +264,15 @@ def replace_path(
                     outcome.content_hash,
                     created_at,
                     batch_id,
+                    meta.project,
+                    meta.status,
+                    json.dumps(
+                        [
+                            t
+                            for t in meta.tags
+                            if not t.startswith("domain/") and not t.startswith("type/")
+                        ]
+                    ),
                 ),
             )
         return Success(None)
