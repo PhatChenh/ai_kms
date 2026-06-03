@@ -293,3 +293,26 @@ def test_source_hash_field_parsed_not_in_extra(tmp_path):
     meta, _ = r.value
     assert meta.source_hash == fake_hash
     assert "source_hash" not in meta.extra
+
+
+# ---------------------------------------------------------------------------
+# Phase 3A — _DEPRECATED_KEYS dumps() filter (TD-038)
+# ---------------------------------------------------------------------------
+
+
+def test_dumps_strips_deprecated_domain_key():
+    """domain: in metadata.extra is stripped from YAML output by _DEPRECATED_KEYS filter."""
+    from vault.frontmatter import NoteMetadata, dumps
+
+    meta = NoteMetadata(extra={"domain": "finance"})
+    rendered = dumps(meta, "body")
+    assert "domain:" not in rendered
+
+
+def test_dumps_preserves_non_deprecated_extra_keys():
+    """Non-deprecated keys in metadata.extra survive dumps() unchanged."""
+    from vault.frontmatter import NoteMetadata, dumps
+
+    meta = NoteMetadata(extra={"custom_field": "value"})
+    rendered = dumps(meta, "body")
+    assert "custom_field:" in rendered

@@ -43,6 +43,11 @@ _KNOWN_KEYS: frozenset[str] = frozenset(
     }
 )
 
+# Lazy-migration filter: keys listed here are stripped from dumps() output
+# when they appear in metadata.extra, preventing them from being written back
+# to disk.  Phase 3A strips "domain" (scalar removed in Phase 3B).
+_DEPRECATED_KEYS: frozenset[str] = frozenset({"domain"})
+
 
 class NoteMetadata(BaseModel):
     """Typed representation of a note's YAML frontmatter."""
@@ -136,6 +141,10 @@ def dumps(metadata: NoteMetadata, body: str) -> str:
     """
     d = metadata.model_dump(exclude_none=True, exclude={"extra"})
     d.update(metadata.extra)
+
+    # Strip deprecated keys that may still appear in extra (lazy migration).
+    for key in _DEPRECATED_KEYS:
+        d.pop(key, None)
 
     # Use a custom dumper that writes block-style lists (Obsidian compat).
     class _BlockDumper(yaml.Dumper):
