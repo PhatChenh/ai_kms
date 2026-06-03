@@ -425,11 +425,12 @@ async def store(mr: MetadataResult, ctx: PipelineContext) -> Result[WriteOutcome
     note_meta = NoteMetadata(
         summary=mr.summary,
         type=mr.ai_type,
-        domain=mr.ai_domain,
         tags=mr.ai_tags,
         confidence=mr.decision.confidence,
         project=mr.ai_project,
     )
+    if mr.ai_domain:
+        note_meta.extra["domain"] = mr.ai_domain
 
     if mr.raw.is_md:
         return await _store_md(mr, note_meta, ctx)
@@ -643,8 +644,7 @@ async def _store_nonmd(
             attachment_path=attachment_vault_path,
             summary=mr.summary,
             tags=["type/attachment-summary"]
-            + ([f"domain/{note_meta.domain}"] if note_meta.domain else []),
-            domain=note_meta.domain,
+            + ([f"domain/{note_meta.extra.get('domain')}"] if note_meta.extra.get("domain") else []),
             confidence=note_meta.confidence,
             source_hash=_source_hash,
         )

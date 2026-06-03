@@ -75,7 +75,6 @@ def _merge_metadata(
         type=incoming.type,
         tags=incoming.tags,
         project=incoming.project,
-        domain=incoming.domain,
         confidence=incoming.confidence,
         summary=incoming.summary,
         source=incoming.source,
