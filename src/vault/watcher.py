@@ -113,6 +113,11 @@ class _VaultEventHandler(FileSystemEventHandler):
         # Pending-folder registry: tracks directories being dropped
         self._pending_folders: dict[str, threading.Timer] = {}
         self._pending_folder_paths: set[str] = set()
+        # Per-key identity token: incremented every time a folder timer is
+        # (re)installed. A fired timer only proceeds if its token still matches
+        # the stored one — guards against a stale timer popping a newer one
+        # without cancelling it (timer-cancel race, C2).
+        self._folder_tokens: dict[str, int] = {}
         self._folder_lock = threading.Lock()
 
     def _should_skip(self, path: Path) -> bool:
@@ -181,10 +186,12 @@ class _VaultEventHandler(FileSystemEventHandler):
             if existing:
                 existing.cancel()
             self._pending_folder_paths.add(key)
+            token = self._folder_tokens.get(key, 0) + 1
+            self._folder_tokens[key] = token
             timer = threading.Timer(
                 self._folder_cooldown,
                 self._fire_folder_stable,
-                args=[folder_path],
+                args=[folder_path, token],
             )
             self._pending_folders[key] = timer
             timer.start()
@@ -197,10 +204,12 @@ class _VaultEventHandler(FileSystemEventHandler):
                 return
             existing.cancel()
             folder_path = Path(folder_key)
+            token = self._folder_tokens.get(folder_key, 0) + 1
+            self._folder_tokens[folder_key] = token
             timer = threading.Timer(
                 self._folder_cooldown,
                 self._fire_folder_stable,
-                args=[folder_path],
+                args=[folder_path, token],
             )
             self._pending_folders[folder_key] = timer
             timer.start()
@@ -216,12 +225,24 @@ class _VaultEventHandler(FileSystemEventHandler):
                     continue
         return None
 
-    def _fire_folder_stable(self, folder_path: Path) -> None:
-        """Called when a folder's debounce timer fires (no new files for cooldown period)."""
+    def _fire_folder_stable(self, folder_path: Path, token: int) -> None:
+        """Called when a folder's debounce timer fires (no new files for cooldown period).
+
+        `token` is the identity of the timer that scheduled this call. If a later
+        FileCreatedEvent reset the timer (installing a new timer under the same key)
+        after this timer fired but before it acquired the lock, the stored token will
+        have advanced — in that case this is a stale fire and must be a no-op, leaving
+        the newer timer to fire. Without this guard a stale fire would pop (and drop)
+        the newer timer, then run capture_folder a second time (C2).
+        """
         key = str(folder_path)
         with self._folder_lock:
+            if self._folder_tokens.get(key) != token:
+                # Stale fire — a newer timer owns this key. Do not touch the registry.
+                return
             self._pending_folders.pop(key, None)
             self._pending_folder_paths.discard(key)
+            self._folder_tokens.pop(key, None)
 
         if self._on_folder_stable:
             self._on_folder_stable(folder_path)

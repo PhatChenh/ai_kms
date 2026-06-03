@@ -10,7 +10,6 @@ import asyncio
 import hashlib
 import json
 import re
-import shutil
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -29,7 +28,7 @@ from llm.provider import LLMResponse, get_provider
 from vault.frontmatter import NoteMetadata
 from vault.paths import _location_context, to_vault_path
 from vault.reader import read_note
-from vault.writer import WriteOutcome, move_attachment, move_note, write_note
+from vault.writer import WriteOutcome, move_attachment, move_folder, move_note, write_note
 import core.audit as audit
 from core.logging_setup import new_correlation_id
 from core.rename_gate import RenameDecision, decide_rename
@@ -500,7 +499,9 @@ async def _store_md(
                 case Success(value=outcome):
                     pass
             # Atomic DB swap: delete old row + insert new row in one transaction.
-            match documents.replace_path(old_vault_path, outcome, db_path=ctx.db_path):
+            match documents.replace_path(
+                old_vault_path, outcome, db_path=ctx.db_path, batch_id=ctx.batch_id
+            ):
                 case Failure() as f:
                     # DB failed — roll back disk rename to restore consistent state.
                     match move_note(dst, src, actor="ai"):
@@ -530,7 +531,7 @@ async def _store_md(
         case Failure() as f:
             return f
         case Success(value=outcome):
-            match documents.upsert(outcome, db_path=ctx.db_path):
+            match documents.upsert(outcome, db_path=ctx.db_path, batch_id=ctx.batch_id):
                 case Failure() as f:
                     return f
                 case Success():
@@ -690,7 +691,7 @@ async def _store_nonmd(
                 pass
 
         # Step 7: Upsert documents row for sibling
-        match documents.upsert(sibling_outcome, db_path=ctx.db_path):
+        match documents.upsert(sibling_outcome, db_path=ctx.db_path, batch_id=ctx.batch_id):
             case Failure() as f:
                 return f
             case Success():
@@ -756,7 +757,7 @@ async def _store_nonmd(
             case Success():
                 pass
 
-        match documents.upsert(marker_outcome, db_path=ctx.db_path):
+        match documents.upsert(marker_outcome, db_path=ctx.db_path, batch_id=ctx.batch_id):
             case Failure() as f:
                 return f
             case Success():
@@ -1135,22 +1136,6 @@ def _folder_destination(target_type: str, target_name: str, vault_cfg) -> Path:
     return base / target_name
 
 
-def _move_folder(folder_path: Path, destination: Path) -> Path:
-    """Move folder_path under destination.parent, returning the new folder path.
-
-    On collision (destination already exists), append -2, -3, ... to the name.
-    """
-    dest_parent = destination.parent
-    dest_parent.mkdir(parents=True, exist_ok=True)
-    final = dest_parent / folder_path.name
-    counter = 1
-    while final.exists():
-        counter += 1
-        final = dest_parent / f"{folder_path.name}-{counter}"
-    shutil.move(str(folder_path), str(final))
-    return final
-
-
 async def _capture_folder_files(
     folder_path: Path,
     files: list[Path],
@@ -1307,18 +1292,29 @@ async def capture_folder(
 
     if decision is RouteDecision.AUTO and target_type and target_name:
         destination = _folder_destination(target_type, target_name, vault_cfg)
-        new_folder = _move_folder(folder_path, destination)
-        new_files = _collect_folder_files(new_folder)
-        batch_id = _insert_batch(
-            folder_path.name, target_type, target_name, confidence,
-            "ROUTING", len(new_files), ctx,
-        )
-        _audit_folder_classified(
-            folder_path.name, target_type, target_name, confidence,
-            "FOLDER_CLASSIFIED", ctx,
-        )
-        ctx_with_batch = replace(ctx, batch_id=batch_id)
-        return await _capture_folder_files(new_folder, new_files, ctx_with_batch)
+        # Folder move goes through the writer chokepoint (M1). On failure the
+        # folder is left in inbox — fall through to the CLUELESS handling below
+        # (per-file markers in place), mirroring the LLM-failure treatment.
+        match move_folder(folder_path, destination):
+            case Failure(error=e):
+                logger.warning(
+                    "capture_folder.move_failed",
+                    folder=str(folder_path),
+                    destination=str(destination),
+                    error=e,
+                )
+            case Success(value=new_folder):
+                new_files = _collect_folder_files(new_folder)
+                batch_id = _insert_batch(
+                    folder_path.name, target_type, target_name, confidence,
+                    "ROUTING", len(new_files), ctx,
+                )
+                _audit_folder_classified(
+                    folder_path.name, target_type, target_name, confidence,
+                    "FOLDER_CLASSIFIED", ctx,
+                )
+                ctx_with_batch = replace(ctx, batch_id=batch_id)
+                return await _capture_folder_files(new_folder, new_files, ctx_with_batch)
 
     if decision is RouteDecision.SUGGEST:
         _insert_batch(

@@ -245,6 +245,28 @@
 
 ---
 
+### TD-037 · Binary modify never re-captures (formalizes the `TD-C6` code marker)
+**Status:** OPEN
+**Phase:** Watcher hardening pass (own phase, after Phase 1.5 fix batch)
+**Risk if triggered early:** Stale knowledge. Office files (`.xlsx`, `.docx`, `.pptx`) get edited frequently; their summary siblings under `attachment/.summaries/` never regenerate, so briefings surface outdated content with no signal that it drifted.
+**What:** A binary modified in `Projects/<A>/attachment/` or `Domain/<D>/attachment/` never re-runs capture. `vault/watcher.py::on_modified` (line 229-238) double-blocks it: (1) `_should_skip(path)` drops managed-attachment binaries first, then (2) an explicit `if suffix != ".md": return` guard (the `# Binary modify deferred — TD-C6` comment). The downstream machinery already works — `_store_nonmd` LOCATED path recomputes `source_hash` + overwrites the sibling, and Phase 6 idempotency means unchanged content → `SKIPPED`, changed content → re-run. Only the watcher trigger is missing.
+**Why deferred:** Net-new behavior (binary modify never worked), not a regression from the pay_debt plan. Lives in the watcher, which is concurrency-sensitive and already receiving the C2 timer-race fix — stacking a second event-path change raises risk. Needs its own test surface: Office saves emit a *burst* of modify events (debounce must coalesce), re-capture idempotency, and no modify→write→modify loop.
+**Unblock condition:** Reorder `on_modified` so binary handling runs before `_should_skip` (mirror the `on_deleted`/`on_moved` pattern from Brief #3), add `_handle_binary_modify` → debounce → `capture_file(binary)`. Sibling path is deterministic via `_sibling_for` — no real "reverse lookup" needed. Add coalescing + loop-safety tests.
+**Source:** Code review 2026-06-03 (M3); formalizes the `TD-C6` marker at `vault/watcher.py:236`
+
+---
+
+### TD-038 · Drop redundant scalar `domain:` frontmatter field
+**Status:** OPEN
+**Phase:** Phase 2 (Classify) pre-req or dedicated cleanup phase
+**Risk if triggered early:** Drift. Domain is stored in two places — the scalar `domain:` property (`NoteMetadata.domain`, written by `store()` from `mr.ai_domain`) and the `domain/<D>` tag in the unified `tags:` list (written by `apply_location_tags`). `apply_location_tags` syncs both at capture time, but `reconcile_stale_tags` (Stage 5) only touches `tags` + `project` — it does NOT re-sync the scalar `domain:`. So after a domain folder is renamed/removed, the tag can be corrected while the scalar silently keeps a stale value.
+**What:** Per Obsidian convention there is one canonical tag field (`tags:`). The scalar `domain:` field is redundant with the `domain/<D>` tag. Decision (user, 2026-06-03): drop the scalar `domain:` entirely; domain lives only as a `domain/<D>` tag in `tags:`.
+**Why deferred:** Multi-file refactor: remove `domain` from `NoteMetadata` (`frontmatter.py`) + `_KNOWN_KEYS` + `field_validator`; drop `ai_domain` from `MetadataResult` and the `domain=` arg in `store()`; stop setting `ai_domain` in `apply_location_tags` and the metadata stage; migration/cleanup pass for existing notes carrying `domain:`. Out of scope for the Phase 1.5 fix batch.
+**Unblock condition:** Confirm no consumer (Phase 2 Classify, search, briefing) depends on the scalar `domain:`; then remove the field, update the metadata stage to emit only the `domain/<D>` tag, and add a one-shot pass to strip `domain:` from existing frontmatter.
+**Source:** Code review 2026-06-03 (I3); user decision to override AI domain via location tag
+
+---
+
 ## Archive
 
 ### TD-001 · core/pipeline.py

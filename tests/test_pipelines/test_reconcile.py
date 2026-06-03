@@ -893,6 +893,223 @@ async def test_stale_batch_refs_null_batch_id_untouched(db_path, pipeline_ctx):
 
 
 @pytest.mark.asyncio
+async def test_stale_batch_refs_respects_nondefault_projects_dir(db_path, tmp_path):
+    """Stage 6: non-default projects_dir → prefix derived from config, batch_id preserved.
+
+    Regression for I1: prefix was hardcoded "Projects/". A deployment with
+    projects_dir="Work" would match NO row and silently null every batched
+    row. The doc under Work/Alpha/ must keep its batch_id.
+    """
+    import sqlite3
+    from unittest.mock import MagicMock
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_batch_refs
+    from core.config import VaultConfig
+    from core.pipeline import PipelineContext
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        batch_id = _insert_batch(conn, "project", "Alpha")
+        _insert_document(conn, "Work/Alpha/note.md", batch_id)
+    finally:
+        conn.close()
+
+    vroot = tmp_path / "vault"
+    vroot.mkdir(exist_ok=True)
+    vc = VaultConfig(root=vroot, projects_dir="Work")
+    config = MagicMock()
+    config.vault = vc
+    ctx = PipelineContext(config=config, correlation_id="test-nondefault", db_path=db_path)
+
+    initial = ReconcileResult()
+    match await reconcile_stale_batch_refs(initial, ctx):
+        case Success(value=r):
+            assert r.batch_refs_cleared == 0, \
+                "File under non-default projects_dir is still at destination"
+        case Failure(error=e):
+            pytest.fail(f"Stage 6 failed: {e}")
+
+    conn2 = sqlite3.connect(str(db_path))
+    try:
+        stored_bid = _get_batch_id(conn2, "Work/Alpha/note.md")
+        assert stored_bid == batch_id, "batch_id should be preserved under Work/Alpha/"
+    finally:
+        conn2.close()
+
+
+@pytest.mark.asyncio
+async def test_stale_batch_refs_prefix_boundary(db_path, pipeline_ctx):
+    """Stage 6: prefix is slash-bounded → Projects/AlphaBeta/ NOT cleared by Alpha batch.
+
+    Regression for I1 boundary: Projects/Alpha/ must not false-match
+    Projects/AlphaBeta/. The AlphaBeta doc belongs to a different batch and
+    must keep its own batch_id.
+    """
+    import sqlite3
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_batch_refs
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        alpha_batch = _insert_batch(conn, "project", "Alpha")
+        beta_batch = _insert_batch(conn, "project", "AlphaBeta")
+        # Doc correctly under its own AlphaBeta batch destination.
+        _insert_document(conn, "Projects/AlphaBeta/note.md", beta_batch)
+        # Doc under its own Alpha batch destination.
+        _insert_document(conn, "Projects/Alpha/note.md", alpha_batch)
+    finally:
+        conn.close()
+
+    initial = ReconcileResult()
+    match await reconcile_stale_batch_refs(initial, pipeline_ctx):
+        case Success(value=r):
+            assert r.batch_refs_cleared == 0, \
+                "Both docs are at their own destinations; nothing should clear"
+        case Failure(error=e):
+            pytest.fail(f"Stage 6 failed: {e}")
+
+    conn2 = sqlite3.connect(str(db_path))
+    try:
+        assert _get_batch_id(conn2, "Projects/AlphaBeta/note.md") == beta_batch, \
+            "AlphaBeta doc must NOT be cleared by Alpha batch (prefix boundary)"
+        assert _get_batch_id(conn2, "Projects/Alpha/note.md") == alpha_batch
+    finally:
+        conn2.close()
+
+
+@pytest.mark.asyncio
+async def test_stale_tags_human_lock_guard_ignores_error_prose(
+    vault_root, db_path, pipeline_ctx, monkeypatch
+):
+    """Stage 5 (I4): human-lock skip keys off context, not the word 'human'.
+
+    Patches write_note to return the human-lock Failure shape (recoverable=False
+    + vault_path context) but with a reworded error message that omits 'human'.
+    The guard must still treat it as an expected silent skip: tags_updated stays
+    0 and NO reconcile_stale_tags warning is logged.
+    """
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_tags
+    from vault.writer import write_note
+    from vault.frontmatter import NoteMetadata
+    from vault.indexer import scan_vault
+    from core.result import Failure as ResultFailure, Success
+    import pipelines.reconcile as reconcile_mod
+
+    # Create Engineering domain so domain/Engineering would normally be added (dirty).
+    eng_dir = vault_root / "Domain" / "Engineering"
+    eng_dir.mkdir(parents=True, exist_ok=True)
+    note_path = eng_dir / "locked.md"
+    result = write_note(note_path, "content", NoteMetadata(tags=[]), actor="ai")
+    assert isinstance(result, Success)
+
+    match scan_vault(vault_root):
+        case Success(entries):
+            pass
+        case f:
+            pytest.fail(f"scan_vault failed: {f}")
+
+    # Reworded message with NO 'human' substring — proves guard is prose-independent.
+    def locked_write(path, content, metadata, actor):
+        return ResultFailure(
+            error="note is read-only — owner override active",
+            recoverable=False,
+            context={"path": str(path), "vault_path": "Domain/Engineering/locked.md"},
+        )
+
+    # Stage 5 imports write_note inside the function body, so patch the source
+    # module attribute (vault.writer), not reconcile_mod.
+    import vault.writer as writer_mod
+    monkeypatch.setattr(writer_mod, "write_note", locked_write)
+
+    warning_calls = []
+    original_warning = reconcile_mod._log.warning
+
+    def capturing_warning(msg, *args, **kwargs):
+        warning_calls.append((msg, args, kwargs))
+        return original_warning(msg, *args, **kwargs)
+
+    monkeypatch.setattr(reconcile_mod._log, "warning", capturing_warning)
+
+    initial = ReconcileResult()
+    match await reconcile_stale_tags(initial, pipeline_ctx, entries):
+        case Success(value=r):
+            assert r.tags_updated == 0, "Locked write must not increment tags_updated"
+        case f:
+            pytest.fail(f"Stage 5 failed: {f}")
+
+    stale_tag_warnings = [
+        (msg, args) for msg, args, _ in warning_calls
+        if "reconcile_stale_tags" in msg
+    ]
+    assert len(stale_tag_warnings) == 0, \
+        f"Human-lock guard must silently skip regardless of error prose, got: {stale_tag_warnings}"
+
+
+@pytest.mark.asyncio
+async def test_stale_tags_real_write_error_still_warns(
+    vault_root, db_path, pipeline_ctx, monkeypatch
+):
+    """Stage 5 (I4): a genuine recoverable=False write error WITHOUT vault_path
+    context is NOT swallowed — it is logged as a warning.
+
+    Proves the guard does not over-match on recoverable=False alone.
+    """
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_tags
+    from vault.writer import write_note
+    from vault.frontmatter import NoteMetadata
+    from vault.indexer import scan_vault
+    from core.result import Failure as ResultFailure, Success
+    import pipelines.reconcile as reconcile_mod
+
+    eng_dir = vault_root / "Domain" / "Engineering"
+    eng_dir.mkdir(parents=True, exist_ok=True)
+    note_path = eng_dir / "broken.md"
+    result = write_note(note_path, "content", NoteMetadata(tags=[]), actor="ai")
+    assert isinstance(result, Success)
+
+    match scan_vault(vault_root):
+        case Success(entries):
+            pass
+        case f:
+            pytest.fail(f"scan_vault failed: {f}")
+
+    # Genuine disk-write failure: recoverable=False but context has NO vault_path.
+    def failing_write(path, content, metadata, actor):
+        return ResultFailure(
+            error="write failed: disk full",
+            recoverable=False,
+            context={"path": str(path)},
+        )
+
+    # Patch the source module — Stage 5 imports write_note inside the function.
+    import vault.writer as writer_mod
+    monkeypatch.setattr(writer_mod, "write_note", failing_write)
+
+    warning_calls = []
+    original_warning = reconcile_mod._log.warning
+
+    def capturing_warning(msg, *args, **kwargs):
+        warning_calls.append((msg, args, kwargs))
+        return original_warning(msg, *args, **kwargs)
+
+    monkeypatch.setattr(reconcile_mod._log, "warning", capturing_warning)
+
+    initial = ReconcileResult()
+    match await reconcile_stale_tags(initial, pipeline_ctx, entries):
+        case Success(value=r):
+            assert r.tags_updated == 0
+        case f:
+            pytest.fail(f"Stage 5 failed: {f}")
+
+    stale_tag_warnings = [
+        (msg, args) for msg, args, _ in warning_calls
+        if "reconcile_stale_tags.write_failed" in msg
+    ]
+    assert len(stale_tag_warnings) == 1, \
+        f"Genuine write error must be logged, not swallowed; got: {stale_tag_warnings}"
+
+
+@pytest.mark.asyncio
 async def test_stale_batch_refs_no_batches_table(tmp_path, monkeypatch):
     """Stage 6: batches table absent → returns Success unchanged (safe no-op)."""
     import sqlite3
