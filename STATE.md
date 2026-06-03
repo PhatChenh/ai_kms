@@ -1,6 +1,6 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-06-02 (Phase 4.3 Folder Handling — watcher pending-folder registry + ThreadPoolExecutor dispatch complete)_
+_Last updated: 2026-06-03 (Phase 1.5 Pay-Debt complete + code-review clean — commit b41caf1, 2 critical + 4 important + 2 minor fixed; TD-037/TD-038 logged)_
 
 ## Current Position
 **Phase**: Phase 1 — Capture ✅ **Complete as of 2026-05-21**
@@ -83,15 +83,31 @@ Triggered by `/superpowers:requesting-code-review`. Applied subset of review fin
 
 - [x] **Critical #1** (TD-030) resolved 2026-05-24: `on_deleted` reorder — binary sync now runs before `_should_skip`. Regression test added.
 
-**[Phase 1.5 Pay-Debt — in progress 2026-06-02]** _(in progress)_:
+**[Phase 1.5 Pay-Debt — ✅ COMPLETE + code-review clean, 2026-06-03]**:
 - [x] Phase 1 — FILE_LOST guard (`capture_file` entry + store guards)
-- [ ] Phase 2 — `_location_context` + `apply_location_tags` capture stage
-- [ ] Phase 3 — `reconcile_stale_tags` Stage 5 + reconcile signature changes
+- [x] Phase 2 — `_location_context` + `apply_location_tags` capture stage
+- [x] Phase 3 — `reconcile_stale_tags` Stage 5 + reconcile signature changes
 - [x] Phase 4 — `capture_folder` + watcher `DirCreatedEvent` + `batches` SQLite table (4.1+4.2 done; 4.3 watcher registry done 2026-06-02)
-- [ ] Phase 5 — Handlers extension (see `docs/research/phase1.5_redesign/handlers_extended.md`)
-- [ ] Phase 6 — Idempotent capture (content-hash early exit; `source_hash` in sibling frontmatter)
-- [ ] Phase 7 — `reconcile_stale_batch_refs` Stage 6 (TD-036; requires Phase 4)
+- [x] Phase 5 — Handlers extension (see `docs/research/phase1.5_redesign/handlers_extended.md`)
+- [x] Phase 6 — Idempotent capture (content-hash early exit; `source_hash` in sibling frontmatter)
+- [x] Phase 7 — `reconcile_stale_batch_refs` Stage 6 (TD-036; requires Phase 4)
+
+**Code-review pass on Phase 1.5 Pay-Debt** _(commit `b41caf1`, branch `fix/phase1.5-codereview`, NOT pushed — 11 files +711/-45; 787 passed / 1 skipped, no new failures)_:
+- [x] C1 (critical) — wired `batch_id=ctx.batch_id` into all 4 `documents` write sites in `pipelines/capture.py` (was always NULL → silently neutered Phase 7 `reconcile_stale_batch_refs`).
+- [x] C2 (critical) — timer-cancel race in `vault/watcher.py::_fire_folder_stable`: added per-key identity token so stale fires no-op (prevented duplicate folder capture).
+- [x] I1 — reconcile Stage 6 derives prefix from `vault_cfg.projects_dir`/`domain_dir` (was hardcoded `Projects/`/`Domain/` → silent batch_id data loss under non-default dirs).
+- [x] I2 — `handlers/xlsx_handler.py` gained `max_file_size_bytes` guard + structlog.
+- [x] I4 — reconcile human-lock guard keys off `context["vault_path"]`, not error-message substring.
+- [x] I5 — corrected Stage 5 docstring (`recoverable=False`).
+- [x] I6 — added watcher concurrency tests (`max_workers=1` serialization, C-10 worker-thread).
+- [x] M1 — relocated `_move_folder` → `vault/writer.py::move_folder` returning `Result[Path]`; move failure falls through to CLUELESS path.
+
+**New tech debt logged 2026-06-03** (full detail in TECH_DEBT.md):
+- **TD-037** — binary modify never re-captures (Office files edited often → stale summaries; formalizes `TD-C6` marker at `watcher.py:236`). Owned by a future watcher-hardening phase.
+- **TD-038** — drop redundant scalar `domain:` frontmatter field (domain should live only as a `domain/<D>` tag; scalar drifts because reconcile Stage 5 doesn't re-sync it). Multi-file refactor + existing-note migration.
 
 **Not applied (deferred to user decision)**:
 - Issue #8 — `move_attachment` TOCTOU window (existence check then `os.replace`). Tracked as **TD-031**.
 - Issue #9 — `kms migrate-attachments` for legacy `Vault/attachment/`+`Vault/Archive/` layout. Deferred greenfield — no production users. Tracked as **TD-032**.
+
+**Next roadmap work**: Phase 2 — Classify pipeline (per CLAUDE.md). Phase 1.5 pay-debt now complete + review-clean; branch `fix/phase1.5-codereview` awaiting user push.

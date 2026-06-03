@@ -312,7 +312,7 @@ The following rules are enforced by hooks in `.claude/settings.json` — Claude 
 
 ## Build progress
 
-**Overall:** Phase 1 of 8 complete + Brief #2 done + Brief #3 done (2026-05-24). Next: Phase 2 — Classify pipeline.
+**Overall:** Phase 1 of 8 complete + Brief #2/#3 done + Phase 1.5 Pay-Debt complete & code-review clean (commit b41caf1, 2026-06-03). Next: Phase 2 — Classify pipeline.
 
 (Phase 0 + Phase 1 checklists closed — see STATE.md for full history.)
 
@@ -322,9 +322,10 @@ The following rules are enforced by hooks in `.claude/settings.json` — Claude 
 - [x] Phase 3: _is_binary, _sibling_for, on_delete/on_move sync callbacks
 - [x] Phase 4: kms reconcile — 4-stage reconcile command (paths, orphan binaries, stale binaries, orphan siblings)
 
-**Pending phase 1.5** (see STATE.md for details):
-- Rename gate logic: too liberal in some cases, too conservative in others
-- Claude CLI fix
+**Phase 1.5 Pay-Debt** _(complete + code-review clean 2026-06-03; see STATE.md)_:
+- [x] All 7 phases (FILE_LOST guard, location tags, stale-tag reconcile, folder capture, handlers extension, idempotent capture, stale-batch-ref reconcile)
+- [x] Code-review pass: 2 critical (batch_id wiring, folder timer race) + 4 important + 2 minor fixed; 787 tests pass. Branch `fix/phase1.5-codereview` NOT pushed.
+- Deferred: rename gate rework (TD-029), Claude CLI short-extract JSON fix (TD-028), binary-modify re-capture (TD-037), drop scalar `domain:` field (TD-038)
 
 ---
 
