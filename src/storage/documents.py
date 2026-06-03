@@ -70,6 +70,18 @@ def _derive_title(outcome: WriteOutcome) -> str:
     return outcome.metadata.extra.get("title") or Path(outcome.vault_path).stem
 
 
+def _derive_key_topics(tags: list[str]) -> str:
+    """Serialize topic tags to a JSON string for the key_topics column.
+
+    Excludes structural tags (domain/ and type/ prefixes) — those are stored
+    in dedicated columns / derived elsewhere. Single source of truth for the
+    INSERT OR REPLACE paths in both upsert() and replace_path().
+    """
+    return json.dumps(
+        [t for t in tags if not t.startswith("domain/") and not t.startswith("type/")]
+    )
+
+
 def upsert(
     outcome: WriteOutcome,
     db_path: Path | None = None,
@@ -113,13 +125,7 @@ def upsert(
                     batch_id,
                     meta.project,
                     meta.status,
-                    json.dumps(
-                        [
-                            t
-                            for t in meta.tags
-                            if not t.startswith("domain/") and not t.startswith("type/")
-                        ]
-                    ),
+                    _derive_key_topics(meta.tags),
                 ),
             )
             rowid: int = cur.lastrowid  # type: ignore[assignment]
@@ -266,13 +272,7 @@ def replace_path(
                     batch_id,
                     meta.project,
                     meta.status,
-                    json.dumps(
-                        [
-                            t
-                            for t in meta.tags
-                            if not t.startswith("domain/") and not t.startswith("type/")
-                        ]
-                    ),
+                    _derive_key_topics(meta.tags),
                 ),
             )
         return Success(None)

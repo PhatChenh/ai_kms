@@ -32,6 +32,7 @@ from watchdog.observers import Observer
 
 from core.audit import write as audit_write
 from core.confidence import AIDecision
+from core.logging_setup import new_correlation_id
 from core.result import Failure, Success
 from storage.documents import delete_by_path, rename as rename_doc
 from vault.indexer import IGNORE_DIRS
@@ -301,6 +302,8 @@ class _VaultEventHandler(FileSystemEventHandler):
 
     def _handle_binary_delete(self, path: Path) -> None:
         """Remove sibling DB row + audit when a binary file is deleted."""
+        import structlog
+        structlog.contextvars.bind_contextvars(correlation_id=new_correlation_id())
         sibling = _sibling_for(path, self._vault_config)
         sibling_vp = unicodedata.normalize(
             "NFC", str(sibling.relative_to(self._root).as_posix())
@@ -340,6 +343,8 @@ class _VaultEventHandler(FileSystemEventHandler):
 
     def _handle_binary_move(self, src: Path, dst: Path) -> None:
         """Sync sibling when a binary file is renamed or moved."""
+        import structlog
+        structlog.contextvars.bind_contextvars(correlation_id=new_correlation_id())
         old_sibling = _sibling_for(src, self._vault_config)
         new_sibling = _sibling_for(dst, self._vault_config)
         same_folder = dst.parent == src.parent
