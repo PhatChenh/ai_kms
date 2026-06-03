@@ -654,7 +654,7 @@ async def test_capture_file_domain_written_to_note_metadata(vault_root, pipeline
 
     assert isinstance(result, Success)
     assert isinstance(result.value, WriteOutcome)
-    assert result.value.metadata.domain == "finance"
+    assert result.value.metadata.extra.get("domain") == "finance"
 
 
 @pytest.mark.asyncio
