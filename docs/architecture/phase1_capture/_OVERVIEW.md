@@ -3,7 +3,7 @@ Scope: Every module built in Phase 1 and the Phase 1.5 attachment-layout revisio
 Covers how dropped files travel from inbox to vault, and how the watcher and
 reconcile pipeline maintain consistency over time.
 
-Status: ✅ All components complete. 650 tests pass.
+Status: ✅ All components complete. 797 tests pass.
 Box standard: ~20 char wide, ~7 row high. Full descriptions in Diagram Notes.
 
 ---
@@ -27,13 +27,13 @@ Box standard: ~20 char wide, ~7 row high. Full descriptions in Diagram Notes.
  │  │ handlers/            │  │ pipelines/capture.py │  │ Pipeline         │  │
  │  │ ✅ [ext: registry]   │  │ ✅ [closed]          │  │ pipelines/       │  │
  │  │                      │  │                      │  │ reconcile.py     │  │
- │  │ MarkdownHandler      │  │ 5 stages:            │  │ ✅ [closed]      │  │
+ │  │ MarkdownHandler      │  │ 6 stages:            │  │ ✅ [closed]      │  │
  │  │ PdfHandler           │  │ extract              │  │                  │  │
- │  │ DocxHandler          │  │ enrich_urls          │  │ 4 stages:        │  │
+ │  │ DocxHandler          │  │ enrich_urls          │  │ 6 stages:        │  │
  │  │ XlsxHandler          │  │ summarize            │  │ sync paths       │  │
  │  │                      │  │ metadata             │  │ orphan binaries  │  │
- │  │ new type = new file  │  │ store                │  │ stale binaries   │  │
- │  │ no existing changes  │  │                      │  │ orphan siblings  │  │
+ │  │ new type = new file  │  │ apply_location_tags  │  │ stale binaries   │  │
+ │  │ no existing changes  │  │ store                │  │ orphan siblings  │  │
  │  └──────────┬───────────┘  └──────────┬───────────┘  └──────────────────┘  │
  │             │ used by extract stage   │                                     │
  │             └──────────────┬──────────┘                                     │
@@ -66,8 +66,8 @@ Box standard: ~20 char wide, ~7 row high. Full descriptions in Diagram Notes.
 |---|---|
 | **CLI Entry Points** | Thin wrappers. `kms capture <file>` calls `capture_file()` once. `kms capture --scan` calls `scan_capture()` to batch all new/modified notes. `kms watch` starts `VaultWatcher`. `kms reconcile` calls `reconcile()`. No business logic here. |
 | **Handler Registry** | Self-registering map of file extensions to handler classes. `HandlerRegistry.get(path)` returns the right handler. Adding a new file type = new class, no changes to existing code. Only handles filesystem paths — URLs/YouTube/email are pipeline stages, not registry handlers. |
-| **Capture Pipeline** | 5-stage async pipeline. Each stage is a pure function. If any stage fails, the pipeline stops and returns `Failure`. Stages: extract (text) → enrich (fetch linked URLs if sparse) → summarize (AI) → metadata (AI + tag validation) → store (branch on file type). |
-| **Reconcile Pipeline** | 4-stage maintenance pipeline. Repairs orphaned files and broken links. Stage 1: sync vault paths with DB. Stage 2: capture binaries with no sibling. Stage 3: fix siblings with broken attachment_path. Stage 4: delete siblings with no binary (two guards: scope + type). |
+| **Capture Pipeline** | 6-stage async pipeline. Each stage is a pure function. If any stage fails, the pipeline stops and returns `Failure`. Stages: extract (text) → enrich (fetch linked URLs if sparse) → summarize (AI) → metadata (AI + tag validation) → apply_location_tags (deterministic, no LLM — adds `domain/<D>` tag + `project:` field from file path) → store (branch on file type). |
+| **Reconcile Pipeline** | 6-stage maintenance pipeline. Repairs orphaned files and broken links. Stage 1: sync vault paths with DB. Stage 2: capture binaries with no sibling. Stage 3: fix siblings with broken attachment_path. Stage 4: delete siblings with no binary (two guards: scope + type). Stage 5: fix stale location tags (reconcile_stale_tags). Stage 6: remove stale batch refs (reconcile_stale_batch_refs). |
 | **Vault Watcher** | Watches the vault root using filesystem events. Debounces rapid saves. For .md notes: calls capture pipeline. For binary files: runs binary sync BEFORE skip checks — binary moved/deleted always triggers sibling update regardless of skip rules. |
 | **URL Fetcher** | Pipeline stage (not a registry handler). Detects URLs in extracted text, fetches their content if the note is URL-heavy and body text is short (< 500 chars). Appends fetched content before passing to AI summarization. |
 
@@ -161,7 +161,7 @@ What `kms` can do after this phase is complete.
           │
           ▼
   ④ metadata
-     AI suggests: title, type, domain, tags
+     AI suggests: title, type, tags (domain is NOT a separate AI suggestion — lives only as domain/<D> in tags list)
      validate_tags() checks tags against config/tags.yaml
      violations → TAG_VIOLATION audit entry (not dropped)
           │
@@ -355,7 +355,7 @@ What `kms` can do after this phase is complete.
   Debounce: wait 100ms for rapid saves to settle
           │
           ▼
-  capture_file("inbox/new-note.md") runs full 5-stage pipeline
+  capture_file("inbox/new-note.md") runs full 6-stage pipeline
 
   ─── file event: Projects/ZalopayAPI/attachment/report.pdf MOVED ──────────
           │
@@ -380,7 +380,7 @@ What `kms` can do after this phase is complete.
 
 ---
 
-### Behavior: kms reconcile — 4-stage repair
+### Behavior: kms reconcile — 6-stage repair
 
 ```
   kms reconcile
@@ -427,6 +427,19 @@ What `kms` can do after this phase is complete.
       BOTH YES → does a binary exist for this sibling?
                YES → OK
                NO  → delete sibling + remove DB row
+          │
+          ▼
+  Stage 5 — Stale location tags (reconcile_stale_tags)
+    walk all .md files in vault
+    for each note:
+      re-derive location tags from current vault path
+      if domain/<D> or project: field differs from file path → rewrite tags
+      write LOCATION_OVERRIDE audit entry
+
+  Stage 6 — Stale batch refs (reconcile_stale_batch_refs)
+    scan documents table for rows with batch_id set
+    for each batch_id: verify the batch still exists in batches table
+    if batch deleted or missing → clear batch_id on documents row
 ```
 
 ---
