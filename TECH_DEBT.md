@@ -53,9 +53,9 @@
 ---
 
 ### TD-008 · documents columns: project, status, key_topics
-**Status:** OPEN
+**Status:** RESOLVED (Phase Pre-2, 2026-06-03)
 **Phase:** Phase 2+
-**Risk if triggered early:** Adding columns before pipelines that populate them creates nullable dead columns with no backfill path.
+**Resolution:** 3 SQL migrations added (003_add_project, 004_add_status, 005_add_key_topics). DocumentRow updated with all three fields. `_row_from_sqlite`, `upsert`, `replace_path` updated. 797 tests pass.
 **What:** `documents` table lacks `project`, `status`, `key_topics` columns. These will be added via migrations when classify/search pipelines need them.
 **Why deferred:** Add via migrations when pipelines demand them; not pre-emptively.
 **Source:** Out of Scope, `plans/storage_level.md`

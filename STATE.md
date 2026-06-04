@@ -1,6 +1,6 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-06-03 (Phase Pre-2 complete — TD-008 DB columns + TD-038 domain scalar cleanup; 5 commits, 797 tests pass)_
+_Last updated: 2026-06-04 (doc drift reconciliation; test count 830; vault-restructure worktree in progress)_
 
 ## Current Position
 **Phase**: Phase Pre-2 — DB Schema Prep + Domain Scalar Cleanup ✅ **Complete as of 2026-06-03**
@@ -56,7 +56,7 @@ Other in-flight notes:
     FAILED: metadata JSON parse error: Expecting value: line 1 column 1 (char 0)
 -->
 
-**Phase Pre-2 — DB Schema Prep + Domain Scalar Cleanup** _(complete — 2026-06-03, 5 commits, 797 tests pass)_:
+**Phase Pre-2 — DB Schema Prep + Domain Scalar Cleanup** _(complete — 2026-06-03, 5 commits, 797 tests at completion)_:
 - [x] **Phase 1 — TD-008 Migration files**: 3 new SQL migration files (003_add_project, 004_add_status, 005_add_key_topics) + schema-presence test. Commit: e83c7cd.
 - [x] **Phase 2 — TD-008 Extend documents.py**: DocumentRow + `project`, `status`, `key_topics` fields; `_row_from_sqlite` reads new columns; `upsert` and `replace_path` write them (key_topics = tags minus domain/ and type/ prefixes). 6 new tests. Commit: e3a52ff.
 - [x] **Phase 3 — TD-038 frontmatter.py**: `_DEPRECATED_KEYS = frozenset({"domain"})` + dumps() filter strips domain on write (lazy migration). Removed `domain` field from NoteMetadata, _KNOWN_KEYS, field_validator. Domain in YAML routes to extra. 3 new tests, 2 existing fixed. Commits: f25d64a (3A), f8cd23e (3B).
@@ -118,5 +118,7 @@ Triggered by `/superpowers:requesting-code-review`. Applied subset of review fin
 **Not applied (deferred to user decision)**:
 - Issue #8 — `move_attachment` TOCTOU window (existence check then `os.replace`). Tracked as **TD-031**.
 - Issue #9 — `kms migrate-attachments` for legacy `Vault/attachment/`+`Vault/Archive/` layout. Deferred greenfield — no production users. Tracked as **TD-032**.
+
+**In-flight work**: Branch `worktree-vault-restructure-editable-noedit` — 10 commits implementing ADR-0006 editable/no-edit binary categorization (Phases 1–10). Not merged to main. Not reviewed.
 
 **Next roadmap work**: Phase 2 — Classify pipeline.
