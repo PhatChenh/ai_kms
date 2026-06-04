@@ -20,7 +20,7 @@ import pytest
 from core.config import ClaudeCliConfig
 from core.exceptions import ConfigError
 from core.result import Failure, Success
-from llm.provider import LLMProvider, LLMResponse
+from llm.provider import LLMProvider
 
 
 # ---------------------------------------------------------------------------

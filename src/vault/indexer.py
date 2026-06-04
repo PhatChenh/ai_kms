@@ -120,11 +120,13 @@ def scan_non_md_drops(root: Path, vault_config: VaultConfig) -> list[Path]:
     """
     drops: list[Path] = []
     inbox_dir = vault_config.inbox_dir
+    ai_output_dirs = vault_config.ai_output_dirs
     for dirpath, dirnames, filenames in root.walk():
         dirnames[:] = [
             d
             for d in dirnames
             if d not in IGNORE_DIRS
+            and d not in ai_output_dirs
             and (
                 not d.startswith(".")
                 or (d in _DOT_ALLOWLIST and dirpath.name in ("attachment", inbox_dir))
@@ -153,12 +155,17 @@ def scan_non_md_drops(root: Path, vault_config: VaultConfig) -> list[Path]:
     return drops
 
 
-def scan_vault(root: Path | None = None) -> Result[list[VaultEntry]]:
+def scan_vault(
+    root: Path | None = None,
+    vault_cfg: VaultConfig | None = None,
+) -> Result[list[VaultEntry]]:
     """
     Walk the vault and return VaultEntry for every readable .md note.
 
     Args:
-        root: Vault root path. If None, lazy-imports CONFIG.
+        root:      Vault root path. If None, lazy-imports CONFIG.
+        vault_cfg: VaultConfig for AI-output dir pruning. If None, lazy-imports
+                   CONFIG.main.vault.
 
     Returns:
         Success([VaultEntry, ...]) — partial on read errors.
@@ -171,6 +178,13 @@ def scan_vault(root: Path | None = None) -> Result[list[VaultEntry]]:
         root = CONFIG.main.vault.root
         _inbox_dir = CONFIG.main.vault.inbox_dir
 
+    if vault_cfg is not None:
+        ai_output_dirs = vault_cfg.ai_output_dirs
+    else:
+        from core.config import CONFIG
+
+        ai_output_dirs = CONFIG.main.vault.ai_output_dirs
+
     from vault.reader import read_note
 
     entries: list[VaultEntry] = []
@@ -180,10 +194,12 @@ def scan_vault(root: Path | None = None) -> Result[list[VaultEntry]]:
         # Prune directories in-place (controls Path.walk recursion).
         # Allow .summaries/ when parent is attachment/ (per-project summaries)
         # or inbox/ (pending-routing siblings — DECISION-027).
+        # Phase 5 (T4): also prune AI-output directories to prevent feedback loop.
         dirnames[:] = [
             d
             for d in dirnames
             if d not in IGNORE_DIRS
+            and d not in ai_output_dirs
             and (
                 not d.startswith(".")
                 or (d in _DOT_ALLOWLIST and dirpath.name in ("attachment", _inbox_dir))

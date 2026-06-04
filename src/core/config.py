@@ -81,7 +81,31 @@ class VaultConfig(BaseModel):
     briefings_dir:     str = "Briefings"
     archive_dir:       str = "Archive"
     attachment_dir:    str = "attachment"
-    summaries_subdir:  str = ".summaries"
+    summaries_subdir:    str = ".summaries"
+    no_edit_extensions:  list[str] = Field(
+        default_factory=lambda: [".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"]
+    )
+
+    @field_validator("no_edit_extensions", mode="before")
+    @classmethod
+    def _validate_no_edit_extensions(cls, v: object) -> list[str]:
+        """Lowercase every entry and require a leading dot."""
+        if v is None:
+            return [".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"]
+        if not isinstance(v, list):
+            raise ValueError(
+                f"no_edit_extensions must be a list, got {type(v).__name__}"
+            )
+        result: list[str] = []
+        for ext in v:
+            ext_str = str(ext).strip().lower()
+            if not ext_str.startswith("."):
+                raise ValueError(
+                    f"no_edit_extensions entry '{ext}' is missing a leading dot. "
+                    f"Each extension must start with '.' (e.g., '.pdf', not 'pdf')."
+                )
+            result.append(ext_str)
+        return result
 
     # ── derived path helpers ──────────────────────────────────────────────
     # Always use these; never build paths by string concatenation elsewhere.
@@ -97,6 +121,15 @@ class VaultConfig(BaseModel):
     def synthesis_path(self)     -> Path: return self.root / self.synthesis_dir
     @property
     def briefings_path(self)     -> Path: return self.root / self.briefings_dir
+
+    @property
+    def ai_output_dirs(self) -> tuple[str, ...]:
+        return (self.briefings_dir, self.synthesis_dir, self.documentation_dir)
+
+    @property
+    def ai_output_paths(self) -> tuple[Path, ...]:
+        return (self.briefings_path, self.synthesis_path, self.documentation_path)
+
 class DatabaseConfig(BaseModel):
     # validate_assignment so the KMS_DB_PATH env override in load_config() is
     # resolved the same way as a YAML value.
@@ -235,6 +268,7 @@ class CaptureConfig(BaseModel):
     max_urls_per_note: int = Field(3, ge=0)
     rename_gate: RenameGateConfig = Field(default_factory=RenameGateConfig)  # type: ignore[arg-type]
     folder_cooldown_seconds: float = Field(5.0, ge=0.0)
+    binary_settle_seconds: float = Field(5.0, ge=0.0)
     folder_max_workers: int = Field(4, ge=1)
 
 

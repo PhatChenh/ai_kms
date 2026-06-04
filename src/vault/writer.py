@@ -337,3 +337,4 @@ def move_folder(folder_path: Path, destination: Path) -> Result[Path]:
         )
 
     return Success(final)
+
