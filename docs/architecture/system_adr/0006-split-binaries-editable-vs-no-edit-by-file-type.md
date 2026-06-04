@@ -1,8 +1,8 @@
 # Split captured binaries into editable (root) vs no-edit (attachment/) by file type
 
-**Status:** Proposed
+**Status:** Accepted (implemented 2026-06-04, merged from `worktree-vault-restructure-editable-noedit`)
 
-> **NOT IMPLEMENTED as of Phase Pre-2 (2026-06-03).** The `no_edit_extensions` config key and editable-file routing do not exist in `src/`. Vocabulary from this ADR (editable file, no-edit file) appears in CONTEXT.md marked as "planned." Do not reference these terms as current behavior.
+> **IMPLEMENTED.** `VaultConfig.no_edit_extensions` drives `resolve_placement()` in `vault/paths.py`. No-edit binaries → `attachment/` (hidden). Editable binaries → project/domain root (visible). Binary content-change detection, settle window, move guard, and reconcile Stage 7 (editable migration) all shipped. 956 tests pass.
 
 ## Context
 

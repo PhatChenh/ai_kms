@@ -29,7 +29,7 @@ Box standard: ~20 char wide, ~7 row high. Full descriptions in Diagram Notes.
  │  │                      │  │                      │  │ reconcile.py     │  │
  │  │ MarkdownHandler      │  │ 6 stages:            │  │ ✅ [closed]      │  │
  │  │ PdfHandler           │  │ extract              │  │                  │  │
- │  │ DocxHandler          │  │ enrich_urls          │  │ 6 stages:        │  │
+ │  │ DocxHandler          │  │ enrich_urls          │  │ 7 stages:        │  │
  │  │ XlsxHandler          │  │ summarize            │  │ sync paths       │  │
  │  │                      │  │ metadata             │  │ orphan binaries  │  │
  │  │ new type = new file  │  │ apply_location_tags  │  │ stale binaries   │  │
@@ -67,7 +67,7 @@ Box standard: ~20 char wide, ~7 row high. Full descriptions in Diagram Notes.
 | **CLI Entry Points** | Thin wrappers. `kms capture <file>` calls `capture_file()` once. `kms capture --scan` calls `scan_capture()` to batch all new/modified notes. `kms watch` starts `VaultWatcher`. `kms reconcile` calls `reconcile()`. No business logic here. |
 | **Handler Registry** | Self-registering map of file extensions to handler classes. `HandlerRegistry.get(path)` returns the right handler. Adding a new file type = new class, no changes to existing code. Only handles filesystem paths — URLs/YouTube/email are pipeline stages, not registry handlers. |
 | **Capture Pipeline** | 6-stage async pipeline. Each stage is a pure function. If any stage fails, the pipeline stops and returns `Failure`. Stages: extract (text) → enrich (fetch linked URLs if sparse) → summarize (AI) → metadata (AI + tag validation) → apply_location_tags (deterministic, no LLM — adds `domain/<D>` tag + `project:` field from file path) → store (branch on file type). |
-| **Reconcile Pipeline** | 6-stage maintenance pipeline. Repairs orphaned files and broken links. Stage 1: sync vault paths with DB. Stage 2: capture binaries with no sibling. Stage 3: fix siblings with broken attachment_path. Stage 4: delete siblings with no binary (two guards: scope + type). Stage 5: fix stale location tags (reconcile_stale_tags). Stage 6: remove stale batch refs (reconcile_stale_batch_refs). |
+| **Reconcile Pipeline** | 7-stage maintenance pipeline. Repairs orphaned files and broken links. Stage 1: sync vault paths with DB. Stage 2: capture binaries with no sibling. Stage 3: fix siblings with broken attachment_path. Stage 4: delete siblings with no binary (two guards: scope + type). Stage 5: fix stale location tags (reconcile_stale_tags). Stage 6: remove stale batch refs (reconcile_stale_batch_refs). Stage 7: migrate editable binaries from attachment/ to project/domain root (reconcile_editable_migration). |
 | **Vault Watcher** | Watches the vault root using filesystem events. Debounces rapid saves. For .md notes: calls capture pipeline. For binary files: runs binary sync BEFORE skip checks — binary moved/deleted always triggers sibling update regardless of skip rules. |
 | **URL Fetcher** | Pipeline stage (not a registry handler). Detects URLs in extracted text, fetches their content if the note is URL-heavy and body text is short (< 500 chars). Appends fetched content before passing to AI summarization. |
 
@@ -380,7 +380,7 @@ What `kms` can do after this phase is complete.
 
 ---
 
-### Behavior: kms reconcile — 6-stage repair
+### Behavior: kms reconcile — 7-stage repair
 
 ```
   kms reconcile

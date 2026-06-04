@@ -707,7 +707,7 @@
   retired: null
 
 # ═══════════════════════════════════════════════════════════════
-# VAULT-RESTRUCTURE — Editable/No-Edit Split (PLANNED — not on main)
+# VAULT-RESTRUCTURE — Editable/No-Edit Split (IMPLEMENTED — merged 2026-06-04)
 # ═══════════════════════════════════════════════════════════════
 
 - id: VR-PLACE-01
@@ -722,7 +722,7 @@
   spec_ref: "ADR-0006 'no-edit → attachment/'"
   human_reviewed: no
   pytest_ref: null
-  status: planned
+  status: active
   retired: null
 
 - id: VR-PLACE-02
@@ -738,7 +738,7 @@
   spec_ref: "ADR-0006 'editable → root'"
   human_reviewed: no
   pytest_ref: null
-  status: planned
+  status: active
   retired: null
 
 - id: VR-SKIP-01
@@ -753,14 +753,14 @@
   spec_ref: "ADR-0006 'capture-excluded folders'"
   human_reviewed: no
   pytest_ref: null
-  status: planned
+  status: active
   retired: null
 
 - id: VR-REHOME-01
   behavior: "Misplaced binary re-homed to correct placement"
   tier: phase
   phase: vault-restructure
-  trigger: "kms reconcile (planned stage 7)"
+  trigger: "kms reconcile (stage 7)"
   fixtures: []
   steps: "Place editable file in attachment/. Run reconcile."
   expected: >
@@ -769,7 +769,7 @@
   spec_ref: "ADR-0006 'reconcile_editable_migration'"
   human_reviewed: no
   pytest_ref: null
-  status: planned
+  status: active
   retired: null
 
 - id: VR-CONTENT-01
@@ -785,5 +785,5 @@
   spec_ref: "ADR-0006 'content_change_detect'"
   human_reviewed: no
   pytest_ref: null
-  status: planned
+  status: active
   retired: null

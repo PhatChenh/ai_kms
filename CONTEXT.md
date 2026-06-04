@@ -60,18 +60,18 @@ _Avoid_: "shadow file", "proxy note"
 The specific sibling `.md` written for a CLUELESS binary — parked at `inbox/.summaries/<filename>.md` with `status: pending-routing`. Body is a one-line placeholder. Phase 2 Classify overwrites body and routes binary.
 _Avoid_: "pending note", "inbox marker"
 
-**no-edit file:** _(planned — not yet implemented; see ADR-0006)_
-A non-`.md` file whose extension is in the config list `no_edit_extensions` (e.g. pdf, images). When built: captured copy is routed to the hidden `attachment/` folder and is not visible to the user in Obsidian. Contrast with editable file.
-_Source_: grilling session 2026-06-03; see docs/draft/vault-restructure-editable-noedit-split.md and ADR-0006
+**no-edit file:**
+A non-`.md` file whose extension is in `VaultConfig.no_edit_extensions` (default: pdf, png, jpg, jpeg, gif, webp). Routed to the hidden `attachment/` folder — not visible to the user in Obsidian. Contrast with editable file. Routing via `resolve_placement()` in `vault/paths.py`.
+_Source_: ADR-0006 (accepted 2026-06-04)
 
-**editable file:** _(planned — not yet implemented; see ADR-0006)_
-Any non-`.md` file NOT in `no_edit_extensions` (e.g. docx, xlsx, pptx). When built: lives in the project/domain root so the non-technical user can see and open it; it is NOT hidden in `attachment/`. Captures are editable by the user in place.
-_Source_: grilling session 2026-06-03; see docs/draft/vault-restructure-editable-noedit-split.md and ADR-0006
+**editable file:**
+Any non-`.md` file NOT in `no_edit_extensions` (e.g. docx, xlsx, pptx). Lives in the project/domain root so the non-technical user can see and open it in place. NOT hidden in `attachment/`. Content changes detected by watcher and trigger re-summarization.
+_Source_: ADR-0006 (accepted 2026-06-04)
 
 **AI-output folder:**
-One of `Briefings/`, `Synthesis/`, `Documentation/`. The AI writes here; users never drop source material here. These are capture-excluded: the watcher and scan_capture skip them entirely so the AI's own outputs are never re-captured.
-_Source_: grilling session 2026-06-03; see docs/draft/vault-restructure-editable-noedit-split.md
+One of `Briefings/`, `Synthesis/`, `Documentation/`. The AI writes here; users never drop source material here. Capture-excluded: watcher and scan_capture skip them entirely so AI outputs are never re-captured.
+_Source_: ADR-0006 (accepted 2026-06-04)
 
 **misplaced location:**
-Any folder that is NOT one of {`inbox/`, a specific `Projects/<A>/`(+its `attachment/`), a specific `Domain/<D>/`(+its `attachment/`)} and is NOT an AI-output folder. Examples: bare `Projects/`, bare `Domain/`, `Domain/<D>/Archive/`, vault root. A file dropped in a misplaced location is a user mis-drop and is moved to `inbox/`.
-_Source_: grilling session 2026-06-03; see docs/draft/vault-restructure-editable-noedit-split.md
+Any folder that is NOT one of {`inbox/`, a specific `Projects/<A>/`(+its `attachment/`), a specific `Domain/<D>/`(+its `attachment/`)} and is NOT an AI-output folder. Examples: bare `Projects/`, bare `Domain/`, `Domain/<D>/Archive/`, vault root. A file dropped in a misplaced location is swept to `inbox/` by the watcher.
+_Source_: ADR-0006 (accepted 2026-06-04)
