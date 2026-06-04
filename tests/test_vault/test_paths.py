@@ -11,7 +11,6 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
-import pytest
 
 from vault.paths import (
     _is_in_managed_attachment,
@@ -387,3 +386,172 @@ class TestDomainArchive:
         result = domain_archive("Product", vc)
         assert result == root / "Domain" / "Product" / "Completed"
         assert result.is_dir()
+
+
+# ---------------------------------------------------------------------------
+# Tests for _is_ai_output predicate (Phase 5, T4)
+# ---------------------------------------------------------------------------
+
+
+class TestIsAiOutput:
+    """7 unit tests for the _is_ai_output predicate.
+
+    _is_ai_output returns True if any part of the path matches a folder the
+    system writes to itself (Briefings, Synthesis, Documentation). Name-match
+    is depth-agnostic — the folder name can appear at any Path.parts position.
+    """
+
+    def test_returns_true_for_briefings_dir(self, tmp_path: Path):
+        from core.config import VaultConfig
+        from vault.paths import _is_ai_output
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        path = root / "Briefings" / "2026" / "06_04.md"
+        assert _is_ai_output(path, vc) is True
+
+    def test_returns_true_for_synthesis_dir(self, tmp_path: Path):
+        from core.config import VaultConfig
+        from vault.paths import _is_ai_output
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        path = root / "Synthesis" / "2026-W23.md"
+        assert _is_ai_output(path, vc) is True
+
+    def test_returns_true_for_documentation_dir(self, tmp_path: Path):
+        from core.config import VaultConfig
+        from vault.paths import _is_ai_output
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        path = root / "Documentation" / "Alpha.md"
+        assert _is_ai_output(path, vc) is True
+
+    def test_returns_false_for_project_path(self, tmp_path: Path):
+        from core.config import VaultConfig
+        from vault.paths import _is_ai_output
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        path = root / "Projects" / "Alpha" / "note.md"
+        assert _is_ai_output(path, vc) is False
+
+    def test_returns_false_for_domain_path(self, tmp_path: Path):
+        from core.config import VaultConfig
+        from vault.paths import _is_ai_output
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        path = root / "Domain" / "Finance" / "report.md"
+        assert _is_ai_output(path, vc) is False
+
+    def test_returns_false_for_inbox_path(self, tmp_path: Path):
+        from core.config import VaultConfig
+        from vault.paths import _is_ai_output
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        path = root / "inbox" / "note.md"
+        assert _is_ai_output(path, vc) is False
+
+    def test_no_filesystem_io_and_no_config_import(self, tmp_path: Path):
+        """Verify _is_ai_output does no filesystem I/O and works on non-existent paths."""
+        from core.config import VaultConfig
+        from vault.paths import _is_ai_output
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        # Path that does not exist on disk — still returns True (pure path math, no I/O)
+        path = root / "Briefings" / "nonexistent.md"
+        assert path.exists() is False
+        assert _is_ai_output(path, vc) is True
+
+
+# ---------------------------------------------------------------------------
+# Tests for _is_misplaced predicate (Phase 5, T4)
+# ---------------------------------------------------------------------------
+
+
+class TestIsMisplaced:
+    """8 unit tests for the _is_misplaced predicate.
+
+    _is_misplaced returns True when an .md file sits at the bare root of
+    Projects/ or Domain/ without a real subfolder (e.g. Projects/stray.md).
+    Inbox and AI-output folders are always valid; anywhere else returns False.
+    """
+
+    def test_returns_true_for_stray_md_in_projects_root(self, tmp_path: Path):
+        from core.config import VaultConfig
+        from vault.paths import _is_misplaced
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        path = root / "Projects" / "stray.md"
+        assert _is_misplaced(path, vc) is True
+
+    def test_returns_true_for_stray_md_in_domain_root(self, tmp_path: Path):
+        from core.config import VaultConfig
+        from vault.paths import _is_misplaced
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        path = root / "Domain" / "stray.md"
+        assert _is_misplaced(path, vc) is True
+
+    def test_returns_false_for_file_inside_project_subfolder(self, tmp_path: Path):
+        from core.config import VaultConfig
+        from vault.paths import _is_misplaced
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        path = root / "Projects" / "Alpha" / "note.md"
+        assert _is_misplaced(path, vc) is False
+
+    def test_returns_false_for_file_inside_domain_subfolder(self, tmp_path: Path):
+        from core.config import VaultConfig
+        from vault.paths import _is_misplaced
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        path = root / "Domain" / "Finance" / "report.md"
+        assert _is_misplaced(path, vc) is False
+
+    def test_returns_false_for_file_in_inbox(self, tmp_path: Path):
+        from core.config import VaultConfig
+        from vault.paths import _is_misplaced
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        path = root / "inbox" / "note.md"
+        assert _is_misplaced(path, vc) is False
+
+    def test_returns_false_for_file_in_ai_output_dir(self, tmp_path: Path):
+        from core.config import VaultConfig
+        from vault.paths import _is_misplaced
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        path = root / "Briefings" / "2026" / "daily.md"
+        assert _is_misplaced(path, vc) is False
+
+    def test_returns_false_for_file_elsewhere(self, tmp_path: Path):
+        from core.config import VaultConfig
+        from vault.paths import _is_misplaced
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        path = root / "some-random-folder" / "file.md"
+        assert _is_misplaced(path, vc) is False
+
+    def test_returns_true_for_any_file_at_projects_bare_root(self, tmp_path: Path):
+        """_is_misplaced is a pure path check — it returns True for any file
+        at the bare root of Projects/, regardless of extension. The .md
+        restriction is enforced in the caller (scan_capture sweep loop)."""
+        from core.config import VaultConfig
+        from vault.paths import _is_misplaced
+
+        root = tmp_path / "vault"
+        vc = VaultConfig(root=root)
+        path = root / "Projects" / "stray.pdf"
+        assert _is_misplaced(path, vc) is True

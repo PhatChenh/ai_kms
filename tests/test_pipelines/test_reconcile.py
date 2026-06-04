@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -699,7 +699,6 @@ async def test_reconcile_stale_tags_load_valid_domains_called_once(
     from vault.frontmatter import NoteMetadata
     from vault.indexer import scan_vault
     from core.result import Success
-    from unittest.mock import patch
 
     # Create a few notes in different locations
     for name in ["a.md", "b.md", "c.md"]:
@@ -1112,7 +1111,6 @@ async def test_stale_tags_real_write_error_still_warns(
 @pytest.mark.asyncio
 async def test_stale_batch_refs_no_batches_table(tmp_path, monkeypatch):
     """Stage 6: batches table absent → returns Success unchanged (safe no-op)."""
-    import sqlite3
     from pipelines.reconcile import ReconcileResult, reconcile_stale_batch_refs
     from core.pipeline import PipelineContext
     from core.config import VaultConfig

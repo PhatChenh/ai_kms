@@ -10,9 +10,8 @@ Covers:
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -312,7 +311,6 @@ async def test_store_md_rename_db_failure_rolls_back_disk_rename(
 def test_capture_file_has_single_stability_gate_string():
     """'file too recent' appears exactly once in capture.py (regression guard)."""
     import subprocess
-    import os
 
     capture_py = (
         Path(__file__).parent.parent.parent / "src" / "pipelines" / "capture.py"

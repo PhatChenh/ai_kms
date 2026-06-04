@@ -43,7 +43,6 @@ Test map (read this before adding new tests):
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -56,13 +55,9 @@ from pydantic import ValidationError
 # requires real config files to be present on every developer's machine.
 # ---------------------------------------------------------------------------
 from core.config import (
-    _load_yaml,
-    load_config,
     ApiKeys,
     ClaudeConfig,
     ConfidenceBand,
-    DatabaseConfig,
-    LoggingConfig,
     MainConfig,
     MCPConfig,
     OllamaConfig,
@@ -378,6 +373,59 @@ class TestVaultConfig:
         vc = VaultConfig(root=str(tmp_path))
         assert isinstance(vc.root, Path)
 
+    # ── no_edit_extensions Field ──────────────────────────────────────────────
+
+    def test_no_edit_extensions_default_has_six_dot_prefixed_lowercase(self, tmp_path):
+        """Default extension list contains exactly the six expected strings, all
+        dot-prefixed and lowercase."""
+        vc = VaultConfig(root=tmp_path)
+        assert vc.no_edit_extensions == [".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"]
+        assert len(vc.no_edit_extensions) == 6
+        assert all(ext.startswith(".") for ext in vc.no_edit_extensions)
+        assert all(ext == ext.lower() for ext in vc.no_edit_extensions)
+
+    def test_no_edit_extensions_custom_value_roundtrips(self, tmp_path):
+        """A custom list of extensions is stored and returned as-is after validation."""
+        vc = VaultConfig(root=tmp_path, no_edit_extensions=[".pdf", ".dwg", ".psd"])
+        assert vc.no_edit_extensions == [".pdf", ".dwg", ".psd"]
+
+    def test_no_edit_extensions_validator_lowercases(self, tmp_path):
+        """Validator lowercases uppercase entries: .PDF → .pdf."""
+        vc = VaultConfig(root=tmp_path, no_edit_extensions=[".PDF", ".PNG", ".JpG"])
+        assert vc.no_edit_extensions == [".pdf", ".png", ".jpg"]
+
+    def test_no_edit_extensions_validator_rejects_missing_dot(self, tmp_path):
+        """A value without a leading dot ('pdf') raises ValidationError with a
+        message naming the offending value."""
+        with pytest.raises(ValidationError, match="no_edit_extensions"):
+            VaultConfig(root=tmp_path, no_edit_extensions=["pdf"])
+
+    def test_no_edit_extensions_absent_kwarg_uses_default(self, tmp_path):
+        """Constructing without no_edit_extensions gives the Python default list."""
+        vc = VaultConfig(root=tmp_path)  # no no_edit_extensions kwarg
+        assert vc.no_edit_extensions == [".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"]
+
+    # ── ai_output_dirs / ai_output_paths properties ───────────────────────────
+
+    def test_ai_output_dirs_returns_default_triple(self, tmp_path):
+        """ai_output_dirs returns the three AI-output folder names with defaults."""
+        vc = VaultConfig(root=tmp_path)
+        assert vc.ai_output_dirs == ("Briefings", "Synthesis", "Documentation")
+
+    def test_ai_output_dirs_reflects_overridden_dir(self, tmp_path):
+        """ai_output_dirs reflects an overridden *_dir Field immediately."""
+        vc = VaultConfig(root=tmp_path, briefings_dir="Reports")
+        assert vc.ai_output_dirs == ("Reports", "Synthesis", "Documentation")
+
+    def test_ai_output_paths_returns_resolved_paths(self, tmp_path):
+        """ai_output_paths returns resolved Path objects for the three AI-output dirs."""
+        vc = VaultConfig(root=tmp_path)
+        assert vc.ai_output_paths == (
+            tmp_path / "Briefings",
+            tmp_path / "Synthesis",
+            tmp_path / "Documentation",
+        )
+
 
 # ===========================================================================
 # Section 5 — MainConfig : vault-root model_validator
@@ -534,6 +582,16 @@ class TestCaptureConfig:
         from core.config import CaptureConfig
         with pytest.raises(ValidationError):
             CaptureConfig(max_urls_per_note=-1)
+
+    def test_default_binary_settle_seconds_is_5(self):
+        from core.config import CaptureConfig
+        c = CaptureConfig()
+        assert c.binary_settle_seconds == 5.0
+
+    def test_binary_settle_seconds_rejects_negative(self):
+        from core.config import CaptureConfig
+        with pytest.raises(ValidationError):
+            CaptureConfig(binary_settle_seconds=-1.0)
 
     def test_main_config_has_capture_field(self, vault_dir: Path):
         cfg = MainConfig(vault={"root": str(vault_dir)})

@@ -8,14 +8,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, replace
-from pathlib import Path
 
 from core.audit import write as audit_write
 from core.confidence import AIDecision
 from core.pipeline import PipelineContext
 from core.result import Failure, Result, Success
 from pipelines.capture import capture_file
-from vault.paths import _is_in_managed_attachment, _is_managed_summaries_area
+from vault.paths import _is_in_managed_attachment, _is_managed_summaries_area, _location_context, resolve_placement
 
 _log = logging.getLogger(__name__)
 
@@ -27,6 +26,7 @@ __all__ = [
     "reconcile_orphan_siblings",
     "reconcile_stale_tags",
     "reconcile_stale_batch_refs",
+    "reconcile_editable_migration",
     "reconcile",
 ]
 
@@ -41,6 +41,7 @@ class ReconcileResult:
     orphans_cleaned: int = 0
     tags_updated: int = 0
     batch_refs_cleared: int = 0
+    editable_migrations: int = 0
 
     def replace(self, **kwargs: int) -> ReconcileResult:
         return replace(self, **kwargs)
@@ -452,6 +453,220 @@ async def reconcile_stale_batch_refs(
 
 
 # ---------------------------------------------------------------------------
+# Stage 7 — migrate binaries whose location doesn't match resolve_placement
+# ---------------------------------------------------------------------------
+
+
+async def reconcile_editable_migration(
+    result: ReconcileResult, ctx: PipelineContext
+) -> Result[ReconcileResult]:
+    """Migrate binaries + siblings when ``no_edit_extensions`` config changes.
+
+    Walks all managed summaries areas looking for ``type=attachment-summary``
+    sibling ``.md`` files.  For each one whose binary still exists, calls
+    ``resolve_placement`` to determine where the binary *should* live given
+    the current config.  If the binary's actual parent differs from the
+    expected ``final_dir``, the binary and its sibling are migrated.
+
+    This handles both directions:
+    - Editable → No-edit (e.g. ``.xlsx`` added to ``no_edit_extensions``):
+      binary moves to ``attachment/``, sibling moves to ``attachment/.summaries/``
+    - No-edit → Editable (e.g. ``.xlsx`` removed from ``no_edit_extensions``):
+      binary moves to project/domain root, sibling moves to root ``.summaries/``
+
+    Skips entries with ``updated_by_human=True`` (human-lock guard).
+    """
+    from vault.reader import read_note
+    from vault.writer import move_attachment, move_note, write_note
+    import storage.documents as documents
+
+    vault_cfg = ctx.config.vault
+    db_path = ctx.db_path
+    migrations = 0
+
+    for summaries_dir in vault_cfg.root.rglob(vault_cfg.summaries_subdir):
+        if not summaries_dir.is_dir():
+            continue
+        # Scope guard: only walk .summaries/ inside managed areas (now includes
+        # editable-file areas via the extended _is_managed_summaries_area).
+        if not _is_managed_summaries_area(summaries_dir, vault_cfg):
+            continue
+
+        for entry in summaries_dir.iterdir():
+            if not entry.is_file():
+                continue
+            if not entry.suffix.lower() == ".md":
+                continue
+            if entry.name.startswith("."):
+                continue
+
+            match read_note(entry):
+                case Failure():
+                    continue
+                case Success(note):
+                    pass
+
+            # Must be an AI-written attachment summary
+            if note.metadata.type != "attachment-summary":
+                continue
+
+            # Human-lock guard
+            if note.metadata.updated_by_human:
+                continue
+
+            attachment_vp = note.metadata.attachment_path
+            if attachment_vp is None:
+                continue
+
+            binary = vault_cfg.root / attachment_vp
+            if not binary.is_file():
+                continue  # Binary gone — Stage 4 handles orphan cleanup
+
+            # Determine where the binary SHOULD live per current config
+            loc_type, loc_name = _location_context(binary, vault_cfg)
+            if loc_type is None:
+                continue  # Can't determine — skip
+
+            placement = resolve_placement(binary, loc_type, loc_name, vault_cfg)
+            if not placement.needs_move:
+                continue  # Binary already in the right place
+
+            # Compute destination paths
+            dst_binary = placement.final_dir / binary.name
+            dst_sibling = placement.sibling_dir / f"{binary.name}.md"
+
+            # Collision avoidance
+            counter = 0
+            while dst_binary.exists() and counter < 99:
+                counter += 1
+                dst_binary = placement.final_dir / f"{binary.stem}-{counter}{binary.suffix}"
+                dst_sibling = placement.sibling_dir / f"{dst_binary.name}.md"
+            if dst_binary.exists():
+                _log.warning(
+                    "reconcile.editable_migration_collision binary=%s",
+                    binary,
+                )
+                continue
+
+            # Ensure destination directories exist
+            placement.final_dir.mkdir(parents=True, exist_ok=True)
+            placement.sibling_dir.mkdir(parents=True, exist_ok=True)
+
+            # Step 1: move binary
+            match move_attachment(binary, dst_binary):
+                case Failure(error=e):
+                    _log.warning(
+                        "reconcile.editable_migration_binary_move_failed src=%s dst=%s error=%s",
+                        binary, dst_binary, e,
+                    )
+                    continue
+                case Success():
+                    pass
+
+            # Step 2: move or rebuild sibling
+            old_sibling_vp = str(
+                entry.relative_to(vault_cfg.root).as_posix()
+            )
+            if entry.exists():
+                match move_note(entry, dst_sibling, actor="ai"):
+                    case Failure(error=e):
+                        _log.warning(
+                            "reconcile.editable_migration_sibling_move_failed src=%s dst=%s error=%s",
+                            entry, dst_sibling, e,
+                        )
+                        # Binary already moved — log and continue with DB update
+                    case Success():
+                        pass
+                # Update attachment_path in moved sibling
+                match read_note(dst_sibling):
+                    case Success(value=moved_note):
+                        new_attachment_vp = str(
+                            dst_binary.relative_to(vault_cfg.root).as_posix()
+                        )
+                        moved_note.metadata.attachment_path = new_attachment_vp
+                        match write_note(
+                            dst_sibling, moved_note.content,
+                            moved_note.metadata, actor="ai",
+                        ):
+                            case Failure(error=e):
+                                _log.warning(
+                                    "reconcile.editable_migration_pointer_update_failed sibling=%s error=%s",
+                                    dst_sibling, e,
+                                )
+                            case Success():
+                                pass
+                    case Failure(error=e):
+                        _log.warning(
+                            "reconcile.editable_migration_read_moved_sibling_failed sibling=%s error=%s",
+                            dst_sibling, e,
+                        )
+            else:
+                # Sibling absent on disk — rebuild from existing note metadata
+                new_attachment_vp = str(
+                    dst_binary.relative_to(vault_cfg.root).as_posix()
+                )
+                note.metadata.attachment_path = new_attachment_vp
+                match write_note(
+                    dst_sibling, note.content, note.metadata, actor="ai",
+                ):
+                    case Failure(error=e):
+                        _log.warning(
+                            "reconcile.editable_migration_rebuild_failed sibling=%s error=%s",
+                            dst_sibling, e,
+                        )
+                        continue
+                    case Success():
+                        pass
+
+            # Step 3: update DB row (rename old sibling VP → new sibling VP)
+            new_sibling_vp = str(
+                dst_sibling.relative_to(vault_cfg.root).as_posix()
+            )
+            match documents.rename(old_sibling_vp, new_sibling_vp, db_path=db_path):
+                case Success(value=0):
+                    _log.warning(
+                        "reconcile.editable_migration_db_row_not_found old=%s new=%s",
+                        old_sibling_vp, new_sibling_vp,
+                    )
+                case Failure(error=e):
+                    _log.warning(
+                        "reconcile.editable_migration_rename_failed old=%s error=%s",
+                        old_sibling_vp, e,
+                    )
+                case Success():
+                    pass
+
+            # Step 4: audit
+            is_no_edit = dst_binary.suffix.lower() in vault_cfg.no_edit_extensions
+            direction = "→attachment" if is_no_edit else "→root"
+            match audit_write(
+                AIDecision(
+                    action="reconcile:editable_migration",
+                    confidence=1.0,
+                    reasoning=(
+                        f"Config-driven migration: {binary.name} {direction} "
+                        f"({binary.parent.name} → {placement.final_dir.name})"
+                    ),
+                    source_ids=[new_sibling_vp],
+                ),
+                pipeline="reconcile",
+                stage="reconcile_editable_migration",
+                outcome="EDITABLE_MIGRATED",
+                db_path=db_path,
+            ):
+                case Failure(error=e):
+                    _log.warning(
+                        "reconcile.editable_migration_audit_failed error=%s", e
+                    )
+                case Success():
+                    pass
+
+            migrations += 1
+
+    return Success(result.replace(editable_migrations=migrations))
+
+
+# ---------------------------------------------------------------------------
 # Pipeline entry point
 # ---------------------------------------------------------------------------
 
@@ -500,6 +715,11 @@ async def reconcile(ctx: PipelineContext) -> Result[ReconcileResult]:
         case Success(value=r):
             result = r
     match await reconcile_stale_batch_refs(result, ctx):
+        case Failure() as f:
+            return f
+        case Success(value=r):
+            result = r
+    match await reconcile_editable_migration(result, ctx):
         case Failure() as f:
             return f
         case Success(value=r):

@@ -208,7 +208,7 @@ async def test_scan_capture_skips_summaries_in_modified_loop(
     summaries_dir.mkdir(parents=True, exist_ok=True)
     sibling = summaries_dir / "report.md"
     sibling.write_text("# Summary of report.pdf\n\nAI-generated summary.", encoding="utf-8")
-    sibling_vp = f"Projects/Alpha/attachment/.summaries/report.md"
+    sibling_vp = "Projects/Alpha/attachment/.summaries/report.md"
 
     # Insert DB row with a DIFFERENT content_hash — makes it appear as "modified"
     import hashlib
@@ -239,3 +239,347 @@ async def test_scan_capture_skips_summaries_in_modified_loop(
     assert sibling_abs not in capture_called, (
         f"capture_file was called for .summaries/ path: {capture_called}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5, T4 — Misplaced-md sweep in scan_capture
+# ---------------------------------------------------------------------------
+
+
+class TestScanCaptureMisplacedMd:
+    """7 integration tests: misplaced .md files at bare Project/Domain roots
+    are swept to inbox before capture_file is called."""
+
+    @pytest.mark.asyncio
+    async def test_misplaced_md_in_projects_root_swept_to_inbox(
+        self, vault_root, db_path, pipeline_ctx, monkeypatch
+    ):
+        """Projects/stray.md is moved to inbox/stray.md by scan_capture."""
+        from pipelines.capture import scan_capture
+
+        stray = vault_root / "Projects" / "stray.md"
+        stray.write_text("# Stray\n\nbody", encoding="utf-8")
+
+        move_calls: list[tuple] = []
+
+        def fake_move_note(src, dst, actor):
+            move_calls.append((str(src), str(dst), actor))
+            from core.result import Success
+            return Success(None)
+
+        monkeypatch.setattr("pipelines.capture.move_note", fake_move_note)
+
+        def fake_delete_by_path(vault_path, db_path=None):
+            from core.result import Success
+            return Success(0)
+
+        monkeypatch.setattr("pipelines.capture.documents.delete_by_path", fake_delete_by_path)
+
+        capture_called: list[Path] = []
+
+        async def fake_capture_file(path, context=None):
+            capture_called.append(path)
+            return Success(MagicMock())
+
+        monkeypatch.setattr("pipelines.capture.capture_file", fake_capture_file)
+
+        def fake_audit_write(*args, **kwargs):
+            from core.result import Success
+            return Success(None)
+
+        monkeypatch.setattr("pipelines.capture.audit.write", fake_audit_write)
+
+        result = await scan_capture(root=vault_root, db_path=db_path)
+
+        assert isinstance(result, Success)
+        # move_note called: src=Projects/stray.md, dst=inbox/stray.md
+        inbox_dst = vault_root / "inbox" / "stray.md"
+        assert any(str(inbox_dst) in str(m[1]) for m in move_calls), (
+            f"Expected move to {inbox_dst}, got {move_calls}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_valid_project_nested_md_not_swept(
+        self, vault_root, db_path, pipeline_ctx, monkeypatch
+    ):
+        """Projects/Alpha/note.md is NOT swept — it has a valid project context."""
+        from pipelines.capture import scan_capture
+
+        note = vault_root / "Projects" / "Alpha" / "note.md"
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text("# Valid\n\nbody", encoding="utf-8")
+
+        move_calls: list[tuple] = []
+
+        def fake_move_note(src, dst, actor):
+            move_calls.append((str(src), str(dst), actor))
+            from core.result import Success
+            return Success(None)
+
+        monkeypatch.setattr("pipelines.capture.move_note", fake_move_note)
+
+        def fake_delete_by_path(vault_path, db_path=None):
+            from core.result import Success
+            return Success(0)
+
+        monkeypatch.setattr("pipelines.capture.documents.delete_by_path", fake_delete_by_path)
+
+        capture_called: list[Path] = []
+
+        async def fake_capture_file(path, context=None):
+            capture_called.append(path)
+            return Success(MagicMock())
+
+        monkeypatch.setattr("pipelines.capture.capture_file", fake_capture_file)
+
+        def fake_audit_write(*args, **kwargs):
+            from core.result import Success
+            return Success(None)
+
+        monkeypatch.setattr("pipelines.capture.audit.write", fake_audit_write)
+
+        result = await scan_capture(root=vault_root, db_path=db_path)
+
+        assert isinstance(result, Success)
+        # No move calls — the note stays in place
+        assert move_calls == [], (
+            f"Expected no move calls for valid nested project path, got {move_calls}"
+        )
+        # capture_file IS called for the valid path
+        assert str(note) in [str(p) for p in capture_called], (
+            f"Expected capture_file for {note}, got {capture_called}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_misplaced_md_in_domain_root_swept_to_inbox(
+        self, vault_root, db_path, pipeline_ctx, monkeypatch
+    ):
+        """Domain/stray.md is moved to inbox/stray.md."""
+        from pipelines.capture import scan_capture
+
+        stray = vault_root / "Domain" / "stray.md"
+        stray.write_text("# Domain Stray\n\nbody", encoding="utf-8")
+
+        move_calls: list[tuple] = []
+
+        def fake_move_note(src, dst, actor):
+            move_calls.append((str(src), str(dst), actor))
+            from core.result import Success
+            return Success(None)
+
+        monkeypatch.setattr("pipelines.capture.move_note", fake_move_note)
+
+        def fake_delete_by_path(vault_path, db_path=None):
+            from core.result import Success
+            return Success(0)
+
+        monkeypatch.setattr("pipelines.capture.documents.delete_by_path", fake_delete_by_path)
+
+        capture_called: list[Path] = []
+
+        async def fake_capture_file(path, context=None):
+            capture_called.append(path)
+            return Success(MagicMock())
+
+        monkeypatch.setattr("pipelines.capture.capture_file", fake_capture_file)
+
+        def fake_audit_write(*args, **kwargs):
+            from core.result import Success
+            return Success(None)
+
+        monkeypatch.setattr("pipelines.capture.audit.write", fake_audit_write)
+
+        result = await scan_capture(root=vault_root, db_path=db_path)
+
+        assert isinstance(result, Success)
+        inbox_dst = vault_root / "inbox" / "stray.md"
+        assert any(str(inbox_dst) in str(m[1]) for m in move_calls), (
+            f"Expected move to {inbox_dst}, got {move_calls}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_misplaced_sweep_audit_written(
+        self, vault_root, db_path, pipeline_ctx, monkeypatch
+    ):
+        """Audit row with outcome='MISPLACED' is written after sweep."""
+        from pipelines.capture import scan_capture
+
+        stray = vault_root / "Projects" / "stray.md"
+        stray.write_text("# Stray\n\nbody", encoding="utf-8")
+
+        def fake_move_note(src, dst, actor):
+            from core.result import Success
+            return Success(None)
+
+        monkeypatch.setattr("pipelines.capture.move_note", fake_move_note)
+
+        def fake_delete_by_path(vault_path, db_path=None):
+            from core.result import Success
+            return Success(0)
+
+        monkeypatch.setattr("pipelines.capture.documents.delete_by_path", fake_delete_by_path)
+
+        capture_called: list[Path] = []
+
+        async def fake_capture_file(path, context=None):
+            capture_called.append(path)
+            return Success(MagicMock())
+
+        monkeypatch.setattr("pipelines.capture.capture_file", fake_capture_file)
+
+        audit_calls: list[tuple] = []
+
+        def fake_audit_write(decision, pipeline, stage, outcome, db_path=None):
+            audit_calls.append((decision.action, outcome, stage))
+            from core.result import Success
+            return Success(None)
+
+        monkeypatch.setattr("pipelines.capture.audit.write", fake_audit_write)
+
+        result = await scan_capture(root=vault_root, db_path=db_path)
+
+        assert isinstance(result, Success)
+        assert any(
+            action == "capture:sweep" and outcome == "MISPLACED"
+            for action, outcome, stage in audit_calls
+        ), f"Expected capture:sweep + MISPLACED audit row, got {audit_calls}"
+
+    @pytest.mark.asyncio
+    async def test_misplaced_sweep_cleans_stale_db_row(
+        self, vault_root, db_path, pipeline_ctx, monkeypatch
+    ):
+        """documents.delete_by_path is called to clean up stale DB row before move."""
+        from pipelines.capture import scan_capture
+
+        stray = vault_root / "Projects" / "stray.md"
+        stray.write_text("# Stray\n\nbody", encoding="utf-8")
+
+        def fake_move_note(src, dst, actor):
+            from core.result import Success
+            return Success(None)
+
+        monkeypatch.setattr("pipelines.capture.move_note", fake_move_note)
+
+        delete_calls: list[str] = []
+
+        def fake_delete_by_path(vault_path, db_path=None):
+            delete_calls.append(vault_path)
+            from core.result import Success
+            return Success(0)
+
+        monkeypatch.setattr("pipelines.capture.documents.delete_by_path", fake_delete_by_path)
+
+        async def fake_capture_file(path, context=None):
+            return Success(MagicMock())
+
+        monkeypatch.setattr("pipelines.capture.capture_file", fake_capture_file)
+
+        def fake_audit_write(*args, **kwargs):
+            from core.result import Success
+            return Success(None)
+
+        monkeypatch.setattr("pipelines.capture.audit.write", fake_audit_write)
+
+        result = await scan_capture(root=vault_root, db_path=db_path)
+
+        assert isinstance(result, Success)
+        assert "Projects/stray.md" in delete_calls, (
+            f"Expected delete_by_path for Projects/stray.md, got {delete_calls}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_misplaced_sweep_handles_collision(
+        self, vault_root, db_path, pipeline_ctx, monkeypatch
+    ):
+        """When inbox/stray.md already exists, sweep uses stray-1.md."""
+        from pipelines.capture import scan_capture
+
+        # Pre-existing inbox/stray.md
+        inbox_existing = vault_root / "inbox" / "stray.md"
+        inbox_existing.write_text("# Existing\n\ncontent", encoding="utf-8")
+
+        stray = vault_root / "Projects" / "stray.md"
+        stray.write_text("# New Stray\n\nbody", encoding="utf-8")
+
+        move_calls: list[tuple] = []
+
+        def fake_move_note(src, dst, actor):
+            move_calls.append((str(src), str(dst), actor))
+            from core.result import Success
+            return Success(None)
+
+        monkeypatch.setattr("pipelines.capture.move_note", fake_move_note)
+
+        def fake_delete_by_path(vault_path, db_path=None):
+            from core.result import Success
+            return Success(0)
+
+        monkeypatch.setattr("pipelines.capture.documents.delete_by_path", fake_delete_by_path)
+
+        capture_called: list[Path] = []
+
+        async def fake_capture_file(path, context=None):
+            capture_called.append(path)
+            return Success(MagicMock())
+
+        monkeypatch.setattr("pipelines.capture.capture_file", fake_capture_file)
+
+        def fake_audit_write(*args, **kwargs):
+            from core.result import Success
+            return Success(None)
+
+        monkeypatch.setattr("pipelines.capture.audit.write", fake_audit_write)
+
+        result = await scan_capture(root=vault_root, db_path=db_path)
+
+        assert isinstance(result, Success)
+        # Should move to inbox/stray-1.md (collision resolution)
+        inbox_dst = vault_root / "inbox" / "stray-1.md"
+        assert any(str(inbox_dst) in str(m[1]) for m in move_calls), (
+            f"Expected move to {inbox_dst} (collision), got {move_calls}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_misplaced_sweep_move_failure_logs_warning_skips(
+        self, vault_root, db_path, pipeline_ctx, monkeypatch, caplog
+    ):
+        """On Failure from move_note, log warning and skip capture_file."""
+        import logging
+        from pipelines.capture import scan_capture
+
+        stray = vault_root / "Projects" / "stray.md"
+        stray.write_text("# Stray\n\nbody", encoding="utf-8")
+
+        def fake_move_note(src, dst, actor):
+            return Failure(error="move failed", recoverable=False, context={})
+
+        monkeypatch.setattr("pipelines.capture.move_note", fake_move_note)
+
+        def fake_delete_by_path(vault_path, db_path=None):
+            from core.result import Success
+            return Success(0)
+
+        monkeypatch.setattr("pipelines.capture.documents.delete_by_path", fake_delete_by_path)
+
+        capture_called: list[Path] = []
+
+        async def fake_capture_file(path, context=None):
+            capture_called.append(path)
+            return Success(MagicMock())
+
+        monkeypatch.setattr("pipelines.capture.capture_file", fake_capture_file)
+
+        def fake_audit_write(*args, **kwargs):
+            from core.result import Success
+            return Success(None)
+
+        monkeypatch.setattr("pipelines.capture.audit.write", fake_audit_write)
+
+        with caplog.at_level(logging.WARNING, logger="pipelines.capture"):
+            result = await scan_capture(root=vault_root, db_path=db_path)
+
+        assert isinstance(result, Success)
+        # capture_file must NOT be called for the stray file
+        assert str(stray) not in [str(p) for p in capture_called], (
+            f"Expected no capture_file for {stray} after move failure, got {capture_called}"
+        )

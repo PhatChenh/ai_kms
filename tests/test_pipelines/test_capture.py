@@ -6,7 +6,7 @@ TDD order: _parse_metadata_json → extract → enrich_urls → summarize → me
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from pathlib import Path
 
 from core.result import Failure, Success
@@ -306,7 +306,7 @@ async def test_metadata_writes_audit_log_row(vault_root, pipeline_ctx, monkeypat
 
 @pytest.mark.asyncio
 async def test_metadata_ai_type_derived_from_type_tag(vault_root, pipeline_ctx, monkeypatch):
-    from pipelines.capture import metadata, MetadataResult, SummarizeResult
+    from pipelines.capture import metadata, SummarizeResult
     from llm.provider import LLMResponse
 
     md_file = vault_root / "inbox" / "note.md"
@@ -1101,7 +1101,7 @@ async def test_idempotent_md_not_in_db_runs_pipeline(vault_root, pipeline_ctx, m
 async def test_idempotent_binary_matching_source_hash_skipped(vault_root, pipeline_ctx, monkeypatch):
     """Binary with sibling whose source_hash matches → SKIPPED, pipeline not called."""
     from pipelines.capture import capture_file
-    from vault.writer import WriteOutcome, write_note
+    from vault.writer import write_note
     from vault.frontmatter import NoteMetadata
     from unittest.mock import MagicMock
     from storage.audit_log import query
@@ -1269,7 +1269,7 @@ async def test_audit_skipped_fails_silently_success_still_returned(vault_root, p
 async def test_idempotent_located_binary_matching_hash_skipped(vault_root, pipeline_ctx, monkeypatch):
     """LOCATED binary (Projects/Alpha/attachment/) with sibling at .summaries/ whose source_hash matches → SKIPPED, pipeline not called."""
     from pipelines.capture import capture_file
-    from vault.writer import WriteOutcome, write_note
+    from vault.writer import write_note
     from vault.frontmatter import NoteMetadata
     from unittest.mock import MagicMock
     import hashlib
@@ -1311,3 +1311,650 @@ async def test_idempotent_located_binary_matching_hash_skipped(vault_root, pipel
 
     assert isinstance(result, Success)
     assert len(run_pipeline_called) == 0, "pipeline must NOT run when LOCATED source_hash matches"
+
+
+# ===========================================================================
+# TestStoreNonmdLocatedBranch — Phase 4 T3: resolve_placement integration
+# ===========================================================================
+
+
+class TestStoreNonmdLocatedBranch:
+    """Unit tests for _store_nonmd LOCATED branch after T3 resolve_placement wiring.
+
+    All tests construct VaultConfig(root=tmp_path) directly, patch
+    resolve_placement as pipelines.capture.resolve_placement (TD-033),
+    and patch write_note, move_attachment, audit, documents as
+    pipelines.capture.*.
+    """
+
+    # -- helpers ----------------------------------------------------------------
+
+    @staticmethod
+    def _make_pipeline_ctx(tmp_path, vault_cfg):
+        """Build a PipelineContext with a mock config carrying the VaultConfig."""
+        from unittest.mock import MagicMock
+        cfg = MagicMock()
+        cfg.vault = vault_cfg
+        from core.pipeline import PipelineContext
+        return PipelineContext(config=cfg, correlation_id="test-cid", db_path=tmp_path / "test.db")
+
+    @staticmethod
+    def _make_metadata_result(src, suffix=".docx"):
+        """Build a MetadataResult for a non-md file at *src*."""
+        from handlers.base import RawContent
+        from core.confidence import AIDecision
+        from pipelines.capture import MetadataResult
+        raw = RawContent(text="Content text.", source_path=src, is_md=False)
+        return MetadataResult(
+            raw=raw,
+            summary="A test summary.",
+            ai_title="Test Report",
+            ai_type=None,
+            ai_domain=None,
+            ai_tags=[],
+            decision=AIDecision(action="capture:metadata", confidence=0.9, reasoning="...", source_ids=[str(src)]),
+            ai_project=None,
+        )
+
+    @staticmethod
+    def _setup_common_patches(monkeypatch, placement, vault_cfg):
+        """Install mocks for all collaborators of _store_nonmd.
+
+        Returns a dict with the mock objects so individual tests can assert on them.
+        """
+        from unittest.mock import AsyncMock, MagicMock
+        from core.result import Success
+        from core.rename_gate import RenameAction, RenameDecision
+        from llm.provider import LLMResponse
+        from vault.frontmatter import NoteMetadata
+        from vault.writer import WriteOutcome
+
+        mocks: dict = {}
+
+        # --- CONFIG (to_vault_path() uses CONFIG.main.vault.root) ---
+        import core.config as cfg_module
+        fake_full = MagicMock()
+        fake_main = MagicMock()
+        fake_main.vault = vault_cfg
+        fake_full.main = fake_main
+        monkeypatch.setattr(cfg_module, "_CONFIG", fake_full)
+        monkeypatch.setattr("pipelines.capture.resolve_placement", lambda *a, **kw: placement)
+
+        # --- write_note (sync — called without await in _store_nonmd) ---
+        mock_write_note_call_args = []
+        mock_write_note = MagicMock()
+        mock_write_note.side_effect = lambda *a, **kw: (
+            mock_write_note_call_args.append((a, kw))
+            or Success(WriteOutcome(vault_path="mocked/vp.md",
+                                    absolute_path=placement.sibling_dir / "mock.md",
+                                    content_hash="abc123",
+                                    metadata=NoteMetadata(type="attachment-summary")))
+        )
+        monkeypatch.setattr("pipelines.capture.write_note", mock_write_note)
+        mocks["write_note"] = mock_write_note
+        mocks["write_note_call_args"] = mock_write_note_call_args
+
+        # --- move_attachment (sync — called without await in _store_nonmd) ---
+        mock_move_call_args = []
+        mock_move = MagicMock()
+        mock_move.side_effect = lambda *a, **kw: (
+            mock_move_call_args.append((a, kw))
+            or Success(None)
+        )
+        monkeypatch.setattr("pipelines.capture.move_attachment", mock_move)
+        mocks["move_attachment"] = mock_move
+        mocks["move_attachment_call_args"] = mock_move_call_args
+
+        # --- audit ---
+        mock_audit = MagicMock()
+        mock_audit.write = MagicMock(return_value=Success(None))
+        monkeypatch.setattr("pipelines.capture.audit", mock_audit)
+        mocks["audit"] = mock_audit
+
+        # --- documents ---
+        mock_docs = MagicMock()
+        mock_docs.upsert = MagicMock(return_value=Success(None))
+        mock_docs.get_by_path = MagicMock(return_value=Success(None))
+        monkeypatch.setattr("pipelines.capture.documents", mock_docs)
+        mocks["documents"] = mock_docs
+
+        # --- decide_rename ---
+        mock_rename_decision = RenameDecision(
+            action=RenameAction.SKIP, final_stem="report", reason="AI title matches", confidence=1.0
+        )
+        monkeypatch.setattr("pipelines.capture.decide_rename", lambda *a, **kw: mock_rename_decision)
+
+        # --- get_provider (LLM) ---
+        mock_provider = MagicMock()
+        mock_provider.complete = AsyncMock(return_value=Success(
+            LLMResponse(content="Mocked LLM summary.", model="mock-model", usage={})
+        ))
+        monkeypatch.setattr("pipelines.capture.get_provider", lambda *a, **kw: mock_provider)
+
+        return mocks
+
+    # -- test 1: editable file not in attachment ---------------------------------
+
+    @pytest.mark.asyncio
+    async def test_editable_not_in_attachment_no_move(self, tmp_path, monkeypatch):
+        """Editable .docx at Projects/Alpha/ root → stays at root, sibling in root .summaries/."""
+        from core.config import VaultConfig
+        from vault.paths import Placement
+
+        vault_root = tmp_path / "vault"
+        projects = vault_root / "Projects" / "Alpha"
+        projects.mkdir(parents=True, exist_ok=True)
+        vault_cfg = VaultConfig(root=vault_root)
+
+        src = projects / "report.docx"
+        src.write_bytes(b"mock docx content")
+
+        placement = Placement(
+            final_dir=projects,
+            sibling_dir=projects / vault_cfg.summaries_subdir,
+            needs_move=False,
+        )
+        mocks = self._setup_common_patches(monkeypatch, placement, vault_cfg)
+
+        ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
+        mr = self._make_metadata_result(src)
+        from vault.frontmatter import NoteMetadata
+        note_meta = NoteMetadata(summary="test", tags=[])
+
+        # Patch _audit_rename_gate to skip its audit calls
+        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        # Patch _audit_file_lost
+        monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
+
+        from pipelines.capture import _store_nonmd
+        result = await _store_nonmd(mr, note_meta, ctx)
+
+        assert result.is_success(), f"Expected Success, got {result}"
+        # move_attachment must NOT be called
+        mocks["move_attachment"].assert_not_called()
+        # sibling must be at root .summaries/
+        sibling_call = mocks["write_note"].call_args
+        sibling_path = sibling_call[0][0]  # first positional arg = path
+        assert sibling_path.parent.name == vault_cfg.summaries_subdir
+        assert sibling_path.parent.parent == projects
+        assert sibling_path.name == "report.docx.md"
+
+    # -- test 2: editable file in attachment → moved OUT to root ------------------
+
+    @pytest.mark.asyncio
+    async def test_editable_in_attachment_moved_to_root(self, tmp_path, monkeypatch):
+        """Editable .docx inside attachment/ → moved to project root."""
+        from core.config import VaultConfig
+        from vault.paths import Placement
+
+        vault_root = tmp_path / "vault"
+        att_dir = vault_root / "Projects" / "Alpha" / "attachment"
+        att_dir.mkdir(parents=True, exist_ok=True)
+        vault_cfg = VaultConfig(root=vault_root)
+
+        src = att_dir / "report.docx"
+        src.write_bytes(b"mock docx content")
+        projects_root = vault_root / "Projects" / "Alpha"
+
+        placement = Placement(
+            final_dir=projects_root,
+            sibling_dir=projects_root / vault_cfg.summaries_subdir,
+            needs_move=True,
+        )
+        mocks = self._setup_common_patches(monkeypatch, placement, vault_cfg)
+
+        ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
+        mr = self._make_metadata_result(src)
+        from vault.frontmatter import NoteMetadata
+        note_meta = NoteMetadata(summary="test", tags=[])
+
+        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
+
+        from pipelines.capture import _store_nonmd
+        result = await _store_nonmd(mr, note_meta, ctx)
+
+        assert result.is_success(), f"Expected Success, got {result}"
+        # move_attachment MUST be called — binary moved from attachment/ to root
+        mocks["move_attachment"].assert_called_once()
+        call_args = mocks["move_attachment"].call_args
+        dst_arg = call_args[0][1]  # second positional arg = dst
+        assert dst_arg.parent == projects_root
+        assert dst_arg.name == "report.docx"
+
+    # -- test 3: no-edit file not in attachment → moved INTO attachment -----------
+
+    @pytest.mark.asyncio
+    async def test_noedit_not_in_attachment_moved_in(self, tmp_path, monkeypatch):
+        """No-edit .pdf at project root → moved to attachment/."""
+        from core.config import VaultConfig
+        from vault.paths import Placement
+
+        vault_root = tmp_path / "vault"
+        projects = vault_root / "Projects" / "Alpha"
+        projects.mkdir(parents=True, exist_ok=True)
+        vault_cfg = VaultConfig(root=vault_root)
+
+        src = projects / "report.pdf"
+        src.write_bytes(b"mock pdf content")
+        att_dir = projects / vault_cfg.attachment_dir
+
+        placement = Placement(
+            final_dir=att_dir,
+            sibling_dir=att_dir / vault_cfg.summaries_subdir,
+            needs_move=True,
+        )
+        mocks = self._setup_common_patches(monkeypatch, placement, vault_cfg)
+
+        ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
+        mr = self._make_metadata_result(src)
+        from vault.frontmatter import NoteMetadata
+        note_meta = NoteMetadata(summary="test", tags=[])
+
+        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
+
+        from pipelines.capture import _store_nonmd
+        result = await _store_nonmd(mr, note_meta, ctx)
+
+        assert result.is_success(), f"Expected Success, got {result}"
+        mocks["move_attachment"].assert_called_once()
+        call_args = mocks["move_attachment"].call_args
+        dst_arg = call_args[0][1]
+        assert dst_arg.parent == att_dir
+        assert dst_arg.name == "report.pdf"
+
+    # -- test 4: no-edit already in attachment → no move --------------------------
+
+    @pytest.mark.asyncio
+    async def test_noedit_in_attachment_no_move(self, tmp_path, monkeypatch):
+        """No-edit .pdf already in attachment/ → stays put."""
+        from core.config import VaultConfig
+        from vault.paths import Placement
+
+        vault_root = tmp_path / "vault"
+        att_dir = vault_root / "Projects" / "Alpha" / "attachment"
+        att_dir.mkdir(parents=True, exist_ok=True)
+        vault_cfg = VaultConfig(root=vault_root)
+
+        src = att_dir / "report.pdf"
+        src.write_bytes(b"mock pdf content")
+
+        placement = Placement(
+            final_dir=att_dir,
+            sibling_dir=att_dir / vault_cfg.summaries_subdir,
+            needs_move=False,
+        )
+        mocks = self._setup_common_patches(monkeypatch, placement, vault_cfg)
+
+        ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
+        mr = self._make_metadata_result(src)
+        from vault.frontmatter import NoteMetadata
+        note_meta = NoteMetadata(summary="test", tags=[])
+
+        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
+
+        from pipelines.capture import _store_nonmd
+        result = await _store_nonmd(mr, note_meta, ctx)
+
+        assert result.is_success(), f"Expected Success, got {result}"
+        mocks["move_attachment"].assert_not_called()
+
+    # -- test 5: domain symmetry --------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_domain_symmetry_editable_no_move(self, tmp_path, monkeypatch):
+        """Editable file in Domain/Finance/ → stays at root, sibling in domain .summaries/."""
+        from core.config import VaultConfig
+        from vault.paths import Placement
+
+        vault_root = tmp_path / "vault"
+        domain_dir = vault_root / "Domain" / "Finance"
+        domain_dir.mkdir(parents=True, exist_ok=True)
+        vault_cfg = VaultConfig(root=vault_root)
+
+        src = domain_dir / "budget.xlsx"
+        src.write_bytes(b"mock xlsx content")
+
+        placement = Placement(
+            final_dir=domain_dir,
+            sibling_dir=domain_dir / vault_cfg.summaries_subdir,
+            needs_move=False,
+        )
+        mocks = self._setup_common_patches(monkeypatch, placement, vault_cfg)
+
+        ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
+        mr = self._make_metadata_result(src)
+        from vault.frontmatter import NoteMetadata
+        note_meta = NoteMetadata(summary="test", tags=[])
+
+        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
+
+        from pipelines.capture import _store_nonmd
+        result = await _store_nonmd(mr, note_meta, ctx)
+
+        assert result.is_success(), f"Expected Success, got {result}"
+        mocks["move_attachment"].assert_not_called()
+        sibling_call = mocks["write_note"].call_args
+        sibling_path = sibling_call[0][0]
+        assert sibling_path.parent.name == vault_cfg.summaries_subdir
+        assert sibling_path.parent.parent == domain_dir
+
+    # -- test 6: collision loop uses placement.final_dir --------------------------
+
+    @pytest.mark.asyncio
+    async def test_collision_loop_uses_final_dir(self, tmp_path, monkeypatch):
+        """When destination slot occupied, collision loop runs against final_dir (root, not attachment)."""
+        from core.config import VaultConfig
+        from vault.paths import Placement
+
+        vault_root = tmp_path / "vault"
+        projects = vault_root / "Projects" / "Alpha"
+        projects.mkdir(parents=True, exist_ok=True)
+        vault_cfg = VaultConfig(root=vault_root)
+
+        # Source is in attachment/ → needs_move=True
+        att_dir = projects / vault_cfg.attachment_dir
+        att_dir.mkdir(parents=True, exist_ok=True)
+        src = att_dir / "report.docx"
+        src.write_bytes(b"mock docx content")
+
+        # Place target at root — create collision slots 0 and 1
+        (projects / "report.docx").write_bytes(b"collision 0")
+        (projects / "report-1.docx").write_bytes(b"collision 1")
+
+        placement = Placement(
+            final_dir=projects,  # root, not attachment
+            sibling_dir=projects / vault_cfg.summaries_subdir,
+            needs_move=True,
+        )
+        mocks = self._setup_common_patches(monkeypatch, placement, vault_cfg)
+
+        ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
+        mr = self._make_metadata_result(src)
+        from vault.frontmatter import NoteMetadata
+        note_meta = NoteMetadata(summary="test", tags=[])
+
+        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
+
+        from pipelines.capture import _store_nonmd
+        result = await _store_nonmd(mr, note_meta, ctx)
+
+        assert result.is_success(), f"Expected Success, got {result}"
+        # Binary should end up at report-2.docx (skipped 0 and 1)
+        call_args = mocks["move_attachment"].call_args
+        dst_arg = call_args[0][1]
+        assert dst_arg.parent == projects
+        assert dst_arg.name == "report-2.docx"
+
+    # -- test 7: collision exhaustion --------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_collision_exhaustion_100_slots(self, tmp_path, monkeypatch):
+        """When all 100 collision slots are taken, return Failure(recoverable=False)."""
+        from core.config import VaultConfig
+        from vault.paths import Placement
+
+        vault_root = tmp_path / "vault"
+        projects = vault_root / "Projects" / "Alpha"
+        projects.mkdir(parents=True, exist_ok=True)
+        vault_cfg = VaultConfig(root=vault_root)
+
+        att_dir = projects / vault_cfg.attachment_dir
+        att_dir.mkdir(parents=True, exist_ok=True)
+        src = att_dir / "report.docx"
+        src.write_bytes(b"mock docx content")
+
+        # Fill all 101 slots (0..100) at final_dir
+        (projects / "report.docx").write_bytes(b"slot 0")
+        for i in range(1, 101):
+            (projects / f"report-{i}.docx").write_bytes(b"slot")
+
+        placement = Placement(
+            final_dir=projects,
+            sibling_dir=projects / vault_cfg.summaries_subdir,
+            needs_move=True,
+        )
+        mocks = self._setup_common_patches(monkeypatch, placement, vault_cfg)
+
+        ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
+        mr = self._make_metadata_result(src)
+        from vault.frontmatter import NoteMetadata
+        note_meta = NoteMetadata(summary="test", tags=[])
+
+        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
+
+        from pipelines.capture import _store_nonmd
+        result = await _store_nonmd(mr, note_meta, ctx)
+
+        assert not result.is_success()
+        assert not result.recoverable
+        assert "collision" in result.error.lower()
+
+    # -- test 8: audit reasoning editable→root -----------------------------------
+
+    @pytest.mark.asyncio
+    async def test_audit_reasoning_contains_editable_to_root(self, tmp_path, monkeypatch):
+        """Audit reasoning includes 'editable→root' for editable files."""
+        from core.config import VaultConfig
+        from vault.paths import Placement
+
+        vault_root = tmp_path / "vault"
+        projects = vault_root / "Projects" / "Alpha"
+        projects.mkdir(parents=True, exist_ok=True)
+        vault_cfg = VaultConfig(root=vault_root)
+
+        src = projects / "report.docx"
+        src.write_bytes(b"mock docx content")
+
+        placement = Placement(
+            final_dir=projects,
+            sibling_dir=projects / vault_cfg.summaries_subdir,
+            needs_move=False,
+        )
+        mocks = self._setup_common_patches(monkeypatch, placement, vault_cfg)
+
+        ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
+        mr = self._make_metadata_result(src)
+        from vault.frontmatter import NoteMetadata
+        note_meta = NoteMetadata(summary="test", tags=[])
+
+        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
+
+        from pipelines.capture import _store_nonmd
+        result = await _store_nonmd(mr, note_meta, ctx)
+
+        assert result.is_success(), f"Expected Success, got {result}"
+        # Find the LOCATED audit call
+        audit_calls = mocks["audit"].write.call_args_list
+        located_call = None
+        for call in audit_calls:
+            if call.kwargs.get("outcome") == "LOCATED":
+                located_call = call
+                break
+        assert located_call is not None, "No LOCATED audit call found"
+        reasoning = located_call[0][0].reasoning  # first positional arg = AIDecision
+        assert "editable→root" in reasoning, f"Reasoning missing 'editable→root': {reasoning}"
+
+    # -- test 9: audit reasoning no-edit→attachment ------------------------------
+
+    @pytest.mark.asyncio
+    async def test_audit_reasoning_contains_noedit_to_attachment(self, tmp_path, monkeypatch):
+        """Audit reasoning includes 'no-edit→attachment' for no-edit files."""
+        from core.config import VaultConfig
+        from vault.paths import Placement
+
+        vault_root = tmp_path / "vault"
+        att_dir = vault_root / "Projects" / "Alpha" / "attachment"
+        att_dir.mkdir(parents=True, exist_ok=True)
+        vault_cfg = VaultConfig(root=vault_root)
+
+        src = att_dir / "report.pdf"
+        src.write_bytes(b"mock pdf content")
+
+        placement = Placement(
+            final_dir=att_dir,
+            sibling_dir=att_dir / vault_cfg.summaries_subdir,
+            needs_move=False,
+        )
+        mocks = self._setup_common_patches(monkeypatch, placement, vault_cfg)
+
+        ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
+        mr = self._make_metadata_result(src)
+        from vault.frontmatter import NoteMetadata
+        note_meta = NoteMetadata(summary="test", tags=[])
+
+        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
+
+        from pipelines.capture import _store_nonmd
+        result = await _store_nonmd(mr, note_meta, ctx)
+
+        assert result.is_success(), f"Expected Success, got {result}"
+        audit_calls = mocks["audit"].write.call_args_list
+        located_call = None
+        for call in audit_calls:
+            if call.kwargs.get("outcome") == "LOCATED":
+                located_call = call
+                break
+        assert located_call is not None, "No LOCATED audit call found"
+        reasoning = located_call[0][0].reasoning
+        assert "no-edit→attachment" in reasoning, f"Reasoning missing 'no-edit→attachment': {reasoning}"
+
+    # -- test 10: root-placement sibling has type="attachment-summary" ------------
+
+    @pytest.mark.asyncio
+    async def test_root_placement_sibling_has_type_attachment_summary(self, tmp_path, monkeypatch):
+        """Root-level sibling metadata carries type='attachment-summary' (DECISION-029)."""
+        from core.config import VaultConfig
+        from vault.paths import Placement
+
+        vault_root = tmp_path / "vault"
+        projects = vault_root / "Projects" / "Alpha"
+        projects.mkdir(parents=True, exist_ok=True)
+        vault_cfg = VaultConfig(root=vault_root)
+
+        src = projects / "report.docx"
+        src.write_bytes(b"mock docx content")
+
+        placement = Placement(
+            final_dir=projects,
+            sibling_dir=projects / vault_cfg.summaries_subdir,
+            needs_move=False,
+        )
+        mocks = self._setup_common_patches(monkeypatch, placement, vault_cfg)
+
+        ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
+        mr = self._make_metadata_result(src)
+        from vault.frontmatter import NoteMetadata
+        note_meta = NoteMetadata(summary="test", tags=[])
+
+        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
+
+        from pipelines.capture import _store_nonmd
+        result = await _store_nonmd(mr, note_meta, ctx)
+
+        assert result.is_success(), f"Expected Success, got {result}"
+        # write_note was called — second positional arg is the NoteMetadata
+        sibling_call = mocks["write_note"].call_args
+        sibling_meta = sibling_call[0][2]  # third positional arg = NoteMetadata
+        assert sibling_meta.type == "attachment-summary", \
+            f"Expected type='attachment-summary', got type={sibling_meta.type!r}"
+
+    # -- test 11: CLUELESS branch unaffected -------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_clueless_branch_unaffected(self, tmp_path, monkeypatch):
+        """File with no project/domain context → inbox-park, resolve_placement NOT called."""
+        from core.config import VaultConfig
+
+        vault_root = tmp_path / "vault"
+        other = vault_root / "other"
+        other.mkdir(parents=True, exist_ok=True)
+        inbox = vault_root / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        vault_cfg = VaultConfig(root=vault_root)
+
+        src = other / "mystery.pdf"
+        src.write_bytes(b"unknown location")
+
+        # resolve_placement must NOT be called; set a sentinel that raises
+        resolve_called = []
+
+        def _resolve_placement_spy(*args, **kwargs):
+            resolve_called.append(True)
+            raise AssertionError("resolve_placement must not be called in CLUELESS branch")
+
+        monkeypatch.setattr("pipelines.capture.resolve_placement", _resolve_placement_spy)
+
+        # Common patches for other deps (needs move_attachment for inbox-park)
+        from unittest.mock import AsyncMock, MagicMock
+        from core.result import Success
+        from vault.frontmatter import NoteMetadata
+        from vault.writer import WriteOutcome
+
+        # --- CONFIG (to_vault_path() uses CONFIG.main.vault.root) ---
+        import core.config as cfg_module
+        fake_full = MagicMock()
+        fake_main = MagicMock()
+        fake_main.vault = vault_cfg
+        fake_full.main = fake_main
+        monkeypatch.setattr(cfg_module, "_CONFIG", fake_full)
+
+        # --- write_note (sync) ---
+        mock_write_note = MagicMock(return_value=Success(
+            WriteOutcome(vault_path="inbox/.summaries/mystery.pdf.md",
+                         absolute_path=inbox / ".summaries" / "mystery.pdf.md",
+                         content_hash="abc", metadata=NoteMetadata(type="attachment-summary"))
+        ))
+        monkeypatch.setattr("pipelines.capture.write_note", mock_write_note)
+
+        # --- move_attachment (sync) ---
+        mock_move = MagicMock(return_value=Success(None))
+        monkeypatch.setattr("pipelines.capture.move_attachment", mock_move)
+
+        # --- audit ---
+        mock_audit = MagicMock()
+        mock_audit.write = MagicMock(return_value=Success(None))
+        monkeypatch.setattr("pipelines.capture.audit", mock_audit)
+
+        # --- documents ---
+        mock_docs = MagicMock()
+        mock_docs.upsert = MagicMock(return_value=Success(None))
+        mock_docs.get_by_path = MagicMock(return_value=Success(None))
+        monkeypatch.setattr("pipelines.capture.documents", mock_docs)
+
+        from core.rename_gate import RenameAction, RenameDecision
+        monkeypatch.setattr("pipelines.capture.decide_rename",
+                            lambda *a, **kw: RenameDecision(action=RenameAction.SKIP, final_stem="mystery",
+                                                            reason="...", confidence=1.0))
+        from llm.provider import LLMResponse
+        mock_provider = MagicMock()
+        mock_provider.complete = AsyncMock(return_value=Success(
+            LLMResponse(content="Mocked LLM summary.", model="mock-model", usage={})
+        ))
+        monkeypatch.setattr("pipelines.capture.get_provider", lambda *a, **kw: mock_provider)
+
+        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
+
+        ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
+        mr = self._make_metadata_result(src)
+        note_meta = NoteMetadata(summary="test", tags=[])
+
+        from pipelines.capture import _store_nonmd
+        result = await _store_nonmd(mr, note_meta, ctx)
+
+        # CLUELESS path: file NOT under Projects/ or Domain/ should be parked in inbox
+        assert len(resolve_called) == 0, "resolve_placement must NOT be called in CLUELESS branch"
+        assert result.is_success(), f"Expected Success, got {result}"
+        # Should have moved to inbox
+        mock_move.assert_called_once()
+        move_dst = mock_move.call_args[0][1]
+        assert move_dst.parent == inbox

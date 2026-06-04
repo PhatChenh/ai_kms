@@ -1,5 +1,4 @@
 import pytest
-import structlog
 
 import core.audit as audit
 import storage.audit_log as audit_log
