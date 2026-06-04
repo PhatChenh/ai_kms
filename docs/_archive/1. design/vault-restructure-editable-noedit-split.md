@@ -2,20 +2,20 @@
 
 **Status:** Design (codebase-design-analysis output). Input for `/writing-detailed-specs`.
 **Source draft:** `docs/draft/vault-restructure-editable-noedit-split.md`
-**Generated:** 2026-06-03 via 9 sequential design agents (one per task). T9 (content-change / atomic-save) deliberately excluded — probe-gated, deferred.
-**Method:** Each task designed in build-order; each agent read the real code, ran codebase-design-analysis (≥3 options, depth lens, guardrail checklist, success criteria), self-reported confidence, and passed its settled decisions to the next. **All 9 agents reported confident** — the recommended option for each was adopted as the chain's working decision.
+**Generated:** 2026-06-03 via 9 sequential design agents (one per task). T9 added 2026-06-04 after macOS atomic-save probe (real-vault event capture, three Office apps).
+**Method:** Each task designed in build-order; each agent read the real code, ran codebase-design-analysis (≥3 options, depth lens, guardrail checklist, success criteria), self-reported confidence, and passed its settled decisions to the next. **All 9 agents reported confident** — the recommended option for each was adopted as the chain's working decision. T9 designed inline (probe data available, single session).
 
 ---
 
 ## Build order (per draft L418–444)
 
-Hard deps: `T1 → T2 → T3`; `T3 → T8 → T6 → T7`; `T2/T3 → T10`. T8-before-T6 mandatory (re-home must not fire on the pipeline's own moves). T11 folds into T6 (verify only). T9 deferred (needs user + atomic-save probe).
+Hard deps: `T1 → T2 → T3`; `T3 → T8 → T6 → T7`; `T2/T3 → T10`. T8-before-T6 mandatory (re-home must not fire on the pipeline's own moves). T11 folds into T6 (verify only). T9 independent of T3 (watcher-only changes) — slot after T3 when editable files are in the root and actually get edited.
 
 1. **Foundation:** T5, T1, T4
 2. **Routing (headline):** T2 → T3
 3. **Move story:** T8 → T6 (T11 folds in) → T7
 4. **Migration:** T10
-5. **Deferred (NOT in this doc):** atomic-save probe → T9
+5. **Edit refresh (probe complete):** T9 — independent, slots after T3
 
 ---
 
@@ -32,6 +32,7 @@ Hard deps: `T1 → T2 → T3`; `T3 → T8 → T6 → T7`; `T2/T3 → T10`. T8-be
 | **T6** — Watcher: re-home on user move (incl. T11 correlation_id verify) | Option B — DB-driven re-home built on T2's resolve_placement, reusing the cross-folder branch of _handle_binary_move. Chosen because it reuses the single placement source of truth (no second copy of the editable/no-edit rule) and survives a missing on-disk source sibling (the move-chain case T7 cares about), at the cost of one extra DB read versus the on-disk-copy approach. | ✅ |
 | **T7** — Move-chain convergence (settle window) | Option B — Dedicated binary-settle cooldown registry mirroring the folder-cooldown token-guard pattern, keyed on the destination filename. Chosen because it reuses a battle-tested in-tree pattern (the C2 token guard) and converges A→B→C to a single re-home with no new identity infrastructure, at the cost of a known same-name-collision edge that is acceptable for a single sequential human user. | ✅ |
 | **T10** — Reconcile migration stage (editable-in-attachment) | Option A — new Stage 7 `reconcile_editable_migration` appended to the existing 6-stage pipeline, reusing the T2 `resolve_placement` helper and the T6 re-home mechanics (move binary + move sibling + fix frontmatter pointer + fix DB path). Chosen because it heals existing vaults with one on-demand command, lives where every other drift fix lives, and shares the single placement rule so capture and migration can never disagree. | ✅ |
+| **T9** — Content-change detection on binary edit (atomic-save aware) | Option A — `chg:` debounce key (third key alongside existing `str(path)` and `bin:{path}`) reset by MODIFY + DELETE events on binaries; fires `_handle_binary_content_change` which reads sibling `source_hash`, computes current hash, and calls `_on_create` only on mismatch. Plus `~$` lock-file filter in `_should_skip` and `path.exists()` guard in `_handle_binary_delete`. Probe-grounded: handles Word (last event = CREATE), Excel (last event = DELETE), and PowerPoint (last event = CREATE) save patterns. All changes in `vault/watcher.py` only. | ✅ |
 
 ---
 
@@ -1146,3 +1147,221 @@ Each task's concrete decisions that later tasks were built to honor. Use this as
 - Extend `_is_in_managed_attachment` / `_is_managed_summaries_area` (paths.py:26,56) to recognize root-level `Projects/<A>/.summaries/` and `Domain/<D>/.summaries/` (grandparent = projects_path/domain_path) — REQUIRED so Stage 4 protects migrated siblings.
 - SOFT T8: if `get_active()` is non-None, register root_dst with the MoveGuard before move_attachment to avoid a concurrent watcher re-homing the migration's own move.
 - Tests: VaultConfig(root=tmp_path) + PipelineContext explicit (C-17); branches {editable project, editable domain, no-edit stays, already-at-root no-op, human-locked skip}.
+
+## T9 — Content-change detection on binary edit (atomic-save aware)
+
+**Probe source:** Real-vault macOS event capture, 2026-06-04. Three Office apps, three save sequences logged. Design is probe-grounded — do not replace with assumptions.
+
+## 1. Implications
+
+**What the probe revealed — macOS atomic-save event sequences.**
+All three apps fire a burst of events on the original filename within a window of 1–35 ms, then stop. The file survives at the original path. No MOVE events appear in any sequence.
+
+```
+Word (.docx) open:   CREATE ~$<name>.docx, MODIFY ~$<name>.docx, MODIFY <name>.docx
+Word  Cmd+S burst:   MODIFY, DELETE, MODIFY, CREATE, MODIFY, CREATE  ← last = CREATE
+Excel (.xlsx) open:  MODIFY <name>.xlsx, CREATE ~$<name>.xlsx, MODIFY ~$<name>.xlsx
+Excel Cmd+S burst:   CREATE, MODIFY, DELETE                          ← last = DELETE
+PPT  (.pptx) open:   CREATE ~$<name>.pptx, MODIFY ~$<name>.pptx, MODIFY <name>.pptx
+PPT   Cmd+S burst:   MODIFY, CREATE, MODIFY, DELETE, MODIFY, CREATE  ← last = CREATE
+All   on close:      MODIFY ~$<name>.ext, DELETE ~$<name>.ext
+```
+
+Critical implication: **Excel's save burst ends with DELETE.** A naive handler that routes on the last event type would interpret an Excel save as a file deletion. The handler must be burst-aware.
+
+- The `~$<name>.ext` lock file is created by the Office process when the user opens the file, and deleted only when they close it — not during each save. It starts with `~$`, not `.`. Current `_should_skip` (`vault/watcher.py:134`) checks `path.name.startswith(".")`, which does **not** match `~$` files. Without a fix, every lock file create/modify fires `_debounce` and potentially `_on_create` → a spurious full capture of the lock file.
+
+- All three save sequences fire MODIFY events on the real binary path. `on_modified` (`watcher.py:251–260`) currently returns early for non-`.md` files at line 257 ("Binary modify deferred — TD-C6"). This is the primary gap: MODIFY events are silently dropped for every binary.
+
+- `_handle_binary_delete` (`watcher.py:303–342`) runs after the debounce window fires. It does NOT check whether `path.exists()` before orphaning the sibling. In Excel's save sequence, DELETE fires mid-burst but the file survives. After the 3 s debounce, `_handle_binary_delete` fires, finds the file exists (save completed), but without the guard it still attempts `delete_by_path` on the sibling DB row — silently orphaning a valid, living sibling. The main.py `on_delete` callback (cli/main.py:226) already contains `if path.exists(): return` for this exact reason (a comment on line 228 says "macOS FSEvents … old inode deleted but path remains"). `_handle_binary_delete` is missing the same guard.
+
+- `capture_file` (`pipelines/capture.py:793`) has a binary idempotency guard (lines 868–908): for each binary it finds the sibling, reads `source_hash` from sibling frontmatter, computes `hashlib.sha256(path.read_bytes()).hexdigest()`, and returns early if hashes match. This existing infrastructure is the correct re-capture decision point — T9 must route changed binaries **into** `capture_file`, not implement a separate re-capture pipeline.
+
+- The sibling-lookup logic in `capture_file` (lines 876–884) scans `path.parents` for the first `.summaries/<name>.md` candidate. After T3 ships (editable files in project root, sibling in root `.summaries/`), this scan will find root `.summaries/<name>.md` files correctly — no change needed to the lookup.
+
+- `read_note` is already imported at module scope in `watcher.py:41`. `hashlib` is not — must be added to watcher.py imports.
+
+- The MODIFY events during the burst all fire at the same `str(path)` debounce key if we route them there; the CREATE and DELETE events at the same key will overwrite each other's callback in `_debounce`. For Word/PPT (last event = CREATE), `str(path)` ends up routing to `_on_create`, which calls `capture_file` — already correct. For Excel (last event = DELETE), `str(path)` ends up routing to `_on_delete`, which in main.py returns early because `path.exists()`. So the `str(path)` key alone fails for Excel re-saves.
+
+- A dedicated third debounce key `chg:{path}` — independent of `str(path)` (user callback routing) and `bin:{path}` (binary sync/sibling cleanup) — guarantees that ALL three event types (MODIFY, CREATE, DELETE) converge on a single "check and maybe re-capture" callback regardless of which event fires last. The `chg:` timer is always the last line of defense, not the only one.
+
+- `_handle_binary_content_change` runs in a `threading.Timer` thread, same as `_handle_binary_delete`. Calling `self._on_create(path)` from it is safe: `_on_create` is a sync callable provided by main.py, and main.py's `on_create` calls `asyncio.run_coroutine_threadsafe(capture_file(...), loop)` — thread-safe by design (same pattern `_handle_binary_move` uses for no async calls, same timer-thread origin as other binary sync handlers).
+
+- **Files touched (directly):** `src/vault/watcher.py` — five localized edits: `_should_skip`, `on_modified`, `on_deleted`, `_handle_binary_delete`, new `_handle_binary_content_change`. No other file requires a code change for T9. `capture_file` and `capture.py` are unchanged — they are the correct re-capture engine, called via the existing `_on_create` callback.
+
+- **Downstream:** After T9, any binary edit in a project root (editable file) refreshes its sibling within ~3 s of save (one debounce window). No-edit files in `attachment/` are skipped by `_should_skip` (`_is_in_managed_attachment` check, watcher.py:130–133) before `chg:` debounce would fire — no spurious re-capture from `attachment/`.
+
+- **Module depth:** all five edits are inside one private class `_VaultEventHandler`. The new method `_handle_binary_content_change` is a 15-line pure check: exists? → sibling exists? → hash compare → call existing `_on_create`. Deletion test: remove it and the Excel re-save case stops triggering re-capture; Word/PPT still work via `str(path)` → `_on_create`. So it earns its keep specifically for the "last event = DELETE" save pattern.
+
+## 2. Guardrail Checklist
+
+| Rule | Applies? | How the recommended option satisfies it |
+|---|---|---|
+| C-01 vault-only writes | Yes | `_handle_binary_content_change` calls `self._on_create(path)` → main.py `on_create` → `asyncio.run_coroutine_threadsafe(capture_file(...))` → `write_note` in `vault/writer.py`. No direct vault write in watcher.py. |
+| C-02 updated_by_human gate | Yes | Re-capture enters via `capture_file` → `write_note`, which enforces the gate on the sibling. `_handle_binary_content_change` does not write anything itself — cannot bypass the gate. |
+| C-03 write_note merge — pipeline owns read-then-write | Yes | `_handle_binary_content_change` calls `read_note(sibling)` only to read `source_hash`; it does not call `write_note`. The re-capture pipeline (`capture_file`) owns the full read→write cycle. |
+| C-12 Result type on public pipeline functions | N/A | `_handle_binary_content_change` is a private watcher method in `vault/`, not a public `handlers/` or `pipelines/` function — constraint does not apply. `capture_file` it dispatches to does return `Result`. |
+| C-13 Audit log non-negotiable | Yes (vacuously) | `_handle_binary_content_change` makes no AI decision — it is a routing check. The re-capture it triggers goes through `capture_file`, which already audits every stage. The "hash unchanged → skip" branch is a watcher-internal optimization logged at DEBUG; no `audit_write` needed. |
+| C-17 Never import CONFIG in tests | Yes | Tests for `_handle_binary_content_change` use `VaultConfig(root=tmp_path)` directly. The `_on_create` callback is a mock. `read_note` call reads from `tmp_path` fixtures without touching CONFIG. |
+
+## 3. Success criteria
+
+**You can verify (vault-visible):**
+
+1. Given `Projects/A/goal.docx` with sibling `Projects/A/.summaries/goal.docx.md` (after T3 ships editable-in-root), When I open `goal.docx` in Word, edit one word, and press Cmd+S, Then within ~5 s the sibling's `source_hash` frontmatter field changes to a new SHA-256 value matching the saved file's content — and the sibling body reflects the updated summary.
+
+2. Given the same `goal.docx`, When I open it, press Cmd+S immediately without making any change, Then the sibling's `source_hash` is unchanged and the sibling body is unchanged (no re-capture triggered).
+
+3. Given `Danh sách.xlsx` in `Projects/A/`, When I open it in Excel, edit one cell, and press Cmd+S, Then the sibling refreshes (same as criterion 1) — even though Excel's save burst ends with a DELETE event.
+
+4. Given any `.docx` or `.xlsx` open in its Office app (lock file `~$<name>.ext` present in the project folder), When the watcher is running, Then no sibling is created for the `~$` lock file, and it does not appear in the vault index.
+
+5. Given `Projects/A/attachment/report.pdf` (no-edit file), When report.pdf is opened in Preview and viewed (not edited), Then nothing changes — no re-capture event fires for files inside `attachment/`.
+
+**Developer must verify:**
+
+1. After a content-change re-capture, `documents.get_by_path("Projects/A/.summaries/goal.docx.md")` returns a row whose `content_hash` has changed from its pre-edit value — confirms the DB row was updated.
+2. Log line `watcher.binary_content_unchanged path=<path>` at DEBUG level fires when hash matches; no downstream `capture_file` call is made (verified by checking no audit row with `outcome=LOCATED` appears for that file in that window).
+3. No `watcher.binary_delete_sibling_removed` log fires during a Word, Excel, or PPT save sequence — confirms `_handle_binary_delete`'s `path.exists()` guard suppresses the mid-burst DELETE.
+4. Non-interference: `_handle_binary_content_change` and `_handle_binary_delete` fire on separate debounce keys (`chg:{path}` vs `bin:{path}`); they do not cancel each other. Verify by checking both log lines fire independently after a single atomic save.
+5. For Excel (last event = DELETE): exactly one re-capture audit row appears (from the `chg:` path), and zero re-captures from the `str(path)` path (since `_on_delete` returns early via `path.exists()` guard in main.py).
+
+## 4. Options
+
+### Option A — `chg:` debounce key + in-watcher hash pre-check (Recommended)
+
+**What this means:** Add a third debounce timer key (`chg:{path}`) that all three event types (MODIFY, CREATE, DELETE) reset. When it fires, the watcher reads the sibling's stored hash, computes the binary's current hash, and only calls the existing re-capture callback if they differ. This is the minimal, burst-safe design that handles all three Office save patterns correctly.
+
+**Approach:** Five localized changes to `_VaultEventHandler`:
+
+1. `_should_skip`: `path.name.startswith((".", "~$"))` — add the `~$` prefix to the existing tuple check.
+
+2. `on_modified` (currently returns early for non-`.md` at line 257): for binaries that are internal to the vault, schedule `chg:` debounce instead of returning:
+   ```python
+   if path.suffix.lower() != ".md":
+       if self._is_internal(path):
+           self._debounce(f"chg:{path}", self._handle_binary_content_change, (path,))
+       return
+   ```
+
+3. `on_deleted`: for binary + internal paths, also reset the `chg:` timer (in addition to the existing `bin:` debounce):
+   ```python
+   if _is_binary(path) and self._is_internal(path):
+       self._debounce(f"bin:{path}", self._handle_binary_delete, (path,))
+       self._debounce(f"chg:{path}", self._handle_binary_content_change, (path,))
+   ```
+
+4. `_handle_binary_delete`: add existence check before orphaning the sibling:
+   ```python
+   def _handle_binary_delete(self, path: Path) -> None:
+       if path.exists():
+           return  # atomic-save DELETE half — file survived burst; chg: handles re-capture
+       import structlog
+       structlog.contextvars.bind_contextvars(correlation_id=new_correlation_id())
+       # ... existing sibling orphan logic unchanged ...
+   ```
+
+5. New `_handle_binary_content_change`:
+   ```python
+   def _handle_binary_content_change(self, path: Path) -> None:
+       import hashlib
+       import structlog
+       structlog.contextvars.bind_contextvars(correlation_id=new_correlation_id())
+       if not path.exists():
+           return  # genuine delete — bin: handler covers sibling orphan
+       sibling = _sibling_for(path, self._vault_config)
+       if not sibling.exists():
+           return  # not yet indexed; on_create handles first capture
+       match read_note(sibling):
+           case Failure():
+               return  # unreadable — let on_create path handle it
+           case Success(value=note):
+               if note.metadata.source_hash:
+                   try:
+                       current = hashlib.sha256(path.read_bytes()).hexdigest()
+                   except OSError:
+                       return
+                   if current == note.metadata.source_hash:
+                       _log.debug("watcher.binary_content_unchanged path=%s", path)
+                       return
+       # Hash changed (or no stored hash) — trigger re-capture via existing on_create path
+       self._on_create(path)
+   ```
+   Add `import hashlib` to the top of `watcher.py` (module-level, alongside existing imports).
+
+**Why `chg:` firing `_on_create` is correct:** `_on_create` in main.py calls `asyncio.run_coroutine_threadsafe(capture_file(path, ...), loop)`. `capture_file` runs the full pipeline including LLM summarization, writes a new sibling with an updated `source_hash`, and upserts the DB row — exactly re-capture.
+
+**Double-dispatch for Word/PPT (last event = CREATE):** For Word and PPT, the `str(path)` key also ends up pointing at `_on_create` (last event is CREATE). Both `str(path)` → `_on_create` AND `chg:` → `_handle_binary_content_change` → `_on_create` fire after the debounce. Two `capture_file` calls enter the asyncio event loop. The `capture_file` idempotency guard (lines 868–908) ensures the second call exits immediately (hash now matches the freshly-written sibling). Net effect: one LLM call, one no-op. Acceptable.
+
+**Files touched:** `src/vault/watcher.py` only — five targeted edits to one private class. `capture_file`, main.py, paths.py: unchanged.
+
+**Cost:** dev = low (five localized edits, ~30 lines added); runtime = one `read_note` + one SHA-256 per save event per indexed binary (negligible — local I/O only, no LLM); maintenance = low (no new abstraction, no new config).
+
+**Risk:**
+- Double-dispatch for Word/PPT fires two `capture_file` calls; second is no-op via idempotency guard. Acceptable, but worth logging at DEBUG to confirm.
+- Race: if `chg:` fires before the Word/PPT `str(path)` → `_on_create` capture completes (unlikely — both timers fire at the same wall-clock moment; the `asyncio.run_coroutine_threadsafe` returns immediately), `_handle_binary_content_change` may see the pre-save `source_hash` and trigger a second call. The idempotency guard stops it. Low risk.
+- `on_created` is NOT modified: brand-new binaries (no existing sibling) still flow through `str(path)` → `_on_create` → `capture_file` as before. `_handle_binary_content_change`'s `if not sibling.exists(): return` guard ensures it skips them. No regression for first-capture.
+
+**Module depth:** new method is a 20-line guard chain — shallow by design. Deletion test: remove it and Excel re-saves stop triggering re-capture (but Word/PPT still work via `str(path)` → `_on_create`). It earns its keep for the Excel pattern. New interface: none — `_on_create` is the existing callback, not a new seam. `chg:` key reuses `_debounce` infrastructure already shared by all other keys.
+
+**What it defers:** TD-039 (Windows atomic-save — different event sequences, temp file names like `~WRD*.tmp`, exclusive lock during write). T9 on Windows requires a separate probe. Explicitly out of scope per the draft.
+
+**Constraints check:**
+- [x] C-01 vault-only writes — satisfied (all writes via `write_note` in vault/writer.py; watcher only routes)
+- [x] C-02 updated_by_human — satisfied (re-capture path through `write_note`'s existing gate)
+- [x] C-03 write_note merge — satisfied (`_handle_binary_content_change` does not call write_note)
+- [x] C-12 Result type — N/A (private watcher method, not handlers/pipelines public function)
+- [x] C-13 audit — satisfied (audit lives in capture_file; watcher skip = DEBUG log, not an AI decision)
+- [x] C-17 CONFIG scope in tests — satisfied (tests use VaultConfig(root=tmp_path); mock _on_create)
+
+---
+
+### Option B — New `on_binary_change` callback injected into VaultWatcher
+
+**What this means:** Add `on_binary_change: Callable[[Path], None] | None` as a constructor parameter on `VaultWatcher` (and `_VaultEventHandler`). Main.py provides a callback that does the hash-compare + `capture_file` dispatch. The watcher simply routes to it, with no hash logic of its own.
+
+**Approach:** Add parameter to `VaultWatcher.__init__` (watcher.py:465) and `_VaultEventHandler.__init__` (watcher.py:89). `on_modified` and `on_deleted` debounce to `self._on_binary_change` (or its wrapper). Main.py defines the callback inline with access to `loop`, `_make_ctx`, and the hash-compare logic.
+
+**Files touched:** `watcher.py` (constructor signature + two debounce calls), `cli/main.py` (new `on_binary_change` callback definition + wiring into `VaultWatcher()`).
+
+**Cost:** dev = medium (two files, signature change propagates to all VaultWatcher call sites and tests); maintenance = lower conceptually (hash logic in main.py alongside other callbacks, not in the handler class).
+
+**Risk:** Pushes the `_handle_binary_delete` guard change into a separate concern — the guard must still be added to watcher.py (it cannot live in main.py's callback). So this option does NOT eliminate watcher.py edits; it only relocates the hash-compare. The public API surface of `VaultWatcher` grows by one optional parameter — every test that constructs `VaultWatcher` directly may need updating.
+
+**Module depth:** `VaultWatcher` becomes a real seam for `on_binary_change` only if 2+ call sites wire different callbacks. Currently one call site (main.py) and tests use `None`. Speculative seam — fails the seam-discipline test.
+
+**What it defers:** nothing additional.
+
+---
+
+### Option C — Route binary MODIFY directly to `_on_create` without pre-check
+
+**What this means:** When a binary MODIFY fires, skip the hash compare entirely and just call `capture_file` unconditionally. Let `capture_file`'s own idempotency guard decide. Simpler code — remove `_handle_binary_content_change` entirely.
+
+**Approach:** `on_modified` for binaries: `self._debounce(str(path), self._on_create, (path,))`. No new method, no `read_note` in the watcher.
+
+**Files touched:** `watcher.py` — `_should_skip` (1 line), `on_modified` (2 lines change), `on_deleted` (no change for Excel gap), `_handle_binary_delete` (1 line guard).
+
+**Cost:** dev = very low; runtime = one `capture_file` call per binary modify event, which runs the full pipeline including LLM even when content is unchanged (the idempotency guard exits early, but the guard still reads the sibling, reads the binary, and computes a hash before exiting — ~10ms I/O per spurious event).
+
+**Risk:**
+- **Excel gap unresolved:** if the last event in the burst is DELETE (as in Excel), `str(path)` → `_on_delete` fires, not `_on_create`. Excel re-saves still fail to trigger re-capture. This option does NOT fix the Excel case unless combined with a `chg:` key — at which point it becomes Option A.
+- No pre-check means every `on_modified` burst (even application autosaves that touch metadata without content change) fires the idempotency guard, which reads the sibling and binary. For an executive who has 20 open Office files, that's many redundant reads. Not a correctness bug, but a mild efficiency concern.
+
+**What it defers:** the Excel case (last-event-DELETE saves skip re-capture permanently).
+
+---
+
+## 5. Recommendation
+
+**Option A.** The tradeoff: Option A adds ~20 lines of hash-compare logic inside `_VaultEventHandler` (a mild widening of that class's responsibility), but in exchange it handles all three Office save patterns correctly including Excel's last-event-DELETE sequence, prevents spurious `capture_file` calls when content is unchanged, and does so without changing `VaultWatcher`'s public API or touching main.py. Option B's cleaner interface fails the seam-discipline test (one call site = speculative seam) and still requires watcher.py edits for the `_handle_binary_delete` guard. Option C misses the Excel case entirely without becoming Option A.
+
+## 6. Cross-check
+
+- **Scope check:** T9 touches only `vault/watcher.py`. No config changes, no DB migrations, no new CLI command, no prompt changes. Every suggestion in the options grid traces to the probe-grounded requirement.
+- **Constraint flags:** ⚠️ `hashlib` import must be added at module scope in `watcher.py` — currently absent. Add to the existing import block (lines 10–41); do not import inside the method (that works but signals missing module-level declaration). ⚠️ The `chg:` key and `bin:` key debounce independently — verify that `_debounce` with `chg:{path}` does NOT accidentally cancel `bin:{path}` timer for the same file. They use different key strings so they do not interact. CLAUDE.md note: "Two `_debounce` calls with same key cancel each other" — confirmed that `chg:{path}` and `bin:{path}` are different keys; safe.
+- **Tech-debt:** DELIVERS TD-037 (binary-modify re-capture — "currently deferred", watcher.py:258 comment "Binary modify deferred — TD-C6"). Remove that comment and the early-return in `on_modified` as part of this task. TD-039 (Windows) explicitly deferred — not touched. Neutral on all other TD items.
+- **Decision checks:** DECISION-025 (sibling-first ordering) — T9 calls `_on_create` which calls `capture_file` which already enforces sibling-first. No violation. DECISION-029 (`type=attachment-summary` on siblings) — re-capture rewrites sibling via `write_note`, which re-renders existing metadata. If the sibling already has `type=attachment-summary`, re-capture preserves it (C-03's read-then-write rule). No violation.
+- **Probe note for future Windows work (TD-039):** Windows Office temp files (`~WRD*.tmp`, `~$*.tmp`) and exclusive file locks during save will require a separate probe. Windows temp files do NOT start with `~$` uniformly — `~WRD0001.tmp` starts with `~W`. The `~$` filter in `_should_skip` covers macOS patterns only. Windows needs a broader `~*.tmp` filter and a retry-on-lock path in `capture_file`. Out of scope for this task; document in TD-039.
+- **Tests:** `VaultConfig(root=tmp_path)` + mock `_on_create` callable (C-17). Branches to cover: (1) MODIFY on indexed binary with changed content → `_on_create` called; (2) MODIFY on indexed binary with unchanged content → `_on_create` NOT called, DEBUG log emitted; (3) MODIFY on brand-new binary (no sibling) → `_on_create` NOT called by `_handle_binary_content_change` (falls through; `str(path)` → `_on_create` handles it); (4) DELETE then EXISTS (`_handle_binary_delete` guard) → no sibling orphan; (5) `~$lock.docx` created → `_should_skip` returns True, no callback; (6) no-edit binary in `attachment/` modified → `_should_skip` returns True (`_is_in_managed_attachment`), no `chg:` fired.
+
