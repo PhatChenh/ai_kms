@@ -12,7 +12,7 @@ AI-enhanced knowledge management system for busy managers. Watches an Obsidian v
 
 **Target user:** a non-technical executive. Zero organisational effort is the baseline assumption. The AI does the work; the human does the judgment.
 
-**Key constraint:** Hard delivery deadline 30 June 2026. Current phase: Brief #2 complete, Brief #3 Phase 1 done (attachment_sync_and_archive). Next: Phase 2 (Classify pipeline) + Brief #3 Phase 2. Three milestones:
+**Key constraint:** Hard delivery deadline 30 June 2026. Current phase: Phase Pre-2 complete (TD-008 DB columns + TD-038 domain scalar cleanup, 797 tests). Next: Phase 2 — Classify pipeline. Three milestones:
 - M1 ~15 May — Capture + Classify + Search end-to-end
 - M2 ~30 May — MCP MVP live for boss demo
 - M3 30 June — Full feature set (Promotion, Documentation, Self-learning, Briefing)
@@ -312,7 +312,7 @@ The following rules are enforced by hooks in `.claude/settings.json` — Claude 
 
 ## Build progress
 
-**Overall:** Phase 1 of 8 complete + Brief #2/#3 done + Phase 1.5 Pay-Debt complete & code-review clean (commit b41caf1, 2026-06-03). Next: Phase 2 — Classify pipeline.
+**Overall:** Phase 1 of 8 complete + Brief #2/#3 done + Phase 1.5 Pay-Debt complete + Phase Pre-2 complete (2026-06-03, 797 tests). Next: Phase 2 — Classify pipeline.
 
 (Phase 0 + Phase 1 checklists closed — see STATE.md for full history.)
 
@@ -320,12 +320,19 @@ The following rules are enforced by hooks in `.claude/settings.json` — Claude 
 - [x] Phase 1: watcher VaultConfig signature (TD-023), .summaries/ skip (TD-AS-1), false-success logging
 - [x] Phase 2: domain_archive helper, archive_path property removal
 - [x] Phase 3: _is_binary, _sibling_for, on_delete/on_move sync callbacks
-- [x] Phase 4: kms reconcile — 4-stage reconcile command (paths, orphan binaries, stale binaries, orphan siblings)
+- [x] Phase 4: kms reconcile — 6-stage reconcile command (paths, orphan binaries, stale binaries, orphan siblings, stale tags, stale batch refs)
 
 **Phase 1.5 Pay-Debt** _(complete + code-review clean 2026-06-03; see STATE.md)_:
 - [x] All 7 phases (FILE_LOST guard, location tags, stale-tag reconcile, folder capture, handlers extension, idempotent capture, stale-batch-ref reconcile)
-- [x] Code-review pass: 2 critical (batch_id wiring, folder timer race) + 4 important + 2 minor fixed; 787 tests pass. Branch `fix/phase1.5-codereview` NOT pushed.
-- Deferred: rename gate rework (TD-029), Claude CLI short-extract JSON fix (TD-028), binary-modify re-capture (TD-037), drop scalar `domain:` field (TD-038)
+- [x] Code-review pass: 2 critical (batch_id wiring, folder timer race) + 4 important + 2 minor fixed; 797 tests pass (after Phase Pre-2). Branch `fix/phase1.5-codereview` NOT pushed.
+- Deferred: rename gate rework (TD-029), binary-modify re-capture (TD-037)
+
+**Phase Pre-2 — DB Schema Prep + Domain Scalar Cleanup** _(complete 2026-06-03; 5 commits, 797 tests)_:
+- [x] Phase 1: 3 new SQL migration files (003_add_project, 004_add_status, 005_add_key_topics) + schema-presence test
+- [x] Phase 2: DocumentRow + project/status/key_topics fields; _row_from_sqlite, upsert, replace_path updated
+- [x] Phase 3: `_DEPRECATED_KEYS = frozenset({"domain"})` in frontmatter.py; domain scalar removed from NoteMetadata
+- [x] Phase 4: Removed domain kwarg from capture pipeline consumers; tag-based domain filter
+- [x] Phase 5: Full suite green — 797 tests pass
 
 ---
 
