@@ -1,9 +1,9 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-06-04 (doc drift reconciliation; test count 830; vault-restructure worktree in progress)_
+_Last updated: 2026-06-04 (vault-restructure merged to main; 956 tests pass)_
 
 ## Current Position
-**Phase**: Phase Pre-2 — DB Schema Prep + Domain Scalar Cleanup ✅ **Complete as of 2026-06-03**
+**Phase**: Vault-Restructure — Editable/No-Edit Binary Categorization ✅ **Complete as of 2026-06-04**
 
 **Phase 0 Final Checklist** _(CLOSED)_:
 - [x] core/exceptions.py
@@ -119,6 +119,14 @@ Triggered by `/superpowers:requesting-code-review`. Applied subset of review fin
 - Issue #8 — `move_attachment` TOCTOU window (existence check then `os.replace`). Tracked as **TD-031**.
 - Issue #9 — `kms migrate-attachments` for legacy `Vault/attachment/`+`Vault/Archive/` layout. Deferred greenfield — no production users. Tracked as **TD-032**.
 
-**In-flight work**: Branch `worktree-vault-restructure-editable-noedit` — 10 commits implementing ADR-0006 editable/no-edit binary categorization (Phases 1–10). Not merged to main. Not reviewed.
+**Vault-Restructure — Editable/No-Edit Split** _(complete — 2026-06-04, merged from worktree-vault-restructure-editable-noedit; 956 tests pass)_:
+- [x] Phases 1–7: Core editable/no-edit vault restructure — `no_edit_extensions` config, `resolve_placement()`, binary routing (no-edit→attachment/, editable→root), `_should_skip` updated for AI-output folders, misplaced-file sweep to inbox
+- [x] Phase 8: Binary content-change detection — SHA-256 compare on modify events, lock-file filter for Office atomic saves (TD-037 resolved)
+- [x] Phase 9: Settle window — coalesces multi-hop binary moves (A→B→C) to single re-home
+- [x] Phase 10: Extend `_is_managed_summaries_area()` for root-level `.summaries/` + `reconcile_editable_migration` (Stage 7)
+- [x] Lint cleanup + OneDrive sync conflict files removed
+- **ADR-0006 status**: Proposed → Accepted
+- **TD-037 closed** — binary modify now triggers re-capture via content-change detection
+- **New module**: `src/vault/move_guard.py` — thread-safe registry suppressing watcher re-home for pipeline-initiated moves
 
 **Next roadmap work**: Phase 2 — Classify pipeline.

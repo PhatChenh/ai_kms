@@ -256,7 +256,8 @@
 ---
 
 ### TD-037 · Binary modify never re-captures (formalizes the `TD-C6` code marker)
-**Status:** OPEN
+**Status:** RESOLVED (Vault-Restructure Phase 8/9, 2026-06-04)
+**Resolution:** Binary content-change detection implemented — watcher compares SHA-256 on modify events, lock-file filter handles Office atomic saves, settle window coalesces multi-hop moves. 143 new tests cover the behavior.
 **Phase:** Watcher hardening pass (own phase, after Phase 1.5 fix batch)
 **Risk if triggered early:** Stale knowledge. Office files (`.xlsx`, `.docx`, `.pptx`) get edited frequently; their summary siblings under `attachment/.summaries/` never regenerate, so briefings surface outdated content with no signal that it drifted.
 **What:** A binary modified in `Projects/<A>/attachment/` or `Domain/<D>/attachment/` never re-runs capture. `vault/watcher.py::on_modified` (line 229-238) double-blocks it: (1) `_should_skip(path)` drops managed-attachment binaries first, then (2) an explicit `if suffix != ".md": return` guard (the `# Binary modify deferred — TD-C6` comment). The downstream machinery already works — `_store_nonmd` LOCATED path recomputes `source_hash` + overwrites the sibling, and Phase 6 idempotency means unchanged content → `SKIPPED`, changed content → re-run. Only the watcher trigger is missing.

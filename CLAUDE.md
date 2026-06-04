@@ -12,7 +12,7 @@ AI-enhanced knowledge management system for busy managers. Watches an Obsidian v
 
 **Target user:** a non-technical executive. Zero organisational effort is the baseline assumption. The AI does the work; the human does the judgment.
 
-**Key constraint:** Hard delivery deadline 30 June 2026. Current phase: Phase Pre-2 complete (TD-008 DB columns + TD-038 domain scalar cleanup, 830 tests). Next: Phase 2 — Classify pipeline. Three milestones:
+**Key constraint:** Hard delivery deadline 30 June 2026. Current phase: Vault-Restructure complete (ADR-0006 editable/no-edit split, 956 tests). Next: Phase 2 — Classify pipeline. Three milestones:
 - M1 ~15 May — Capture + Classify + Search end-to-end
 - M2 ~30 May — MCP MVP live for boss demo
 - M3 30 June — Full feature set (Promotion, Documentation, Self-learning, Briefing)
@@ -315,7 +315,7 @@ The following rules are enforced by hooks in `.claude/settings.json` — Claude 
 
 ## Build progress
 
-**Overall:** Phase 1 of 8 complete + Brief #2/#3 done + Phase 1.5 Pay-Debt complete + Phase Pre-2 complete (2026-06-03, 830 tests). Next: Phase 2 — Classify pipeline.
+**Overall:** Phase 1 of 8 complete + Brief #2/#3 done + Phase 1.5 Pay-Debt complete + Phase Pre-2 complete + Vault-Restructure complete (2026-06-04, 956 tests). Next: Phase 2 — Classify pipeline.
 
 (Phase 0 + Phase 1 checklists closed — see STATE.md for full history.)
 
@@ -323,12 +323,19 @@ The following rules are enforced by hooks in `.claude/settings.json` — Claude 
 - [x] Phase 1: watcher VaultConfig signature (TD-023), .summaries/ skip (TD-AS-1), false-success logging
 - [x] Phase 2: domain_archive helper, archive_path property removal
 - [x] Phase 3: _is_binary, _sibling_for, on_delete/on_move sync callbacks
-- [x] Phase 4: kms reconcile — 6-stage reconcile command (paths, orphan binaries, stale binaries, orphan siblings, stale tags, stale batch refs)
+- [x] Phase 4: kms reconcile — 7-stage reconcile command (paths, orphan binaries, stale binaries, orphan siblings, stale tags, stale batch refs, editable migration)
 
 **Phase 1.5 Pay-Debt** _(complete + code-review clean 2026-06-03; see STATE.md)_:
 - [x] All 7 phases (FILE_LOST guard, location tags, stale-tag reconcile, folder capture, handlers extension, idempotent capture, stale-batch-ref reconcile)
 - [x] Code-review pass: 2 critical (batch_id wiring, folder timer race) + 4 important + 2 minor fixed; 797 tests pass (after Phase Pre-2). Branch `fix/phase1.5-codereview` NOT pushed.
 - Deferred: rename gate rework (TD-029), binary-modify re-capture (TD-037)
+
+**Vault-Restructure — Editable/No-Edit Split** _(complete 2026-06-04; merged from worktree branch, 956 tests)_:
+- [x] Phases 1–7: `no_edit_extensions` config, `resolve_placement()`, editable→root / no-edit→attachment/ routing, AI-output folder skip, misplaced-file sweep
+- [x] Phase 8: Binary content-change detection (SHA-256 compare, lock-file filter) — resolves TD-037
+- [x] Phase 9: Settle window for multi-hop move coalescing
+- [x] Phase 10: Root-level `.summaries/` support + `reconcile_editable_migration` (Stage 7)
+- New module: `vault/move_guard.py` — suppresses watcher re-home for pipeline-initiated moves
 
 **Phase Pre-2 — DB Schema Prep + Domain Scalar Cleanup** _(complete 2026-06-03; 5 commits, 797 tests at completion)_:
 - [x] Phase 1: 3 new SQL migration files (003_add_project, 004_add_status, 005_add_key_topics) + schema-presence test
@@ -376,6 +383,11 @@ from core.config import CONFIG
 - **Any code writing into `.summaries/` MUST set `type=attachment-summary` in frontmatter.** Missing → reconcile Stage 4 skips it silently. Phase 2 Classify must preserve it. Rationale: see ADR-0008.
 - **CLUELESS marker body is a one-line placeholder string, not `""`.** `pipelines/capture.py::_store_nonmd` CLUELESS path writes `_Pending classification — binary at: <vp>_` + handoff note. Phase 2 Classify is expected to overwrite the body when resolving the marker.
 - **`vault/watcher.py::on_deleted` and `on_moved` run binary sync BEFORE `_should_skip`.** Binary delete/move in `Projects/<A>/attachment/` MUST fire `_handle_binary_delete` / `_handle_binary_move` so the sibling DB row + audit log stay consistent. `_should_skip` only filters the user callback (indexer), not the internal sync. If you reorder these handlers and `_should_skip` runs first, you silently break sibling cleanup for the headline Brief #3 scenario. (TD-030 fix)
+- **`VaultConfig.no_edit_extensions` controls binary placement.** Extensions in this list (pdf, png, jpg, jpeg, gif, webp) → `attachment/` (hidden). Everything else non-md → project/domain root (visible). Use `resolve_placement()` from `vault/paths.py` — never decide placement inline.
+- **`vault/move_guard.py` suppresses watcher re-home for pipeline moves.** Pipeline registers destination via `get_active().register(path)` before moving. Watcher checks registry before re-homing. Thread-safe via `threading.Lock`. Without this, watcher sees pipeline's move as "misplaced file" and moves it back.
+- **`_should_skip` now also skips AI-output folders.** `Briefings/`, `Synthesis/`, `Documentation/` are capture-excluded. Watcher and `scan_capture` never process files there. Adding content to these folders requires `vault/writer.py`, not the capture pipeline.
+- **Reconcile now has 7 stages, not 6.** Stage 7 = `reconcile_editable_migration` — moves editable files out of `attachment/` to project/domain root. Update stage counts if referencing.
+- **Settle window in watcher coalesces multi-hop moves.** Binary move A→B followed quickly by B→C produces one re-home event (A→C), not two. Default settle window is configurable. Without this, intermediate destinations trigger spurious sibling creation/deletion.
 
 
 ## Constraint Index
