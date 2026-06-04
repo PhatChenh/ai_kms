@@ -84,18 +84,16 @@ Box standard: ~20 char wide, ~7 row high. Full descriptions in Diagram Notes bel
 ## Delivery Milestones
 
 ```
-  Phase 0   Phase 1   Phase 2   Phase 3   Phase 4   Phases 5-7   Phases 8-9
-  ✅ done   ✅ done   🔄 next   ⬜        ⬜         ⬜            ⬜
-  │         │         │         │         │          │             │
-  └────┬────┘         └─────────┤         │          └──────┬──────┘
-       │                        │         │                 │
-       │                   M1: ~15 May    │           M3: 30 June
-       │               "first useful     │         "full feature set"
-       │               system"      M2: ~30 May
-       │                          "boss demo"
-       │                          MCP live
-       │
-  Already shipped
+  Phase 0   Phase 1   Ph 1.5    Pre-2     Phase 2   Phase 3   Phase 4   Phases 5-9
+  ✅ done   ✅ done   ✅ done   ✅ done   🔄 next   ⬜        ⬜         ⬜
+  │         │         │         │         │         │         │          │
+  └─────────┴─────────┴────┬────┘         └─────────┤         │          │
+                           │                        │         │          │
+                      Shipped                  M1: capture+   │     M3: 30 June
+                      (2026-06-03)             classify+search│   "full feature set"
+                      797 tests                end-to-end     │
+                                                         M2: MCP MVP
+                                                         "boss demo"
 ```
 
 ---

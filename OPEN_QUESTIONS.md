@@ -2,14 +2,6 @@
 
 ## 🔴 Open
 
-### OQ-001 · Move/rename detection when note is edited AND moved simultaneously
-**Blocks:** Phase 1 vault indexer
-**Status:** 🔴 Open
-**Question:** `content_hash`-based move detection fails when a note is edited and moved simultaneously (hash changes; indexer sees delete + insert rather than rename). Is `content_hash` sufficient for Phase 1, or does Phase 1 need to write `doc_id` to frontmatter?
-**Context:** DECISION-001 chose integer PK + `content_hash` over frontmatter `doc_id` for simplicity. Edge case: simultaneous edit + move produces a new hash, which the indexer cannot match to the old record. The cost of writing `doc_id` to frontmatter is a vault write on first capture; the cost of not doing it is spurious orphan detection on rename+edit combos.
-
----
-
 ### OQ-002 · Fine-grained AI vs human authorship per section
 **Blocks:** Phase 7+
 **Status:** 🔴 Open
@@ -42,14 +34,6 @@
 
 ---
 
-### OQ-006 · Obsidian wikilink path shape inside .summaries/<x>.md pointing at binary
-**Blocks:** Brief #2
-**Status:** 🔴 Open
-**Question:** What wikilink format should sibling `.md` files use to point at the binary? `[[report.pdf]]` is vault-wide and ambiguous when two projects both have `report.pdf`. `[[Projects/A/attachment/report.pdf]]` (full path) or `[[../report.pdf]]` (relative) is unambiguous but must be verified against Obsidian's resolver on a real vault.
-**Context:** Cannot verify live in research session. Brief #2 capture pipeline must decide and test on a real vault before shipping. Full vault-relative path is the safest option but Obsidian's behavior with leading `/` paths vs bare paths needs confirmation.
-
----
-
 ### OQ-007 · summarize_attachment prompt quality on real diverse binary types
 **Blocks:** Brief #2 Phase 2 post-ship
 **Status:** 🔴 Open
@@ -63,3 +47,21 @@
 **Status:** 🔴 Open
 **Question:** The vault-restructure design adds a capture-excluded class for AI-output folders (`Briefings/`, `Synthesis/`, `Documentation/`) — the watcher and `scan_capture` skip them entirely so the AI's own outputs are never re-captured. But co-authoring means the human will edit these files (e.g. correct a Documentation page). With capture excluded, how does the system learn a human touched the file? Should a watcher/capture path listen for changes in these folders specifically to flag `updated_by_human`, or is a different detection mechanism needed?
 **Context:** Capture-exclusion (decided in the vault-restructure grill) is correct for preventing the briefing→re-capture feedback loop, but it blinds the system to legitimate human edits in those same folders. The two needs conflict: "never re-capture AI output" vs "detect human co-author edits." Related to OQ-005 (updated_by_human locking granularity) and OQ-002 (per-section authorship). Revisit when co-authoring is designed — likely needs an edit-detection path that sets the human-edit flag without triggering a capture.
+
+---
+
+## ✅ Closed
+
+### OQ-001 · Move/rename detection when note is edited AND moved simultaneously
+**Blocks:** Phase 1 vault indexer
+**Status:** ✅ Closed (2026-06-04) — Phase 1 shipped with `content_hash` approach; edge case accepted as tolerable. Spurious orphan detection on rename+edit is handled by reconcile Stage 1 (sync paths). Revisit only if real-world false positives warrant `doc_id` in frontmatter.
+**Question:** `content_hash`-based move detection fails when a note is edited and moved simultaneously (hash changes; indexer sees delete + insert rather than rename). Is `content_hash` sufficient for Phase 1, or does Phase 1 need to write `doc_id` to frontmatter?
+**Context:** DECISION-001 chose integer PK + `content_hash` over frontmatter `doc_id` for simplicity. Edge case: simultaneous edit + move produces a new hash, which the indexer cannot match to the old record. The cost of writing `doc_id` to frontmatter is a vault write on first capture; the cost of not doing it is spurious orphan detection on rename+edit combos.
+
+---
+
+### OQ-006 · Obsidian wikilink path shape inside .summaries/<x>.md pointing at binary
+**Blocks:** Brief #2
+**Status:** ✅ Closed (2026-06-04) — Implemented in Brief #2. Sibling body uses `[[<binary.name>]]` (bare filename wikilink). Obsidian resolves to nearest match within vault. See `phase1_capture/_OVERVIEW.md` line 238.
+**Question:** What wikilink format should sibling `.md` files use to point at the binary? `[[report.pdf]]` is vault-wide and ambiguous when two projects both have `report.pdf`. `[[Projects/A/attachment/report.pdf]]` (full path) or `[[../report.pdf]]` (relative) is unambiguous but must be verified against Obsidian's resolver on a real vault.
+**Context:** Cannot verify live in research session. Brief #2 capture pipeline must decide and test on a real vault before shipping. Full vault-relative path is the safest option but Obsidian's behavior with leading `/` paths vs bare paths needs confirmation.

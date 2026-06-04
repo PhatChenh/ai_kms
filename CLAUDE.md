@@ -12,7 +12,7 @@ AI-enhanced knowledge management system for busy managers. Watches an Obsidian v
 
 **Target user:** a non-technical executive. Zero organisational effort is the baseline assumption. The AI does the work; the human does the judgment.
 
-**Key constraint:** Hard delivery deadline 30 June 2026. Current phase: Phase Pre-2 complete (TD-008 DB columns + TD-038 domain scalar cleanup, 797 tests). Next: Phase 2 — Classify pipeline. Three milestones:
+**Key constraint:** Hard delivery deadline 30 June 2026. Current phase: Phase Pre-2 complete (TD-008 DB columns + TD-038 domain scalar cleanup, 830 tests). Next: Phase 2 — Classify pipeline. Three milestones:
 - M1 ~15 May — Capture + Classify + Search end-to-end
 - M2 ~30 May — MCP MVP live for boss demo
 - M3 30 June — Full feature set (Promotion, Documentation, Self-learning, Briefing)
@@ -315,7 +315,7 @@ The following rules are enforced by hooks in `.claude/settings.json` — Claude 
 
 ## Build progress
 
-**Overall:** Phase 1 of 8 complete + Brief #2/#3 done + Phase 1.5 Pay-Debt complete + Phase Pre-2 complete (2026-06-03, 797 tests). Next: Phase 2 — Classify pipeline.
+**Overall:** Phase 1 of 8 complete + Brief #2/#3 done + Phase 1.5 Pay-Debt complete + Phase Pre-2 complete (2026-06-03, 830 tests). Next: Phase 2 — Classify pipeline.
 
 (Phase 0 + Phase 1 checklists closed — see STATE.md for full history.)
 
@@ -330,7 +330,7 @@ The following rules are enforced by hooks in `.claude/settings.json` — Claude 
 - [x] Code-review pass: 2 critical (batch_id wiring, folder timer race) + 4 important + 2 minor fixed; 797 tests pass (after Phase Pre-2). Branch `fix/phase1.5-codereview` NOT pushed.
 - Deferred: rename gate rework (TD-029), binary-modify re-capture (TD-037)
 
-**Phase Pre-2 — DB Schema Prep + Domain Scalar Cleanup** _(complete 2026-06-03; 5 commits, 797 tests)_:
+**Phase Pre-2 — DB Schema Prep + Domain Scalar Cleanup** _(complete 2026-06-03; 5 commits, 797 tests at completion)_:
 - [x] Phase 1: 3 new SQL migration files (003_add_project, 004_add_status, 005_add_key_topics) + schema-presence test
 - [x] Phase 2: DocumentRow + project/status/key_topics fields; _row_from_sqlite, upsert, replace_path updated
 - [x] Phase 3: `_DEPRECATED_KEYS = frozenset({"domain"})` in frontmatter.py; domain scalar removed from NoteMetadata

@@ -136,12 +136,6 @@ The vault is now queryable. This is what makes the MCP useful.
 
 ---
 
-## ★ MILESTONE: First Delivery (~15 May)
-
-At this point: notes flow from inbox → classified → searchable. The system is independently useful. Stop here, test it on real notes, fix what breaks.
-
----
-
 ## Phase 4 — MCP Server MVP _(Roadmap Feature 9, pulled forward)_
 
 Thin layer over the existing pipelines. The boss uses Claude Desktop to talk to the vault.
@@ -158,12 +152,6 @@ Thin layer over the existing pipelines. The boss uses Claude Desktop to talk to 
 **Full MCP tools** (`kms_promote`, `kms_synthesize`, `kms_documentation_update`, `kms_briefing`) are added in later phases as those pipelines are built — not before.
 
 > **Scope discipline:** Do not build tools for pipelines that don't exist yet. An MCP tool that calls a stub is worse than no tool — it misleads the demo.
-
----
-
-## ★ MILESTONE: Boss Demo Ready (~30 May)
-
-Claude Desktop can: capture a note, classify it, search the vault by meaning. That is the demo. Prep two or three seeded notes so the vault has content to search over.
 
 ---
 
@@ -219,12 +207,6 @@ Read-only consumer of audit_log. Was Phase 3 in the original plan; moved here be
 - Add `kms_briefing` to MCP tools
 
 > **Note:** The briefing is useful but not demo-critical. The boss cares about search and capture, not the report. Ship this after M2.
-
----
-
-## ★ MILESTONE: Full Feature Set (30 June)
-
-Phases 0–8 complete. All MCP tools live. System runs autonomously.
 
 ---
 
