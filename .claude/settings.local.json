@@ -11,7 +11,8 @@
       "Skill(claude-md-management:revise-claude-md:*)",
       "Bash(uv run *)",
       "Bash(ls -la /Users/lap14806/.claude/skills/draw-diagram/)",
-      "Bash(ls -la /Users/lap14806/.claude/skills/)"
+      "Bash(ls -la /Users/lap14806/.claude/skills/)",
+      "WebSearch"
     ]
   }
 }

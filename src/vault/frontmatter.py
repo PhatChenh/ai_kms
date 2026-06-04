@@ -29,7 +29,6 @@ _KNOWN_KEYS: frozenset[str] = frozenset(
         "type",
         "tags",
         "project",
-        "domain",
         "created",
         "updated",
         "confidence",
@@ -43,6 +42,11 @@ _KNOWN_KEYS: frozenset[str] = frozenset(
     }
 )
 
+# Lazy-migration filter: keys listed here are stripped from dumps() output
+# when they appear in metadata.extra, preventing them from being written back
+# to disk.  Phase 3A strips "domain" (scalar removed in Phase 3B).
+_DEPRECATED_KEYS: frozenset[str] = frozenset({"domain"})
+
 
 class NoteMetadata(BaseModel):
     """Typed representation of a note's YAML frontmatter."""
@@ -52,7 +56,6 @@ class NoteMetadata(BaseModel):
     type: str | None = None
     tags: list[str] = Field(default_factory=list)
     project: str | None = None
-    domain: str | None = None
     created: date | None = None
     updated: datetime | None = None
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -65,7 +68,7 @@ class NoteMetadata(BaseModel):
     source_hash: str | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("type", "project", "domain", "summary", "source", "source_file", "attachment_path", "status", mode="before")
+    @field_validator("type", "project", "summary", "source", "source_file", "attachment_path", "status", mode="before")
     @classmethod
     def _coerce_bool_to_str(cls, v: Any) -> Any:
         """PyYAML 1.1 maps yes/no/on/off/true/false to bool. Coerce back to str."""
@@ -136,6 +139,10 @@ def dumps(metadata: NoteMetadata, body: str) -> str:
     """
     d = metadata.model_dump(exclude_none=True, exclude={"extra"})
     d.update(metadata.extra)
+
+    # Strip deprecated keys that may still appear in extra (lazy migration).
+    for key in _DEPRECATED_KEYS:
+        d.pop(key, None)
 
     # Use a custom dumper that writes block-style lists (Obsidian compat).
     class _BlockDumper(yaml.Dumper):

@@ -13,8 +13,9 @@ Pipelines can override by setting extra["title"] before calling upsert.
 
 from __future__ import annotations
 
+import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from core.result import Failure, Result, Success
@@ -36,6 +37,10 @@ class DocumentRow:
     updated_at: str
     updated_by_human: bool
     content_hash: str | None
+    batch_id: int | None = None
+    project: str | None = None
+    status: str | None = None
+    key_topics: list[str] = field(default_factory=list)
 
 
 def _row_from_sqlite(row: sqlite3.Row) -> DocumentRow:
@@ -50,6 +55,14 @@ def _row_from_sqlite(row: sqlite3.Row) -> DocumentRow:
         updated_at=row["updated_at"],
         updated_by_human=bool(row["updated_by_human"]),
         content_hash=row["content_hash"],
+        batch_id=row["batch_id"] if "batch_id" in row.keys() else None,
+        project=row["project"] if "project" in row.keys() else None,
+        status=row["status"] if "status" in row.keys() else None,
+        key_topics=(
+            json.loads(row["key_topics"])
+            if "key_topics" in row.keys() and row["key_topics"]
+            else []
+        ),
     )
 
 
@@ -57,13 +70,30 @@ def _derive_title(outcome: WriteOutcome) -> str:
     return outcome.metadata.extra.get("title") or Path(outcome.vault_path).stem
 
 
-def upsert(outcome: WriteOutcome, db_path: Path | None = None) -> Result[int]:
+def _derive_key_topics(tags: list[str]) -> str:
+    """Serialize topic tags to a JSON string for the key_topics column.
+
+    Excludes structural tags (domain/ and type/ prefixes) — those are stored
+    in dedicated columns / derived elsewhere. Single source of truth for the
+    INSERT OR REPLACE paths in both upsert() and replace_path().
+    """
+    return json.dumps(
+        [t for t in tags if not t.startswith("domain/") and not t.startswith("type/")]
+    )
+
+
+def upsert(
+    outcome: WriteOutcome,
+    db_path: Path | None = None,
+    batch_id: int | None = None,
+) -> Result[int]:
     """
     Insert or replace a documents row from a WriteOutcome.
 
     Args:
         outcome:  Result of write_note or move_note.
         db_path:  Override DB path; defaults to CONFIG.main.database.path.
+        batch_id: FK to batches.batch_id for folder-batch tracking. None → column stays NULL.
 
     Returns:
         Success(rowid) or Failure(recoverable=False) on sqlite3.Error.
@@ -78,8 +108,10 @@ def upsert(outcome: WriteOutcome, db_path: Path | None = None) -> Result[int]:
                 """
                 INSERT OR REPLACE INTO documents
                     (vault_path, title, summary, note_type, confidence,
-                     updated_at, updated_by_human, content_hash, created_at)
-                VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?, COALESCE(?, datetime('now')))
+                     updated_at, updated_by_human, content_hash, created_at,
+                     batch_id, project, status, key_topics)
+                VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?, COALESCE(?, datetime('now')),
+                        ?, ?, ?, ?)
                 """,
                 (
                     outcome.vault_path,
@@ -90,6 +122,10 @@ def upsert(outcome: WriteOutcome, db_path: Path | None = None) -> Result[int]:
                     1 if meta.updated_by_human else 0,
                     outcome.content_hash,
                     created_at,
+                    batch_id,
+                    meta.project,
+                    meta.status,
+                    _derive_key_topics(meta.tags),
                 ),
             )
             rowid: int = cur.lastrowid  # type: ignore[assignment]
@@ -187,7 +223,10 @@ def delete_by_path(
 
 
 def replace_path(
-    old_vault_path: str, outcome: WriteOutcome, db_path: Path | None = None
+    old_vault_path: str,
+    outcome: WriteOutcome,
+    db_path: Path | None = None,
+    batch_id: int | None = None,
 ) -> Result[None]:
     """Atomically delete the old documents row and upsert from outcome.
 
@@ -198,6 +237,7 @@ def replace_path(
         old_vault_path: vault_path of the row to remove.
         outcome:        WriteOutcome from write_note on the new path.
         db_path:        Override DB path.
+        batch_id:       FK to batches.batch_id. None → column stays NULL.
 
     Returns:
         Success(None) or Failure(recoverable=False) on sqlite3.Error.
@@ -215,8 +255,10 @@ def replace_path(
                 """
                 INSERT OR REPLACE INTO documents
                     (vault_path, title, summary, note_type, confidence,
-                     updated_at, updated_by_human, content_hash, created_at)
-                VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?, COALESCE(?, datetime('now')))
+                     updated_at, updated_by_human, content_hash, created_at,
+                     batch_id, project, status, key_topics)
+                VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?, COALESCE(?, datetime('now')),
+                        ?, ?, ?, ?)
                 """,
                 (
                     outcome.vault_path,
@@ -227,6 +269,10 @@ def replace_path(
                     1 if meta.updated_by_human else 0,
                     outcome.content_hash,
                     created_at,
+                    batch_id,
+                    meta.project,
+                    meta.status,
+                    _derive_key_topics(meta.tags),
                 ),
             )
         return Success(None)

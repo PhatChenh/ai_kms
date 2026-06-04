@@ -10,12 +10,14 @@ to a short value and tests sleep briefly to let threading.Timer fire.
 
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 from watchdog.events import (
+    DirCreatedEvent,
     FileCreatedEvent,
     FileDeletedEvent,
     FileModifiedEvent,
@@ -310,6 +312,9 @@ def test_watcher_module_has_no_pipeline_or_llm_imports() -> None:
 
     core.config types (VaultConfig) are allowed under TYPE_CHECKING — they do not
     trigger vault validation at import time.
+
+    Lazy imports inside function/method bodies are allowed (they do not execute at
+    import time and therefore do not trigger vault validation).
     """
     import ast
     import pathlib
@@ -318,7 +323,8 @@ def test_watcher_module_has_no_pipeline_or_llm_imports() -> None:
     tree = ast.parse(watcher_src.read_text())
 
     forbidden_prefixes = ("pipelines", "llm")
-    for node in ast.walk(tree):
+    # Only check top-level statements (module scope), not nested function bodies.
+    for node in tree.body:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 for prefix in forbidden_prefixes:
@@ -669,4 +675,334 @@ def test_on_moved_binary_different_folder_orphans_old_sibling(
     )
     assert len(move_calls) == 0, (
         f"Expected no move_note calls, got {move_calls}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 4.3 — Folder Handling (pending-folder registry + ThreadPoolExecutor)
+# ---------------------------------------------------------------------------
+
+FOLDER_COOLDOWN = 0.05  # 50ms — short enough for fast tests
+FOLDER_WAIT = 0.2  # 200ms — long enough for folder timer to fire
+
+
+def _make_handler_with_folder(
+    tmp_path: Path,
+    *,
+    on_create=None,
+    on_modify=None,
+    on_delete=None,
+    on_move=None,
+    on_folder_stable=None,
+    debounce: float = DEBOUNCE,
+    folder_cooldown: float = FOLDER_COOLDOWN,
+) -> tuple[_VaultEventHandler, Path, VaultConfig]:
+    root = tmp_path / "vault"
+    root.mkdir(exist_ok=True)
+    vault_cfg = VaultConfig(root=root)
+
+    handler = _VaultEventHandler(
+        root=root,
+        vault_config=vault_cfg,
+        on_create=on_create or (lambda p: None),
+        on_modify=on_modify or (lambda p: None),
+        on_delete=on_delete or (lambda p: None),
+        on_move=on_move or (lambda s, d: None),
+        debounce_seconds=debounce,
+        folder_cooldown=folder_cooldown,
+        on_folder_stable=on_folder_stable,
+    )
+    return handler, root, vault_cfg
+
+
+def test_dir_created_event_starts_pending_timer(tmp_path: Path) -> None:
+    """DirCreatedEvent → folder registered in _pending_folders and _pending_folder_paths."""
+    handler, root, _ = _make_handler_with_folder(tmp_path)
+
+    folder_path = root / "inbox" / "mydir"
+    handler.on_created(DirCreatedEvent(str(folder_path)))
+
+    folder_key = str(folder_path)
+    assert folder_key in handler._pending_folders, (
+        f"Expected {folder_key!r} in _pending_folders, got {list(handler._pending_folders.keys())}"
+    )
+    assert folder_key in handler._pending_folder_paths, (
+        f"Expected {folder_key!r} in _pending_folder_paths"
+    )
+    # Clean up timer to avoid thread leaks
+    handler._pending_folders[folder_key].cancel()
+
+
+def test_file_in_pending_folder_suppresses_on_create(tmp_path: Path) -> None:
+    """File created inside a pending folder → on_create NOT called; folder timer reset."""
+    create_calls: list[Path] = []
+    # Use a very long cooldown so the timer doesn't fire during assertion checks
+    handler, root, _ = _make_handler_with_folder(
+        tmp_path, on_create=create_calls.append, folder_cooldown=60.0
+    )
+
+    folder_path = root / "inbox" / "mydir"
+    # Register folder manually (simulate DirCreatedEvent already fired)
+    handler._register_pending_folder(folder_path)
+    folder_key = str(folder_path)
+    original_timer = handler._pending_folders[folder_key]
+
+    # Now fire a FileCreatedEvent for a file inside that folder
+    file_inside = folder_path / "note.md"
+    handler.on_created(FileCreatedEvent(str(file_inside)))
+
+    # on_create must NOT have been called (no sleep needed — suppression is synchronous)
+    assert create_calls == [], (
+        f"Expected on_create suppressed for file inside pending folder, got {create_calls}"
+    )
+    # Folder must still be pending (long cooldown — timer hasn't fired)
+    assert folder_key in handler._pending_folders, (
+        "Expected folder to remain pending after file-inside event"
+    )
+    # A new timer was started (original cancelled and replaced)
+    new_timer = handler._pending_folders[folder_key]
+    assert new_timer is not original_timer, (
+        "Expected folder timer to be reset (new timer object)"
+    )
+    # Clean up
+    handler._pending_folders[folder_key].cancel()
+
+
+def test_file_outside_pending_folder_dispatches_normally(tmp_path: Path) -> None:
+    """File created outside any pending folder → normal on_create callback fires."""
+    create_calls: list[Path] = []
+    handler, root, _ = _make_handler_with_folder(
+        tmp_path, on_create=create_calls.append, folder_cooldown=60.0
+    )
+
+    # Register a pending folder at /vault/inbox/mydir
+    folder_path = root / "inbox" / "mydir"
+    handler._register_pending_folder(folder_path)
+
+    # Fire a FileCreatedEvent for a file OUTSIDE that folder
+    other_file = root / "inbox" / "other.md"
+    handler.on_created(FileCreatedEvent(str(other_file)))
+
+    time.sleep(WAIT)
+    assert create_calls == [other_file], (
+        f"Expected on_create fired for file outside pending folder, got {create_calls}"
+    )
+    # Clean up
+    handler._pending_folders[str(folder_path)].cancel()
+
+
+def test_folder_stable_fires_on_folder_create_callback(tmp_path: Path) -> None:
+    """VaultWatcher with on_folder_create: after cooldown, callback is called with folder path."""
+    folder_calls: list[Path] = []
+    root = tmp_path / "vault"
+    root.mkdir()
+    vault_cfg = VaultConfig(root=root)
+
+    watcher = VaultWatcher(
+        root=root,
+        vault_config=vault_cfg,
+        on_create=lambda p: None,
+        on_modify=lambda p: None,
+        on_delete=lambda p: None,
+        on_move=lambda s, d: None,
+        folder_cooldown_seconds=FOLDER_COOLDOWN,
+        on_folder_create=folder_calls.append,
+    )
+
+    folder_path = root / "inbox" / "mydir"
+    watcher._handler.on_created(DirCreatedEvent(str(folder_path)))
+
+    time.sleep(FOLDER_WAIT)
+    assert folder_calls == [folder_path], (
+        f"Expected on_folder_create called with {folder_path}, got {folder_calls}"
+    )
+
+
+def test_stale_folder_timer_fire_is_ignored(tmp_path: Path) -> None:
+    """C2 regression: a stale timer (reset by a later file event) must NOT fire the callback.
+
+    Race: timer A is installed, a FileCreatedEvent resets it (installing timer B under
+    the same key) AFTER A fired but BEFORE A's _fire_folder_stable grabbed the lock.
+    A's _fire then ran with a stale token and used to pop B without cancelling it →
+    double capture_folder on the same folder. The token guard must make stale fires no-ops.
+
+    Deterministic simulation: drive _fire_folder_stable directly with controlled tokens.
+    """
+    folder_calls: list[Path] = []
+    # Long cooldown so no real timer fires during the simulation.
+    handler, root, _ = _make_handler_with_folder(
+        tmp_path, on_folder_stable=folder_calls.append, folder_cooldown=60.0
+    )
+
+    folder_path = root / "inbox" / "racy"
+    folder_key = str(folder_path)
+
+    # Install timer A (token captured here).
+    handler._register_pending_folder(folder_path)
+    token_a = handler._folder_tokens[folder_key]
+
+    # A reset installs timer B under the same key (token advances).
+    handler._reset_folder_timer(folder_key)
+    token_b = handler._folder_tokens[folder_key]
+    assert token_b != token_a
+
+    # Stale fire from timer A — must be ignored (token mismatch).
+    handler._fire_folder_stable(folder_path, token_a)
+    assert folder_calls == [], "Stale timer A fire must be a no-op"
+    # B must still be pending and uncancelled.
+    assert folder_key in handler._pending_folders
+
+    # Genuine fire from timer B — fires exactly once and clears the registry.
+    handler._fire_folder_stable(folder_path, token_b)
+    assert folder_calls == [folder_path]
+    assert folder_key not in handler._pending_folders
+    assert folder_key not in handler._pending_folder_paths
+
+    # Clean up any lingering timer object.
+    leftover = handler._pending_folders.get(folder_key)
+    if leftover is not None:
+        leftover.cancel()
+
+
+# ---------------------------------------------------------------------------
+# I6 — folder-capture concurrency (the gap that hid C1/C2)
+# ---------------------------------------------------------------------------
+
+
+def test_folder_max_workers_one_serializes_captures(tmp_path: Path, monkeypatch) -> None:
+    """folder_max_workers=1: a second folder drop queues behind the first (I6).
+
+    Two folders go stable back-to-back. With a single executor worker the second
+    capture_folder must not start until the first releases the worker.
+    """
+    root = tmp_path / "vault"
+    root.mkdir()
+    vault_cfg = VaultConfig(root=root)
+
+    started = threading.Event()
+    release_first = threading.Event()
+    order: list[str] = []
+    order_lock = threading.Lock()
+
+    async def fake_capture_folder(folder_path):
+        with order_lock:
+            order.append(f"start:{folder_path.name}")
+        if folder_path.name == "first":
+            started.set()
+            # Block the only worker until the test releases it.
+            release_first.wait(timeout=2.0)
+        with order_lock:
+            order.append(f"end:{folder_path.name}")
+        from core.result import Success
+        return Success([])
+
+    import pipelines.capture as capture_mod
+    monkeypatch.setattr(capture_mod, "capture_folder", fake_capture_folder)
+
+    watcher = VaultWatcher(
+        root=root,
+        vault_config=vault_cfg,
+        on_create=lambda p: None,
+        on_modify=lambda p: None,
+        on_delete=lambda p: None,
+        on_move=lambda s, d: None,
+        folder_cooldown_seconds=FOLDER_COOLDOWN,
+        folder_max_workers=1,
+    )
+
+    cb = watcher._on_folder_stable_callback
+    cb(root / "inbox" / "first")
+    assert started.wait(timeout=2.0), "first capture never started"
+    cb(root / "inbox" / "second")
+
+    # While the worker is held by "first", "second" must not have started.
+    time.sleep(0.1)
+    with order_lock:
+        assert "start:second" not in order, (
+            f"second capture ran before first released the worker: {order}"
+        )
+
+    # Release first; second now runs.
+    release_first.set()
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        with order_lock:
+            if "end:second" in order:
+                break
+        time.sleep(0.01)
+
+    with order_lock:
+        assert order[0] == "start:first"
+        assert "end:first" in order
+        assert order.index("start:second") > order.index("end:first"), (
+            f"second must start only after first ends: {order}"
+        )
+    watcher.stop()
+
+
+def test_capture_runs_on_executor_thread_not_caller(tmp_path: Path, monkeypatch) -> None:
+    """C-10: asyncio.run(capture_folder(...)) executes on a ThreadPoolExecutor worker,
+    never on the calling (observer/timer) thread (I6).
+
+    Uses the REAL executor path (no on_folder_create override) so the production
+    asyncio.run-on-worker behaviour is exercised.
+    """
+    root = tmp_path / "vault"
+    root.mkdir()
+    vault_cfg = VaultConfig(root=root)
+
+    done = threading.Event()
+    seen: dict[str, int] = {}
+
+    async def fake_capture_folder(folder_path):
+        seen["worker_ident"] = threading.current_thread().ident
+        done.set()
+        from core.result import Success
+        return Success([])
+
+    import pipelines.capture as capture_mod
+    monkeypatch.setattr(capture_mod, "capture_folder", fake_capture_folder)
+
+    watcher = VaultWatcher(
+        root=root,
+        vault_config=vault_cfg,
+        on_create=lambda p: None,
+        on_modify=lambda p: None,
+        on_delete=lambda p: None,
+        on_move=lambda s, d: None,
+        folder_cooldown_seconds=FOLDER_COOLDOWN,
+        folder_max_workers=2,
+    )
+
+    caller_ident = threading.current_thread().ident
+    # Drive the production stable-callback directly (real executor submit + asyncio.run).
+    watcher._on_folder_stable_callback(root / "inbox" / "drop")
+
+    assert done.wait(timeout=2.0), "capture_folder never ran"
+    assert seen["worker_ident"] is not None
+    assert seen["worker_ident"] != caller_ident, (
+        "capture_folder ran on the calling thread, not an executor worker"
+    )
+    watcher.stop()
+
+
+def test_pending_folder_removed_after_stable_fires(tmp_path: Path) -> None:
+    """After folder timer fires, folder is no longer in _pending_folders or _pending_folder_paths."""
+    handler, root, _ = _make_handler_with_folder(tmp_path, folder_cooldown=FOLDER_COOLDOWN)
+
+    folder_path = root / "inbox" / "mydir"
+    handler.on_created(DirCreatedEvent(str(folder_path)))
+
+    folder_key = str(folder_path)
+    # Initially present
+    assert folder_key in handler._pending_folders
+
+    # Wait for timer to fire
+    time.sleep(FOLDER_WAIT)
+
+    assert folder_key not in handler._pending_folders, (
+        "Expected folder removed from _pending_folders after stable fires"
+    )
+    assert folder_key not in handler._pending_folder_paths, (
+        "Expected folder removed from _pending_folder_paths after stable fires"
     )

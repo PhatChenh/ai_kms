@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -74,7 +75,6 @@ def _merge_metadata(
         type=incoming.type,
         tags=incoming.tags,
         project=incoming.project,
-        domain=incoming.domain,
         confidence=incoming.confidence,
         summary=incoming.summary,
         source=incoming.source,
@@ -299,3 +299,41 @@ def move_attachment(src: Path, dst: Path) -> Result[Path]:
         )
 
     return Success(dst)
+
+
+def move_folder(folder_path: Path, destination: Path) -> Result[Path]:
+    """Move a whole folder under destination.parent, returning the new folder path.
+
+    The folder keeps its own name; only its parent changes (destination.parent).
+    On collision (target already exists), append -2, -3, ... to the name. shutil.move
+    handles cross-filesystem moves (copy + remove) internally, so this works across
+    devices the same way move_attachment's EXDEV branch does.
+
+    FS-write chokepoint: folder moves go through vault/writer.py, not pipelines/.
+
+    Args:
+        folder_path: Absolute path to the folder to move (must exist).
+        destination: Path whose .parent is the target parent directory.
+
+    Returns:
+        Success(new_folder_path) or Failure(recoverable=False). On failure the
+        source folder is left intact.
+    """
+    dest_parent = destination.parent
+    dest_parent.mkdir(parents=True, exist_ok=True)
+    final = dest_parent / folder_path.name
+    counter = 1
+    while final.exists():
+        counter += 1
+        final = dest_parent / f"{folder_path.name}-{counter}"
+
+    try:
+        shutil.move(str(folder_path), str(final))
+    except Exception as exc:
+        return Failure(
+            error=f"folder move failed: {exc}",
+            recoverable=False,
+            context={"src": str(folder_path), "dst": str(final)},
+        )
+
+    return Success(final)

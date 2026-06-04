@@ -14,9 +14,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import openpyxl
+import structlog
+
 from core.result import Failure, Result, Success
 from handlers.base import BaseHandler, RawContent
 from handlers.registry import HandlerRegistry
+
+logger = structlog.get_logger(__name__)
 
 
 @HandlerRegistry.register
@@ -37,9 +42,32 @@ class XlsxHandler(BaseHandler):
             Success(RawContent) with text containing one section per non-empty
             sheet, or Failure if the file cannot be read.
         """
-        try:
-            import openpyxl
+        # Lazy import — see handlers/pdf_handler.py for rationale.
+        from core.config import CONFIG
 
+        max_bytes = CONFIG.main.handlers.max_file_size_bytes
+
+        try:
+            size = path.stat().st_size
+        except OSError as exc:
+            logger.warning("xlsx.stat.failed", path=str(path), error=str(exc))
+            return Failure(
+                error=f"XLSX stat failed: {exc}",
+                recoverable=False,
+                context={"path": str(path)},
+            )
+
+        if size > max_bytes:
+            logger.warning(
+                "xlsx.too_large", path=str(path), size=size, limit=max_bytes
+            )
+            return Failure(
+                error=f"XLSX too large: {size} > {max_bytes} bytes",
+                recoverable=False,
+                context={"path": str(path), "size": size, "limit": max_bytes},
+            )
+
+        try:
             wb = openpyxl.load_workbook(str(path), data_only=True)
             sections: list[str] = []
             for sheet in wb.worksheets:

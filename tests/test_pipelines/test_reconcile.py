@@ -412,10 +412,10 @@ async def test_reconcile_orphan_siblings_skips_human_edited(
 
 
 @pytest.mark.asyncio
-async def test_reconcile_runs_all_five_stages(
+async def test_reconcile_runs_all_six_stages(
     vault_root, db_path, pipeline_ctx, monkeypatch
 ):
-    """reconcile() chains all 5 stages and returns ReconcileResult with counts.
+    """reconcile() chains all 6 stages and returns ReconcileResult with counts.
 
     Stages covered:
       1. reconcile_paths      — delete on disk → removed from DB
@@ -735,3 +735,407 @@ async def test_reconcile_stale_tags_load_valid_domains_called_once(
             pytest.fail(f"Stage 5 failed: {f}")
 
     assert call_count == 1, f"load_valid_domains should be called once, called {call_count} times"
+
+
+# ---------------------------------------------------------------------------
+# Stage 6 — reconcile_stale_batch_refs
+# ---------------------------------------------------------------------------
+
+
+def _insert_batch(conn, destination_type: str, destination_name: str) -> int:
+    """Helper: insert a batches row, return batch_id."""
+    cur = conn.execute(
+        """
+        INSERT INTO batches
+            (folder_name, destination_type, destination_name,
+             confidence, status, file_count, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        """,
+        ("test_folder", destination_type, destination_name, 1.0, "COMPLETE", 1),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def _insert_document(conn, vault_path: str, batch_id: int | None = None) -> None:
+    """Helper: insert a documents row with an optional batch_id."""
+    conn.execute(
+        """
+        INSERT INTO documents
+            (vault_path, title, note_type, confidence, created_at, updated_at)
+        VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+        """,
+        (vault_path, "Test Note", "note", 0.9),
+    )
+    if batch_id is not None:
+        conn.execute(
+            "UPDATE documents SET batch_id = ? WHERE vault_path = ?",
+            (batch_id, vault_path),
+        )
+    conn.commit()
+
+
+def _get_batch_id(conn, vault_path: str) -> int | None:
+    """Helper: return current batch_id for a documents row."""
+    row = conn.execute(
+        "SELECT batch_id FROM documents WHERE vault_path = ?",
+        (vault_path,),
+    ).fetchone()
+    return row[0] if row else None
+
+
+@pytest.mark.asyncio
+async def test_stale_batch_refs_file_still_at_destination(db_path, pipeline_ctx):
+    """Stage 6: file still under its batch destination → batch_id preserved, count=0."""
+    import sqlite3
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_batch_refs
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        batch_id = _insert_batch(conn, "project", "Alpha")
+        _insert_document(conn, "Projects/Alpha/note.md", batch_id)
+    finally:
+        conn.close()
+
+    initial = ReconcileResult()
+    match await reconcile_stale_batch_refs(initial, pipeline_ctx):
+        case Success(value=r):
+            assert r.batch_refs_cleared == 0, "File still at destination — should not clear"
+        case Failure(error=e):
+            pytest.fail(f"Stage 6 failed: {e}")
+
+    conn2 = sqlite3.connect(str(db_path))
+    try:
+        stored_bid = _get_batch_id(conn2, "Projects/Alpha/note.md")
+        assert stored_bid == batch_id, "batch_id should be preserved"
+    finally:
+        conn2.close()
+
+
+@pytest.mark.asyncio
+async def test_stale_batch_refs_file_moved_away(db_path, pipeline_ctx):
+    """Stage 6: file moved to wrong project → batch_id nulled, count=1."""
+    import sqlite3
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_batch_refs
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        batch_id = _insert_batch(conn, "project", "Alpha")
+        _insert_document(conn, "Projects/Beta/note.md", batch_id)
+    finally:
+        conn.close()
+
+    initial = ReconcileResult()
+    match await reconcile_stale_batch_refs(initial, pipeline_ctx):
+        case Success(value=r):
+            assert r.batch_refs_cleared == 1, "Moved file should increment counter"
+        case Failure(error=e):
+            pytest.fail(f"Stage 6 failed: {e}")
+
+    conn2 = sqlite3.connect(str(db_path))
+    try:
+        stored_bid = _get_batch_id(conn2, "Projects/Beta/note.md")
+        assert stored_bid is None, "batch_id should be nulled after move"
+    finally:
+        conn2.close()
+
+
+@pytest.mark.asyncio
+async def test_stale_batch_refs_file_moved_to_inbox(db_path, pipeline_ctx):
+    """Stage 6: domain-batch file moved to inbox → batch_id nulled."""
+    import sqlite3
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_batch_refs
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        batch_id = _insert_batch(conn, "domain", "Engineering")
+        _insert_document(conn, "inbox/note.md", batch_id)
+    finally:
+        conn.close()
+
+    initial = ReconcileResult()
+    match await reconcile_stale_batch_refs(initial, pipeline_ctx):
+        case Success(value=r):
+            assert r.batch_refs_cleared == 1
+        case Failure(error=e):
+            pytest.fail(f"Stage 6 failed: {e}")
+
+    conn2 = sqlite3.connect(str(db_path))
+    try:
+        stored_bid = _get_batch_id(conn2, "inbox/note.md")
+        assert stored_bid is None
+    finally:
+        conn2.close()
+
+
+@pytest.mark.asyncio
+async def test_stale_batch_refs_null_batch_id_untouched(db_path, pipeline_ctx):
+    """Stage 6: document with batch_id=NULL → untouched, count=0."""
+    import sqlite3
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_batch_refs
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        _insert_document(conn, "inbox/no_batch.md", batch_id=None)
+    finally:
+        conn.close()
+
+    initial = ReconcileResult()
+    match await reconcile_stale_batch_refs(initial, pipeline_ctx):
+        case Success(value=r):
+            assert r.batch_refs_cleared == 0
+        case Failure(error=e):
+            pytest.fail(f"Stage 6 failed: {e}")
+
+
+@pytest.mark.asyncio
+async def test_stale_batch_refs_respects_nondefault_projects_dir(db_path, tmp_path):
+    """Stage 6: non-default projects_dir → prefix derived from config, batch_id preserved.
+
+    Regression for I1: prefix was hardcoded "Projects/". A deployment with
+    projects_dir="Work" would match NO row and silently null every batched
+    row. The doc under Work/Alpha/ must keep its batch_id.
+    """
+    import sqlite3
+    from unittest.mock import MagicMock
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_batch_refs
+    from core.config import VaultConfig
+    from core.pipeline import PipelineContext
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        batch_id = _insert_batch(conn, "project", "Alpha")
+        _insert_document(conn, "Work/Alpha/note.md", batch_id)
+    finally:
+        conn.close()
+
+    vroot = tmp_path / "vault"
+    vroot.mkdir(exist_ok=True)
+    vc = VaultConfig(root=vroot, projects_dir="Work")
+    config = MagicMock()
+    config.vault = vc
+    ctx = PipelineContext(config=config, correlation_id="test-nondefault", db_path=db_path)
+
+    initial = ReconcileResult()
+    match await reconcile_stale_batch_refs(initial, ctx):
+        case Success(value=r):
+            assert r.batch_refs_cleared == 0, \
+                "File under non-default projects_dir is still at destination"
+        case Failure(error=e):
+            pytest.fail(f"Stage 6 failed: {e}")
+
+    conn2 = sqlite3.connect(str(db_path))
+    try:
+        stored_bid = _get_batch_id(conn2, "Work/Alpha/note.md")
+        assert stored_bid == batch_id, "batch_id should be preserved under Work/Alpha/"
+    finally:
+        conn2.close()
+
+
+@pytest.mark.asyncio
+async def test_stale_batch_refs_prefix_boundary(db_path, pipeline_ctx):
+    """Stage 6: prefix is slash-bounded → Projects/AlphaBeta/ NOT cleared by Alpha batch.
+
+    Regression for I1 boundary: Projects/Alpha/ must not false-match
+    Projects/AlphaBeta/. The AlphaBeta doc belongs to a different batch and
+    must keep its own batch_id.
+    """
+    import sqlite3
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_batch_refs
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        alpha_batch = _insert_batch(conn, "project", "Alpha")
+        beta_batch = _insert_batch(conn, "project", "AlphaBeta")
+        # Doc correctly under its own AlphaBeta batch destination.
+        _insert_document(conn, "Projects/AlphaBeta/note.md", beta_batch)
+        # Doc under its own Alpha batch destination.
+        _insert_document(conn, "Projects/Alpha/note.md", alpha_batch)
+    finally:
+        conn.close()
+
+    initial = ReconcileResult()
+    match await reconcile_stale_batch_refs(initial, pipeline_ctx):
+        case Success(value=r):
+            assert r.batch_refs_cleared == 0, \
+                "Both docs are at their own destinations; nothing should clear"
+        case Failure(error=e):
+            pytest.fail(f"Stage 6 failed: {e}")
+
+    conn2 = sqlite3.connect(str(db_path))
+    try:
+        assert _get_batch_id(conn2, "Projects/AlphaBeta/note.md") == beta_batch, \
+            "AlphaBeta doc must NOT be cleared by Alpha batch (prefix boundary)"
+        assert _get_batch_id(conn2, "Projects/Alpha/note.md") == alpha_batch
+    finally:
+        conn2.close()
+
+
+@pytest.mark.asyncio
+async def test_stale_tags_human_lock_guard_ignores_error_prose(
+    vault_root, db_path, pipeline_ctx, monkeypatch
+):
+    """Stage 5 (I4): human-lock skip keys off context, not the word 'human'.
+
+    Patches write_note to return the human-lock Failure shape (recoverable=False
+    + vault_path context) but with a reworded error message that omits 'human'.
+    The guard must still treat it as an expected silent skip: tags_updated stays
+    0 and NO reconcile_stale_tags warning is logged.
+    """
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_tags
+    from vault.writer import write_note
+    from vault.frontmatter import NoteMetadata
+    from vault.indexer import scan_vault
+    from core.result import Failure as ResultFailure, Success
+    import pipelines.reconcile as reconcile_mod
+
+    # Create Engineering domain so domain/Engineering would normally be added (dirty).
+    eng_dir = vault_root / "Domain" / "Engineering"
+    eng_dir.mkdir(parents=True, exist_ok=True)
+    note_path = eng_dir / "locked.md"
+    result = write_note(note_path, "content", NoteMetadata(tags=[]), actor="ai")
+    assert isinstance(result, Success)
+
+    match scan_vault(vault_root):
+        case Success(entries):
+            pass
+        case f:
+            pytest.fail(f"scan_vault failed: {f}")
+
+    # Reworded message with NO 'human' substring — proves guard is prose-independent.
+    def locked_write(path, content, metadata, actor):
+        return ResultFailure(
+            error="note is read-only — owner override active",
+            recoverable=False,
+            context={"path": str(path), "vault_path": "Domain/Engineering/locked.md"},
+        )
+
+    # Stage 5 imports write_note inside the function body, so patch the source
+    # module attribute (vault.writer), not reconcile_mod.
+    import vault.writer as writer_mod
+    monkeypatch.setattr(writer_mod, "write_note", locked_write)
+
+    warning_calls = []
+    original_warning = reconcile_mod._log.warning
+
+    def capturing_warning(msg, *args, **kwargs):
+        warning_calls.append((msg, args, kwargs))
+        return original_warning(msg, *args, **kwargs)
+
+    monkeypatch.setattr(reconcile_mod._log, "warning", capturing_warning)
+
+    initial = ReconcileResult()
+    match await reconcile_stale_tags(initial, pipeline_ctx, entries):
+        case Success(value=r):
+            assert r.tags_updated == 0, "Locked write must not increment tags_updated"
+        case f:
+            pytest.fail(f"Stage 5 failed: {f}")
+
+    stale_tag_warnings = [
+        (msg, args) for msg, args, _ in warning_calls
+        if "reconcile_stale_tags" in msg
+    ]
+    assert len(stale_tag_warnings) == 0, \
+        f"Human-lock guard must silently skip regardless of error prose, got: {stale_tag_warnings}"
+
+
+@pytest.mark.asyncio
+async def test_stale_tags_real_write_error_still_warns(
+    vault_root, db_path, pipeline_ctx, monkeypatch
+):
+    """Stage 5 (I4): a genuine recoverable=False write error WITHOUT vault_path
+    context is NOT swallowed — it is logged as a warning.
+
+    Proves the guard does not over-match on recoverable=False alone.
+    """
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_tags
+    from vault.writer import write_note
+    from vault.frontmatter import NoteMetadata
+    from vault.indexer import scan_vault
+    from core.result import Failure as ResultFailure, Success
+    import pipelines.reconcile as reconcile_mod
+
+    eng_dir = vault_root / "Domain" / "Engineering"
+    eng_dir.mkdir(parents=True, exist_ok=True)
+    note_path = eng_dir / "broken.md"
+    result = write_note(note_path, "content", NoteMetadata(tags=[]), actor="ai")
+    assert isinstance(result, Success)
+
+    match scan_vault(vault_root):
+        case Success(entries):
+            pass
+        case f:
+            pytest.fail(f"scan_vault failed: {f}")
+
+    # Genuine disk-write failure: recoverable=False but context has NO vault_path.
+    def failing_write(path, content, metadata, actor):
+        return ResultFailure(
+            error="write failed: disk full",
+            recoverable=False,
+            context={"path": str(path)},
+        )
+
+    # Patch the source module — Stage 5 imports write_note inside the function.
+    import vault.writer as writer_mod
+    monkeypatch.setattr(writer_mod, "write_note", failing_write)
+
+    warning_calls = []
+    original_warning = reconcile_mod._log.warning
+
+    def capturing_warning(msg, *args, **kwargs):
+        warning_calls.append((msg, args, kwargs))
+        return original_warning(msg, *args, **kwargs)
+
+    monkeypatch.setattr(reconcile_mod._log, "warning", capturing_warning)
+
+    initial = ReconcileResult()
+    match await reconcile_stale_tags(initial, pipeline_ctx, entries):
+        case Success(value=r):
+            assert r.tags_updated == 0
+        case f:
+            pytest.fail(f"Stage 5 failed: {f}")
+
+    stale_tag_warnings = [
+        (msg, args) for msg, args, _ in warning_calls
+        if "reconcile_stale_tags.write_failed" in msg
+    ]
+    assert len(stale_tag_warnings) == 1, \
+        f"Genuine write error must be logged, not swallowed; got: {stale_tag_warnings}"
+
+
+@pytest.mark.asyncio
+async def test_stale_batch_refs_no_batches_table(tmp_path, monkeypatch):
+    """Stage 6: batches table absent → returns Success unchanged (safe no-op)."""
+    import sqlite3
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_batch_refs
+    from core.pipeline import PipelineContext
+    from core.config import VaultConfig
+    from unittest.mock import MagicMock
+
+    # Create a DB with only schema.sql applied — no migrations (no batches table)
+    from storage.db import _connect, _SCHEMA_FILE
+    bare_db = tmp_path / "bare.db"
+    conn = _connect(bare_db)
+    conn.executescript(_SCHEMA_FILE.read_text())
+    conn.close()
+
+    # Build a minimal ctx pointing at this bare DB
+    vc = VaultConfig(root=tmp_path / "vault")
+    (tmp_path / "vault").mkdir(exist_ok=True)
+    config = MagicMock()
+    config.vault = vc
+    ctx = PipelineContext(config=config, correlation_id="test-no-table", db_path=bare_db)
+
+    initial = ReconcileResult()
+    match await reconcile_stale_batch_refs(initial, ctx):
+        case Success(value=r):
+            assert r.batch_refs_cleared == 0, "No-op when batches table absent"
+            assert r is initial or r == initial, "Result should be unchanged"
+        case Failure(error=e):
+            pytest.fail(f"Stage 6 should not fail when batches table absent: {e}")

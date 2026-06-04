@@ -9,9 +9,11 @@ must remain importable without a configured vault root.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
@@ -30,6 +32,7 @@ from watchdog.observers import Observer
 
 from core.audit import write as audit_write
 from core.confidence import AIDecision
+from core.logging_setup import new_correlation_id
 from core.result import Failure, Success
 from storage.documents import delete_by_path, rename as rename_doc
 from vault.indexer import IGNORE_DIRS
@@ -92,6 +95,8 @@ class _VaultEventHandler(FileSystemEventHandler):
         on_delete: Callable[[Path], None],
         on_move: Callable[[Path, Path], None],
         debounce_seconds: float,
+        folder_cooldown: float = 5.0,
+        on_folder_stable: Callable[[Path], None] | None = None,
     ) -> None:
         super().__init__()
         self._root = root
@@ -101,9 +106,20 @@ class _VaultEventHandler(FileSystemEventHandler):
         self._on_delete = on_delete
         self._on_move = on_move
         self._debounce_seconds = debounce_seconds
+        self._folder_cooldown = folder_cooldown
+        self._on_folder_stable = on_folder_stable
         # key: str(path) → (active timer, callable, args)
         self._timers: dict[str, tuple[threading.Timer, Callable, tuple]] = {}
         self._lock = threading.Lock()
+        # Pending-folder registry: tracks directories being dropped
+        self._pending_folders: dict[str, threading.Timer] = {}
+        self._pending_folder_paths: set[str] = set()
+        # Per-key identity token: incremented every time a folder timer is
+        # (re)installed. A fired timer only proceeds if its token still matches
+        # the stored one — guards against a stale timer popping a newer one
+        # without cancelling it (timer-cancel race, C2).
+        self._folder_tokens: dict[str, int] = {}
+        self._folder_lock = threading.Lock()
 
     def _should_skip(self, path: Path) -> bool:
         """Return True if this path should never trigger a callback.
@@ -144,11 +160,93 @@ class _VaultEventHandler(FileSystemEventHandler):
 
     def on_created(self, event: DirCreatedEvent | FileCreatedEvent) -> None:
         if event.is_directory:
+            folder_path = Path(str(event.src_path))
+            self._register_pending_folder(folder_path)
             return
+
         path = Path(str(event.src_path))
+
+        # If this file is inside a pending folder, reset that folder's timer
+        # instead of dispatching the normal file-create callback.
+        folder_key = self._pending_folder_for(path)
+        if folder_key is not None:
+            self._reset_folder_timer(folder_key)
+            return
+
         if self._should_skip(path):
             return
         self._debounce(str(path), self._on_create, (path,))
+
+    # ── pending-folder registry helpers ───────────────────────────────────
+
+    def _register_pending_folder(self, folder_path: Path) -> None:
+        """Register a folder as pending and start its debounce timer."""
+        key = str(folder_path)
+        with self._folder_lock:
+            existing = self._pending_folders.pop(key, None)
+            if existing:
+                existing.cancel()
+            self._pending_folder_paths.add(key)
+            token = self._folder_tokens.get(key, 0) + 1
+            self._folder_tokens[key] = token
+            timer = threading.Timer(
+                self._folder_cooldown,
+                self._fire_folder_stable,
+                args=[folder_path, token],
+            )
+            self._pending_folders[key] = timer
+            timer.start()
+
+    def _reset_folder_timer(self, folder_key: str) -> None:
+        """Reset the debounce timer for an already-pending folder."""
+        with self._folder_lock:
+            existing = self._pending_folders.pop(folder_key, None)
+            if existing is None:
+                return
+            existing.cancel()
+            folder_path = Path(folder_key)
+            token = self._folder_tokens.get(folder_key, 0) + 1
+            self._folder_tokens[folder_key] = token
+            timer = threading.Timer(
+                self._folder_cooldown,
+                self._fire_folder_stable,
+                args=[folder_path, token],
+            )
+            self._pending_folders[folder_key] = timer
+            timer.start()
+
+    def _pending_folder_for(self, file_path: Path) -> str | None:
+        """Return the pending-folder key if file_path is inside a pending folder, else None."""
+        with self._folder_lock:
+            for key in self._pending_folder_paths:
+                try:
+                    file_path.relative_to(key)
+                    return key
+                except ValueError:
+                    continue
+        return None
+
+    def _fire_folder_stable(self, folder_path: Path, token: int) -> None:
+        """Called when a folder's debounce timer fires (no new files for cooldown period).
+
+        `token` is the identity of the timer that scheduled this call. If a later
+        FileCreatedEvent reset the timer (installing a new timer under the same key)
+        after this timer fired but before it acquired the lock, the stored token will
+        have advanced — in that case this is a stale fire and must be a no-op, leaving
+        the newer timer to fire. Without this guard a stale fire would pop (and drop)
+        the newer timer, then run capture_folder a second time (C2).
+        """
+        key = str(folder_path)
+        with self._folder_lock:
+            if self._folder_tokens.get(key) != token:
+                # Stale fire — a newer timer owns this key. Do not touch the registry.
+                return
+            self._pending_folders.pop(key, None)
+            self._pending_folder_paths.discard(key)
+            self._folder_tokens.pop(key, None)
+
+        if self._on_folder_stable:
+            self._on_folder_stable(folder_path)
 
     def on_modified(self, event: DirModifiedEvent | FileModifiedEvent) -> None:
         if event.is_directory:
@@ -204,6 +302,8 @@ class _VaultEventHandler(FileSystemEventHandler):
 
     def _handle_binary_delete(self, path: Path) -> None:
         """Remove sibling DB row + audit when a binary file is deleted."""
+        import structlog
+        structlog.contextvars.bind_contextvars(correlation_id=new_correlation_id())
         sibling = _sibling_for(path, self._vault_config)
         sibling_vp = unicodedata.normalize(
             "NFC", str(sibling.relative_to(self._root).as_posix())
@@ -243,6 +343,8 @@ class _VaultEventHandler(FileSystemEventHandler):
 
     def _handle_binary_move(self, src: Path, dst: Path) -> None:
         """Sync sibling when a binary file is renamed or moved."""
+        import structlog
+        structlog.contextvars.bind_contextvars(correlation_id=new_correlation_id())
         old_sibling = _sibling_for(src, self._vault_config)
         new_sibling = _sibling_for(dst, self._vault_config)
         same_folder = dst.parent == src.parent
@@ -369,7 +471,25 @@ class VaultWatcher:
         on_delete: Callable[[Path], None],
         on_move: Callable[[Path, Path], None],
         debounce_seconds: float = 3.0,
+        folder_cooldown_seconds: float = 5.0,
+        folder_max_workers: int = 4,
+        on_folder_create: Callable[[Path], None] | None = None,
     ) -> None:
+        self._folder_executor = ThreadPoolExecutor(max_workers=folder_max_workers)
+
+        def _on_folder_stable(folder_path: Path) -> None:
+            if on_folder_create is not None:
+                # Test override — call the test callback directly
+                on_folder_create(folder_path)
+            else:
+                # Production: submit asyncio.run(capture_folder()) to thread pool
+                from pipelines.capture import capture_folder  # lazy import
+
+                self._folder_executor.submit(
+                    lambda fp=folder_path: asyncio.run(capture_folder(fp))
+                )
+
+        self._on_folder_stable_callback = _on_folder_stable
         self._handler = _VaultEventHandler(
             root=root,
             vault_config=vault_config,
@@ -378,6 +498,8 @@ class VaultWatcher:
             on_delete=on_delete,
             on_move=on_move,
             debounce_seconds=debounce_seconds,
+            folder_cooldown=folder_cooldown_seconds,
+            on_folder_stable=_on_folder_stable,
         )
         self._observer = Observer()
         self._observer.schedule(self._handler, str(root), recursive=True)
@@ -389,6 +511,7 @@ class VaultWatcher:
     def stop(self) -> None:
         """Signal the observer thread to stop."""
         self._observer.stop()
+        self._folder_executor.shutdown(wait=False)
 
     def join(self) -> None:
         """Wait for the observer thread to finish."""

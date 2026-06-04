@@ -372,6 +372,74 @@ def test_move_attachment_atomic_no_partial_on_failure(vault_root, monkeypatch):
     assert tmp_files == []
 
 
+# ---------------------------------------------------------------------------
+# move_folder tests (M1 — folder move relocated to the writer chokepoint)
+# ---------------------------------------------------------------------------
+
+
+def test_move_folder_relocates_under_destination_parent(vault_root):
+    """move_folder moves the folder under destination.parent, keeping its name; returns Result[Path]."""
+    from vault.writer import move_folder
+
+    folder = vault_root / "inbox" / "research-drop"
+    folder.mkdir(parents=True)
+    (folder / "a.md").write_text("body a", encoding="utf-8")
+    (folder / "nested").mkdir()
+    (folder / "nested" / "b.md").write_text("body b", encoding="utf-8")
+
+    destination = vault_root / "Projects" / "research-drop"
+    result = move_folder(folder, destination)
+
+    assert isinstance(result, Success)
+    new_folder = result.value
+    assert new_folder == vault_root / "Projects" / "research-drop"
+    assert not folder.exists()
+    assert new_folder.exists()
+    assert (new_folder / "a.md").read_text(encoding="utf-8") == "body a"
+    assert (new_folder / "nested" / "b.md").read_text(encoding="utf-8") == "body b"
+
+
+def test_move_folder_collision_appends_suffix(vault_root):
+    """move_folder appends -2, -3, ... when destination.parent / name already exists."""
+    from vault.writer import move_folder
+
+    folder = vault_root / "inbox" / "drop"
+    folder.mkdir(parents=True)
+    (folder / "a.md").write_text("body", encoding="utf-8")
+
+    # Pre-existing folder at the target name forces a suffix.
+    (vault_root / "Projects" / "drop").mkdir(parents=True)
+
+    destination = vault_root / "Projects" / "drop"
+    result = move_folder(folder, destination)
+
+    assert isinstance(result, Success)
+    assert result.value == vault_root / "Projects" / "drop-2"
+    assert (result.value / "a.md").read_text(encoding="utf-8") == "body"
+
+
+def test_move_folder_failure_returns_failure(vault_root, monkeypatch):
+    """When shutil.move raises, move_folder returns Failure(recoverable=False), not an exception."""
+    import vault.writer as writer_mod
+    from vault.writer import move_folder
+
+    folder = vault_root / "inbox" / "drop"
+    folder.mkdir(parents=True)
+    (folder / "a.md").write_text("body", encoding="utf-8")
+
+    def boom(s, d):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(writer_mod.shutil, "move", boom)
+
+    result = move_folder(folder, vault_root / "Projects" / "drop")
+
+    assert isinstance(result, Failure)
+    assert result.recoverable is False
+    # Source folder left intact.
+    assert folder.exists()
+
+
 def test_write_note_preserves_attachment_path(vault_root):
     """write_note forwards attachment_path through _merge_metadata (Phase 1.5 bug fix)."""
     from vault.writer import write_note
