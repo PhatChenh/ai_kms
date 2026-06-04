@@ -64,27 +64,37 @@ _Skill output folders (where skills read/write — numbered by pipeline stage):_
 ## Set up layout
 ```
 /
-├── CONTEXT.md       ← context file with key concepts & domain language
-├── CLAUDE.md        ← behavioral contract:rules, conventions, preferences
-├── STATE.md         ← current implementation progress
-├── CONSTRAINTS.md   ← constraints that need to be respected or the system will break. Check these contraints when designing new features or making changes
-├── TECH_DEBT.md     ← deferred tasks that need to revisit and clear out in time
+├── CLAUDE.md          ← behavioral contract: rules, conventions, preferences
+├── CONTEXT.md         ← key domain concepts and vocabulary
+├── STATE.md           ← current implementation progress
+├── CONSTRAINTS.md     ← hard constraints; check before design or code changes
+├── TECH_DEBT.md       ← deferred tasks to revisit
 ├── OPEN_QUESTIONS.md  ← unresolved decisions
-└── docs/
-    ├── architecture/
-    │   ├── system_adr/              ← system-wide ADRs
-    │   ├── system_diagram.md        ← context diagram of whole system
-    │   ├── architecture_diagram.md  ← container diagram
-    │   └── phase0_foundations/      ← one folder per container/phase
-    │       ├── _OVERVIEW.md         ← component map for this phase
-    │       └── adr/                 ← domain-specific ADRs
-    ├── design/       ← design docs, contains output from /codebase-design-analysis, and required input for /writing-detailed-specs
-    ├── specs/        ← specs docs, contains specs written by /writing-detailed-specs, and to be verified by /research
-    ├── research/     ← research docs
-    ├── plan/         ← plan docs
-    └── roadmap/
-        └── design_artifacts/ ← designs produced while making roadmap
-└── src/                      ← source codes
+├── docs/
+│   ├── 0. draft/              ← raw input drafts (pipeline input)
+│   ├── 1. design/             ← output of /codebase-design-analysis
+│   ├── 1.5 usability_test/    ← success criteria from /codebase-design-analysis
+│   ├── 2. specs/              ← output of /writing-detailed-specs
+│   ├── 2.5 research/          ← output of /research
+│   ├── 3. plans/              ← output of /plan-from-specs
+│   ├── discussions/           ← output of /capture_discussion_v2
+│   ├── _archive/              ← completed phase artifacts (mirrors numbered structure)
+│   ├── architecture/
+│   │   ├── system_adr/            ← system-wide ADRs
+│   │   ├── system_diagram.md      ← context diagram of whole system
+│   │   ├── overall_design.md      ← container-level architecture overview
+│   │   ├── phase0_foundations/    ← Phase 0 component map + domain ADRs
+│   │   │   ├── _OVERVIEW.md
+│   │   │   └── adr/
+│   │   └── phase1_capture/        ← Phase 1 component map + domain ADRs
+│   │       ├── _OVERVIEW.md
+│   │       └── adr/
+│   ├── reference/                 ← cloned reference implementation
+│   │   └── knowledge-base-server/
+│   └── roadmap/
+│       ├── roadmap.md
+│       └── design_artifacts/      ← designs produced while making roadmap
+└── src/                           ← source code
 ```
 
 ## Repository layout
@@ -92,17 +102,20 @@ _Skill output folders (where skills read/write — numbered by pipeline stage):_
 ```
 AI-kms/
 ├── src/
+│   ├── cli/             ← Click commands; each command just calls a pipeline
 │   ├── config/          ← tunable behavior ONLY (thresholds, routing, providers)
-│   ├── prompts/         ← all AI prompts as YAML — edit here, never in code
-│   ├── llm/             ← provider abstraction + prompt loader
-│   ├── core/            ← shared primitives: result, audit, confidence, pipeline, config, logging
+│   ├── core/            ← shared primitives: result, audit, confidence, pipeline, config, logging, tags
 │   ├── handlers/        ← one class per input type; self-register at startup
-│   ├── pipelines/       ← one file per roadmap feature; pure-function stages
-│   ├── vault/           ← ALL Obsidian filesystem I/O; nothing else touches the vault directly
-│   ├── storage/         ← SQLite state (audit log, embeddings, document index)
-│   └── cli/             ← Click commands; each command just calls a pipeline
+│   ├── llm/             ← provider abstraction + prompt loader
+│   ├── pipelines/       ← one file per roadmap feature; pure-function stages (capture, reconcile)
+│   ├── prompts/         ← all AI prompts as YAML — edit here, never in code
+│   ├── storage/         ← SQLite state (audit log, batches, document index)
+│   │   └── migrations/  ← numbered .sql migration files (001–005)
+│   └── vault/           ← ALL Obsidian filesystem I/O; nothing else touches the vault directly
+│       ├── move_guard.py ← suppresses watcher re-home for pipeline-initiated moves
+│       └── (reader, writer, watcher, indexer, paths, frontmatter)
 ├── tests/               ← mirrors src/ layout; fixtures/ for test vault files
-├── data/                ← runtime data (SQLite db, embeddings)
+├── data/                ← runtime data (SQLite db)
 └── logs/                ← runtime logs
 ```
 
@@ -110,22 +123,25 @@ AI-kms/
 ```
 Vault/
 ├── inbox/                ← single drop zone
+│   └── .summaries/       ← sibling .md files for inbox binaries
 ├── Projects/
 │   └── <A>/
 │       ├── CLAUDE.md           ← human-facing index (TD-015, out of scope)
 │       ├── <user notes>.md
-│       └── attachment/         ← per-project binaries (no global attachment/)
+│       ├── <editable non-md>   ← csv, docx, xlsx etc. (visible in Obsidian)
+│       └── attachment/         ← no-edit binaries only (pdf, png, jpg, etc.)
 │           ├── report.pdf
 │           └── .summaries/     ← hidden from Obsidian; sibling .md files indexed here
-│               └── report.md   ← vault_path for this row; attachment_path frontmatter → binary
+│               └── report.pdf.md  ← vault_path for this row; attachment_path → binary
 ├── Domain/
 │   └── <D>/
-│       ├── attachment/         ← per-domain binaries, same structure
+│       ├── attachment/         ← per-domain no-edit binaries, same structure
+│       │   └── .summaries/
 │       └── Archive/            ← archived projects under this domain
-├── Documentation/        ← one living page per active project
-├── Briefings/            ← daily AI reports
-├── Synthesis/            ← weekly AI journals
-└── (no global Archive/ or attachment/ — both are now per-Domain/Project)
+├── Documentation/        ← one living page per active project (capture-excluded)
+├── Briefings/            ← daily AI reports (capture-excluded)
+├── Synthesis/            ← weekly AI journals (capture-excluded)
+└── (no global Archive/ or attachment/ — both are per-Domain/Project)
 ```
 
 ---
@@ -361,33 +377,41 @@ from core.config import CONFIG
 
 ## What Claude gets wrong in this codebase
 
+### Test patterns
 - **`RuntimeWarning` in `test_claude_cli_provider.py` is pre-existing — do not fix.** Every full `pytest tests/` run shows `coroutine 'AsyncMockMixin._execute_mock_call' was never awaited` from `test_invalid_json_stdout_returns_failure_recoverable`. Pre-dates Brief #2. Leave it.
 - **Adding a type tag to `config/tags.yaml` breaks two count tests.** `tests/test_core/test_tags.py` has `test_tags_yaml_is_valid_and_has_nine_types` and `test_load_taxonomy_returns_correct_taxonomy` — both assert `len(allowed_types) == 9` (currently). Grep for the count integer and update when adding types. `SAMPLE_TAXONOMY` in the same file is a minimal logic-test fixture — do NOT update it when adding tags.
 - **Using `@property` instead of Pydantic `Field` for user-configurable values.** Rule: `Field` = things a human configures. `@property` = things the code computes from other fields.
 - **Importing `CONFIG` at module scope in tests.** `CONFIG` validates vault root at import time; tests on machines without the vault fail immediately. Pass explicit paths (e.g. `db_path=tmp_path / "kb.db"`) to bypass CONFIG, or lazy-import inside the function under test.
-- **`CONFIG.main.vault.attachment_path` no longer exists.** Use `vault/paths.py::project_attachment(name)` or `domain_attachment(name)`. Property removed in Phase 1.5. Using it raises `AttributeError` at runtime.
-- **`VaultConfig.archive_path` @property removed.** Use `domain_archive(name, vault_config)` from `vault/paths.py`. `archive_dir: str = "Archive"` Field kept for the helper. Property pointed to global `Vault/Archive/` which no longer exists.
-- **Sibling `.md` files live at `.summaries/`, not next to source.** Non-md capture creates sibling at `Projects/<A>/attachment/.summaries/<binary.name>.md` (e.g. `report.pdf.md` — see next bullet for naming). `documents.vault_path` for a sibling row = the sibling path. `metadata.attachment_path` = the binary path. All `# COUPLING:` markers retired (Brief #2 + Brief #3 Phase 1).
-- **`VaultWatcher` / `_VaultEventHandler` constructors take `vault_config: VaultConfig`, not `attachment_path: Path`.** Changed in Brief #3 Phase 1 (TD-023). `_should_skip` uses `_is_in_managed_attachment(path, vault_config)` for non-.md files. CLI: `VaultWatcher(root=root, vault_config=CONFIG.main.vault, ...)`.
-- **`_is_in_managed_attachment` lives in `vault/paths.py`.** Moved from `vault/indexer.py` in Brief #3 Phase 1. Import from `vault.paths`, not `vault.indexer`.
-- **`scan_capture` modified loop skips `.summaries/` paths.** Prevents re-capturing sibling .md files which would wipe `attachment_path` from frontmatter (TD-AS-1).
-- **`documents.delete_by_path` and `documents.rename` return `Result[int]`.** The int is rowcount — check for 0 to detect "not in index" (false-success logging fix in Brief #3 Phase 1).
-- **Watcher handles binary delete/rename sync internally.** `_VaultEventHandler.on_deleted` and `on_moved` call `_handle_binary_delete` / `_handle_binary_move` for non-.md files. Sync uses unique debounce key prefix `bin:` to avoid colliding with user callbacks. Binary move into managed attachment dir is NOT skipped — we need to orphan the old sibling.
-- **Vault-relative paths in watcher computed from `self._root`, not `CONFIG`.** The `to_vault_path` helper uses CONFIG singleton which breaks in tests. Use `unicodedata.normalize("NFC", str(path.relative_to(self._root).as_posix()))` instead.
-- **Standard `logging` module does not support keyword arguments.** Use `%s`-style formatting: `_log.warning("msg key=%s", value)` not `_log.warning("msg", key=value)`. Structlog supports kwargs but `logging.getLogger(__name__)` does not.
+
+### Removed VaultConfig APIs
+- **Two properties removed — do not access them.** `CONFIG.main.vault.attachment_path` → use `project_attachment(name)` or `domain_attachment(name)` from `vault/paths.py`. `VaultConfig.archive_path` → use `domain_archive(name, vault_config)` from `vault/paths.py`. Both raise `AttributeError` at runtime.
+
+### vault/ — sibling files
+- **Sibling `.md` files: location AND naming.** Non-md capture creates sibling at `Projects/<A>/attachment/.summaries/<binary.name>.md` — suffix is `.md` appended to the FULL filename (e.g. `report.pdf.md`), NOT `<binary.stem>.md`. Use `_sibling_for(binary, vault_config)` from `vault/watcher.py` — never recompute inline. `documents.vault_path` for a sibling row = the sibling path; `metadata.attachment_path` = the binary path. See ADR-0007.
+
+### vault/ — watcher internals
+- **`VaultWatcher` / `_VaultEventHandler` constructors take `vault_config: VaultConfig`, not `attachment_path: Path`.** `_should_skip` uses `_is_in_managed_attachment(path, vault_config)` for non-.md files. CLI: `VaultWatcher(root=root, vault_config=CONFIG.main.vault, ...)`.
+- **`documents.delete_by_path` and `documents.rename` return `Result[int]`.** The int is rowcount — check for 0 to detect "not in index".
+- **`vault/watcher.py::on_deleted` and `on_moved` run binary sync BEFORE `_should_skip`.** Binary delete/move in `Projects/<A>/attachment/` MUST fire `_handle_binary_delete` / `_handle_binary_move` so the sibling DB row + audit log stay consistent. `_should_skip` only filters the user callback (indexer), not the internal sync. Reordering breaks sibling cleanup silently. (TD-030 fix)
+- **Watcher handles binary delete/rename sync internally.** `on_deleted` / `on_moved` call `_handle_binary_delete` / `_handle_binary_move`. Sync uses unique debounce key prefix `bin:` to avoid colliding with user callbacks. Binary move INTO managed attachment dir is NOT skipped — we need to orphan the old sibling.
+- **Vault-relative paths in watcher computed from `self._root`, not `CONFIG`.** Use `unicodedata.normalize("NFC", str(path.relative_to(self._root).as_posix()))` — the `to_vault_path` helper uses CONFIG singleton which breaks in tests.
 - **Two `_debounce` calls with same key cancel each other.** The second call overwrites the first timer. Use unique keys when debouncing multiple handlers for the same path.
 - **`write_note` sets `updated_by_human` from `actor`, not from incoming metadata.** `_merge_metadata` computes `updated_by_human=(actor == "human")` — any `updated_by_human=True` on the incoming `NoteMetadata` is ignored when `actor="ai"`. Tests that need `updated_by_human=True` on disk must call `write_note(..., actor="human")`.
-- **Sibling marker filename = `<binary.name>.md`, NOT `<binary.stem>.md`.** Use `_sibling_for(binary, vault_config)` from `vault/watcher.py` — never recompute inline. Rationale + collision prevention: see ADR-0007.
-- **`vault/paths.py` has TWO near-twin predicates.** `_is_in_managed_attachment(path, cfg)` — True only under `Projects/<A>/attachment/` or `Domain/<D>/attachment/`. Used by watcher `_should_skip`, indexer Rule 1, reconcile Stages 2+3 (binary-pipeline area). `_is_managed_summaries_area(path, cfg)` — True under any `attachment/` subtree OR under `inbox/`. Used by reconcile Stage 4 (where `.summaries/` siblings live). Picking the wrong one is silent.
-- **Monkeypatching `vault.watcher` collaborators: target `vault.watcher.<name>`, NOT the source module.** `watcher.py` imports `move_note`, `write_note`, `delete_by_path`, `rename as rename_doc`, `read_note`, `audit_write`, `AIDecision`, `Failure`, `Success` at module top (Brief #4). Patching `vault.writer.move_note` updates the source module attribute but leaves `vault.watcher.move_note` pointing at the original. Same pattern for any module that does `from X import Y` at top level — patch the importing module, not X. (TD-033)
-- **Any code writing into `.summaries/` MUST set `type=attachment-summary` in frontmatter.** Missing → reconcile Stage 4 skips it silently. Phase 2 Classify must preserve it. Rationale: see ADR-0008.
-- **CLUELESS marker body is a one-line placeholder string, not `""`.** `pipelines/capture.py::_store_nonmd` CLUELESS path writes `_Pending classification — binary at: <vp>_` + handoff note. Phase 2 Classify is expected to overwrite the body when resolving the marker.
-- **`vault/watcher.py::on_deleted` and `on_moved` run binary sync BEFORE `_should_skip`.** Binary delete/move in `Projects/<A>/attachment/` MUST fire `_handle_binary_delete` / `_handle_binary_move` so the sibling DB row + audit log stay consistent. `_should_skip` only filters the user callback (indexer), not the internal sync. If you reorder these handlers and `_should_skip` runs first, you silently break sibling cleanup for the headline Brief #3 scenario. (TD-030 fix)
-- **`VaultConfig.no_edit_extensions` controls binary placement.** Extensions in this list (pdf, png, jpg, jpeg, gif, webp) → `attachment/` (hidden). Everything else non-md → project/domain root (visible). Use `resolve_placement()` from `vault/paths.py` — never decide placement inline.
-- **`vault/move_guard.py` suppresses watcher re-home for pipeline moves.** Pipeline registers destination via `get_active().register(path)` before moving. Watcher checks registry before re-homing. Thread-safe via `threading.Lock`. Without this, watcher sees pipeline's move as "misplaced file" and moves it back.
-- **`_should_skip` now also skips AI-output folders.** `Briefings/`, `Synthesis/`, `Documentation/` are capture-excluded. Watcher and `scan_capture` never process files there. Adding content to these folders requires `vault/writer.py`, not the capture pipeline.
-- **Reconcile now has 7 stages, not 6.** Stage 7 = `reconcile_editable_migration` — moves editable files out of `attachment/` to project/domain root. Update stage counts if referencing.
-- **Settle window in watcher coalesces multi-hop moves.** Binary move A→B followed quickly by B→C produces one re-home event (A→C), not two. Default settle window is configurable. Without this, intermediate destinations trigger spurious sibling creation/deletion.
+
+### vault/ — paths and routing
+- **`vault/paths.py` has TWO near-twin predicates.** `_is_in_managed_attachment(path, cfg)` (in `vault/paths.py`, not `vault/indexer.py`) — True only under `Projects/<A>/attachment/` or `Domain/<D>/attachment/`. Used by watcher `_should_skip`, indexer Rule 1, reconcile Stages 2+3. `_is_managed_summaries_area(path, cfg)` — True under any `attachment/` subtree OR under `inbox/`. Used by reconcile Stage 4. Picking the wrong one is silent.
+- **`VaultConfig.no_edit_extensions` controls binary placement; `_should_skip` also blocks AI-output folders.** `no_edit_extensions` (pdf, png, jpg, jpeg, gif, webp) → `attachment/` hidden; everything else non-md → project/domain root visible. Use `resolve_placement()` from `vault/paths.py` — never decide placement inline. `Briefings/`, `Synthesis/`, `Documentation/` are capture-excluded — adding content there requires `vault/writer.py`, not the capture pipeline.
+- **`vault/move_guard.py` suppresses watcher re-home for pipeline moves.** Pipeline calls `get_active().register(path)` before moving. Watcher checks registry before re-homing. Thread-safe via `threading.Lock`. Without this, watcher sees the move as "misplaced file" and moves it back.
+
+### vault/ — test monkeypatching
+- **Target `vault.watcher.<name>`, NOT the source module.** `watcher.py` imports `move_note`, `write_note`, `delete_by_path`, `rename as rename_doc`, `read_note`, `audit_write`, `AIDecision`, `Failure`, `Success` at module top. Patching `vault.writer.move_note` leaves `vault.watcher.move_note` pointing at the original. Patch the importing module, not the source. (TD-033)
+
+### General patterns
+- **Standard `logging` module does not support keyword arguments.** Use `%s`-style: `_log.warning("msg key=%s", value)` not `_log.warning("msg", key=value)`. Structlog supports kwargs; `logging.getLogger(__name__)` does not.
+- **Any code writing into `.summaries/` MUST set `type=attachment-summary` in frontmatter.** Missing → reconcile Stage 4 skips it silently. Phase 2 Classify must preserve it. See ADR-0008.
+
+### Phase 2 specific
+- **CLUELESS marker body is a one-line placeholder string, not `""`.** `pipelines/capture.py::_store_nonmd` CLUELESS path writes `_Pending classification — binary at: <vp>_` + handoff note. Phase 2 Classify overwrites the body when resolving the marker.
 
 
 ## Constraint Index

@@ -1,10 +1,7 @@
 ---
 created: 2026-04-26
-updated: 2026-05-06
+updated: 2026-06-04
 ---
----
-
-## created: 2026-04-26 updated: 2026-05-01
 
 # PROJECT CONTEXT
 
@@ -40,194 +37,409 @@ This project is aimed at professional office workers, like managers and executiv
 8. **Self-Learning** — Track human corrections to AI classifications and use them to improve future accuracy
 9. **Weekly Synthesis & Daily Briefing** — Automatically connect dots across the week's notes to surface recurring themes, contradictions, and action items
 
-# Build Order — AI-kms (Revised)
+---
 
-## Phase 0 — Foundations (no AI yet, just plumbing)
+# Build Order — AI-kms
 
+## Deadline: 17 June 2026
 
-Build everything downstream depends on. Never skip. Every later phase imports from `core/`.
+## Collaboration Model
 
-- `core/` — `result.py`, `audit.py`, `confidence.py`, `pipeline.py`, `config.py`, `logging_setup.py`, `exceptions.py`
-- `config/` YAML files — `config.yaml`, `thresholds.yaml`, `routing.yaml`
-- `llm/prompt_loader.py` — load `prompts/*.yaml` once at startup
-- `llm/provider.py` + `claude_provider.py` — one working AI call end-to-end
-- `vault/` — `paths.py`, `frontmatter.py`, `reader.py`, `writer.py` (idempotent upsert, respects `updated_by_human`)
-- `storage/` — `db.py`, `schema.sql`, `migrations/` (versioned SQL deltas), `audit_log.py`
-- **Smoke test before moving on:** write a markdown file with frontmatter → parse → upsert to SQLite → write an audit row. All green = Phase 0 done.
+This roadmap supports multiple contributors working in parallel. Each task is labeled with its dependency chain and weight. Contributors pick tasks based on availability.
 
-> **Risk flag:** If `config.yaml` and `llm/` already exist from earlier work, Phase 0 is 1 day, not 2. Verify which modules are already wired end-to-end vs. just scaffolded.
+**How to work a task:**
+1. Run `/grill` to pin down the design (what exactly does this feature do? edge cases? scope?)
+2. Run `/codebase-design-analysis` to explore implementation options against the existing codebase
+3. Run `/writing-detailed-specs` to turn the chosen option into a buildable spec
+4. Run `/research` to validate the spec against codebase constraints and patterns — this is the quality gate
+5. Run `/plan-from-specs` to produce the implementation plan
+6. Run `/tdd-implement` to build it phase by phase
+7. Run behavior tests to verify end-to-end (acceptance criteria listed per task)
+
+**Review model:** No code review. No test review. Final verification is **behavior testing** — run the app, do the thing described in acceptance criteria, confirm it works.
+
+**Work in worktrees.** Each contributor works in their own git worktree to avoid conflicts.
 
 ---
 
-## Phase 1 — Capture _(Roadmap Feature 1)_
+## Dependency Graph
 
+```
+COMPLETED                          REMAINING
+─────────                          ─────────
 
-Drop file into `inbox/` → AI writes summary + metadata back into frontmatter. No classification yet.
+Phase 0 (Foundations) ─┐
+Phase 1 (Capture)      ├─ DONE ──→ Phase 2 (Classify) ──→ Phase 4 (MCP Server)
+Phase 1.5 (Pay Debt)   │                                        ↑
+Phase Pre-2 (DB Prep)  │           Phase 3 (Search) ────────────┘
+Vault-Restructure      │               ↑
+                       │               └── depends on Phase 0+1 only
+                       │
+                       ├─ DONE ──→ Phase 5 (Promotion)       INDEPENDENT
+                       ├─ DONE ──→ Phase 6 (Documentation)   INDEPENDENT
+                       ├─ DONE ──→ Phase 8 (Briefing)        INDEPENDENT
+                       └─ DONE ──→ Phase 9 (Synthesis)       INDEPENDENT
 
-**Accepted drop types:** `.md` files, PDF, DOCX. **No video files.** YouTube/website content
-enters the vault as a `.md` note containing the link — not as a media file. Summarizing the
-linked YT/web content is a later enhancement, not a Phase 1 video handler.
+                                   Phase 7 (Self-Learning) ──→ depends on Phase 2
+```
 
-**Two input shapes, two flows:**
-- **`.md` drop** → AI writes summary + metadata into the note's own frontmatter, in place.
-- **non-md drop (PDF, DOCX)** → AI creates a sibling `.md` summary note (body carries an
-  Obsidian `[[wikilink]]` to the source + a `source_file` frontmatter field), then the source
-  binary is moved to the `attachment/` folder via `vault.writer.move_attachment`. The `.md`
-  sibling is what gets classified and searched; the binary is reference-only.
-
-> **Body-preservation discipline (capture pipeline):** `vault/writer.py:write_note`
-> replaces the *entire* note body — it does not merge or append. Only frontmatter is
-> merged. The `.md`-drop flow MUST pass the original note body unchanged as `content`;
-> the AI summary goes into the `summary` frontmatter field, never the body. A pipeline
-> that passes the summary as `content` silently wipes the user's note.
-> **Acceptance test:** drop a `.md` with a known body → run capture → assert the body is
-> byte-identical and the `summary` frontmatter field is populated.
-
-- `handlers/base.py` + `registry.py` (self-registering ABC)
-- **Handlers, in build order:** `markdown_handler.py`, `pdf_handler.py`, `docx_handler.py`
-- `pipelines/capture.py` — extract → summarize → metadata → store (four pure stages, no
-  bundling). The non-md branch adds: create sibling `.md` + `move_attachment` source → `attachment/`.
-- `prompts/summarize.yaml`, `prompts/extract_metadata.yaml`
-- CLI: `kms capture <file>`
-- Every capture writes to `audit_log`
-- `attachment/` is the single home for all non-md source files.
-- Add web/YT-link summarization, email, chat handlers **only after** the pipeline proves
-  itself with markdown + pdf + docx.
-
-> **Rule:** One handler working end-to-end before adding the next. Markdown → PDF → DOCX.
+**Key insight:** Phase 2 and Phase 3 are independent of each other — both depend on Phase 0+1 only. Phase 4 (MCP) depends on both 2 and 3. This means Phase 2 and Phase 3 can run in parallel.
 
 ---
 
-## Phase 2 — Classify + Route _(Roadmap Feature 2)_
+## Completed Phases (reference only)
 
-### **IMPORTANT NOTE**: The AI need to decide to move the note in WHICH subfolder inside `Domain/`, `Projects/`, `Archive/` - not just the big one, but actually the subfolders. This would require the AI to understand what projects/domains the users is working on, and which it should put the file to
+### Phase 0 — Foundations ✅
+Core primitives, config, LLM provider, vault layer, storage layer, audit log. 956 tests. See STATE.md for full checklist.
 
-Move notes from `inbox/` → `Domain/`, `Projects/`, `Archive/` based on confidence gates.
+### Phase 1 — Capture ✅
+Drop file into `inbox/` → AI writes summary + metadata. Handlers: markdown, PDF, DOCX, XLSX. Watcher, indexer, reconcile (7 stages). Sibling `.md` files for binaries under `.summaries/`. URL enrichment. Tag validation.
 
-- `prompts/classify.yaml`
+### Phase 1.5 — Pay Debt ✅
+FILE_LOST guard, location tags, stale-tag reconcile, folder capture, handlers extension, idempotent capture, stale-batch-ref reconcile.
+
+### Phase Pre-2 — DB Schema Prep ✅
+`project`, `status`, `key_topics` columns added to documents table. Domain scalar deprecated (lazy migration via `_DEPRECATED_KEYS`).
+
+### Vault-Restructure — Editable/No-Edit Split ✅
+ADR-0006. `no_edit_extensions` config, `resolve_placement()`, binary content-change detection, settle window, move_guard, AI-output folder exclusion, reconcile Stage 7.
+
+---
+
+## Stable Interfaces (Phase 0+1 — all independent tasks build against these)
+
+These have been stable across 956 tests and multiple phases. Independent tasks import from these modules only:
+
+| Module | Key functions | What it does |
+|--------|--------------|--------------|
+| `vault/reader.py` | `read_note(path) → Result[Note]` | Read note + frontmatter from vault |
+| `vault/writer.py` | `write_note(path, content, metadata, actor)`, `move_note(src, dst)` | Write/move notes (respects `updated_by_human`) |
+| `vault/paths.py` | `resolve_placement()`, `project_attachment()`, `domain_attachment()` | Vault path helpers |
+| `storage/documents.py` | `upsert()`, `get_by_path()`, `all_paths()`, `delete_by_path()`, `rename()` | Document index CRUD |
+| `storage/audit_log.py` | `append(AuditEntry) → Result[int]`, `query()` | Audit log read/write |
+| `core/audit.py` | `write(decision, source_ids, pipeline, stage, ...)` | High-level audit writer |
+| `core/tags.py` | `validate_tags(tags, taxonomy) → Result` | Tag taxonomy enforcement |
+| `core/pipeline.py` | `run_pipeline(stages, input) → Result` | Pipeline executor |
+| `core/result.py` | `Success(value)`, `Failure(error, recoverable, context)` | Result type |
+| `llm/provider.py` | `get_provider(task, config) → LLMProvider` | LLM call factory |
+| `llm/prompt_loader.py` | `PROMPTS["name"].render(**vars)` | Prompt loading from YAML |
+| `core/config.py` | `CONFIG` singleton, `VaultConfig`, `MainConfig` | Validated config |
+
+---
+
+## Phase 2 — Classify + Route
+
+**`BLOCKED BY: Phase 0+1 (done) · WEIGHT: medium`**
+
+AI reads a captured note's summary + tags → decides which `Projects/<A>/` or `Domain/<D>/` subfolder it belongs in → moves it there. Confidence gates control automation level.
+
+### What it does
 - `pipelines/classify.py` — classify → confidence-gate → route → move (four pure stages)
-- Wire `routing.yaml` + `thresholds.yaml` (thresholds live in config, never hardcoded)
-- Confidence gates: ≥0.85 auto-move | 0.60–0.85 stay in inbox, suggest categorization, but flag for human review | <0.60 flag as clueless and need human manual review
-- Every decision → `audit_log` with: timestamp, source note, decision, confidence score, reasoning
+- `prompts/classify.yaml` — classification prompt
+- Confidence gates from `config/thresholds.yaml`: ≥ auto-move | mid-range → suggest + flag | low → flag as clueless
+- Every decision → `audit_log` with timestamp, source note, decision, confidence, reasoning
+- CLI: `kms classify <file>` + `kms classify --scan` (batch)
 
-> **Tag taxonomy enforcement (TD-019):** `pipelines/classify.py` MUST call `validate_tags` from `core/tags.py` on all AI-generated tags before writing. Tag violations are logged as `TAG_VIOLATION` audit entries — not silently dropped. `core/tags.py` is shared infrastructure built in Phase 1 (capture pipeline); classify just wires it in. Do not skip this step.
+### Tech debt to resolve DURING this phase
+- **TD-019** — Wire `validate_tags` in classify pipeline (shared infra from Phase 1, just needs wiring)
+- **TD-034** — Project-to-domain mapping registry. Classify needs to know which domain a project belongs to. Design a `projects` DB table or `Projects/<A>/meta.yaml`. Without this, domain defaults to `Uncategorized`
+- **TD-012** (partial) — Add `kms classify` CLI command (currently a stub)
 
-> **Do not proceed** to Phase 3 until you can drop a test note into inbox and watch it land in the right folder with an audit entry.
+### Tech debt to consider (not blocking)
+- **TD-029** — Rename gate logic. Current rename heuristic is mis-calibrated. Can ship classify without it — rename is a capture concern, not classify. But classify could trigger a rename-suggestion. Decide during `/grill`
+- **TD-038** — Domain scalar already deprecated in Pre-2. Classify should use `domain/<D>` tags only, never the scalar. Verify no consumer reads the scalar
+
+### Open questions to resolve before starting
+- None blocking. OQ-002 (per-section authorship) is Phase 7+
+
+### Acceptance criteria (behavior test)
+- [ ] Drop a test `.md` note about "Q3 marketing budget" into `inbox/`
+- [ ] Run `kms capture <file>` then `kms classify <file>`
+- [ ] Note moves to correct `Projects/` or `Domain/` subfolder
+- [ ] Frontmatter has classification tags
+- [ ] `audit_log` has a CLASSIFIED entry with confidence score and reasoning
+- [ ] Low-confidence note stays in inbox with a review flag
+- [ ] Run `kms classify --scan` — all inbox notes get classified
 
 ---
 
-## Phase 3 — Search + Three-Tier Retrieval _(Roadmap Features 3 + 4)_
+## Phase 3 — Search + Three-Tier Retrieval
 
+**`INDEPENDENT (depends on Phase 0+1 only) · WEIGHT: heavy`**
 
-The vault is now queryable. This is what makes the MCP useful.
+Make the vault queryable by meaning. Combines keyword search (FTS5) with semantic search (embeddings). Three tiers control cost: summary-only (hot), snippet (warm), full content (cold).
 
-- `storage/embeddings.py` — write/read vectors using `sentence-transformers` (Python equiv of `Xenova/all-MiniLM-L6-v2`)
+### What it does
+- `storage/embeddings.py` — write/read vectors using `sentence-transformers` (`all-MiniLM-L6-v2`)
 - `retrieval/keyword.py` — FTS5 full-text search
 - `retrieval/semantic.py` — embedding cosine similarity
-- `retrieval/hybrid.py` — merge and re-rank both result sets
-- `retrieval/tiers.py` — dispatcher:
-    - **Hot** → summary field only (cheap, fast, fits in context)
-    - **Warm** → matching snippet + surrounding lines
-    - **Cold** → full note content (only when explicitly needed)
-- CLI: `kms search "<query>"` — always starts at hot tier, escalates on demand
-- Index is built from audit_log + vault scan at startup; incremental updates on each capture
+- `retrieval/hybrid.py` — merge + re-rank both result sets
+- `retrieval/tiers.py` — dispatcher: hot (summary field) → warm (matching snippet) → cold (full content)
+- CLI: `kms search "<query>"` — starts at hot tier, escalates on demand
+- Index built from documents table + vault scan; incremental updates on each capture
 
-> **Tier rule:** callers never decide the tier — they ask for a query and a max_cost. `tiers.py` decides where to start and whether to escalate.
+### Tech debt to resolve DURING this phase
+- **TD-004** — Create `embeddings` table + FTS5 virtual table (SQL migrations)
+- **TD-013** — Route `embedding_model` config field to `sentence-transformers`
+- **TD-012** (partial) — Add `kms search` CLI command (currently a stub)
 
----
+### Tech debt to consider (not blocking)
+- **TD-010** — Ollama httpx async rewrite. Only relevant if Ollama becomes the embedding provider. Skip unless needed
 
-## Phase 4 — MCP Server MVP _(Roadmap Feature 9, pulled forward)_
+### Open questions to resolve before starting
+- None blocking
 
-Thin layer over the existing pipelines. The boss uses Claude Desktop to talk to the vault.
+### Tier rule
+Callers never decide the tier — they ask for a query and a `max_cost`. `tiers.py` decides where to start and whether to escalate.
 
-**MVP scope (enough for the demo — no more):**
-
-- `mcp_server/server.py` — MCP entrypoint, stdio transport first
-- `mcp_server/tools.py` — expose **three tools only**:
-    - `kms_search(query, tier)` — calls `retrieval/tiers.py`
-    - `kms_capture(content, source_type)` — calls `pipelines/capture.py`
-    - `kms_classify(note_path)` — calls `pipelines/classify.py`
-- `mcp_server/transport.py` — stdio (Claude Desktop compatible); HTTP transport deferred to post-deadline
-
-**Full MCP tools** (`kms_promote`, `kms_synthesize`, `kms_documentation_update`, `kms_briefing`) are added in later phases as those pipelines are built — not before.
-
-> **Scope discipline:** Do not build tools for pipelines that don't exist yet. An MCP tool that calls a stub is worse than no tool — it misleads the demo.
+### Acceptance criteria (behavior test)
+- [ ] Capture 5+ diverse notes (meeting notes, research, project update)
+- [ ] Run `kms search "stakeholder resistance"` — finds a note about "managing pushback"
+- [ ] Hot tier returns summaries only (fast, cheap)
+- [ ] Warm tier returns matching snippets with surrounding context
+- [ ] Cold tier returns full note content
+- [ ] Search works on both `.md` notes and sibling summaries of binaries
 
 ---
 
-## Phase 5 — Note Promotion _(Roadmap Feature 7)_
+## Phase 4 — MCP Server MVP
 
+**`BLOCKED BY: Phase 2 + Phase 3 · WEIGHT: medium`**
 
-Extract structured knowledge from raw captures. Turns ore into refined metal.
+Thin wrapper over existing pipelines. The boss uses Claude Desktop to talk to the vault. Zero logic in `mcp_server/tools.py`.
 
-- `pipelines/promotion.py` — detect promotable notes → extract structure → write to `Domain/<x>/notes/`
-- `prompts/promote.yaml`
-- Note types to promote: research note | lesson learned | workflow template
-- Confidence gate applies: <0.85 proposal goes to human review, never auto-promotes without high confidence
-- Every promotion → audit_log
-- Add `kms_promote` to `mcp_server/tools.py` once pipeline is tested
+### What it does
+- `mcp_server/server.py` — MCP entrypoint, stdio transport (Claude Desktop compatible)
+- `mcp_server/tools.py` — expose exactly three tools:
+    - `kms_search(query, tier)` → calls `retrieval/tiers.py`
+    - `kms_capture(content, source_type)` → calls `pipelines/capture.py`
+    - `kms_classify(note_path)` → calls `pipelines/classify.py`
+- `mcp_server/transport.py` — stdio first; HTTP transport deferred
+
+### Tech debt to resolve DURING this phase
+- **TD-007 / OQ-003** — `wal_autocheckpoint` tuning. MCP is a long-running daemon; unchecked WAL growth causes read latency. Set `wal_autocheckpoint=100` in `_connect()`
+- **TD-012** (partial) — Any remaining CLI stubs
+
+### Open questions to resolve BEFORE starting
+- **OQ-004** — Concurrent `run_pipeline` contextvar bleed. `clear_contextvars()` in `new_correlation_id()` wipes concurrent calls. Fix: per-run `copy_context().run(...)`. MUST resolve before MCP ships concurrent tool handling
+
+### Scope discipline
+Do NOT add `kms_promote`, `kms_synthesize`, `kms_documentation_update`, or `kms_briefing` until those pipelines exist and are tested (C-15). An MCP tool that calls a stub is worse than no tool.
+
+Later phases add their own MCP tools when their pipeline is ready.
+
+### Actor rule for external AI (Claude Cowork, Claude Desktop)
+Edits through our MCP tools → go through `write_note(..., actor="ai")` → tracked, AI-owned. Edits outside our pipeline (direct filesystem writes by Claude Cowork, human, or any other tool) → watcher treats as human edit → `updated_by_human = true`. The distinction is **pipeline vs not-pipeline**, not human vs AI. This means Claude Cowork MUST use MCP tools to make tracked edits — direct filesystem access is treated as human.
+
+### Acceptance criteria (behavior test)
+- [ ] Configure Claude Desktop to use the MCP server
+- [ ] Ask Claude: "What do I know about Q3 marketing?" — returns relevant notes
+- [ ] Ask Claude: "Capture this: <paste text>" — creates a new note in inbox
+- [ ] Ask Claude: "Classify the notes in my inbox" — notes move to correct folders
+- [ ] All three tools return structured results, not errors
 
 ---
 
-## Phase 6 — Documentation Auto-Update _(Roadmap Feature 6)_
+## Phase 5 — Note Promotion
 
-One living page per active project. AI proposes updates, human approves.
+**`INDEPENDENT (depends on Phase 0+1 only) · WEIGHT: medium`**
 
+Extract structured knowledge from raw captures — research notes, workflow templates, lessons learned. Turns ore into refined metal.
+
+### What it does
+- `pipelines/promotion.py` — detect promotable notes → extract structure → write to `Domain/<D>/`
+- `prompts/promote.yaml` — promotion prompt
+- Note types: research note | lesson learned | workflow template
+- Confidence gate: < threshold → proposal goes to human review, never auto-promotes without high confidence
+- Every promotion → `audit_log`
+- CLI: `kms promote <file>` or `kms promote --scan`
+- When pipeline is tested, add `kms_promote` tool to `mcp_server/tools.py`
+
+### Tech debt: none blocking
+
+### Open questions: none blocking
+
+### Acceptance criteria (behavior test)
+- [ ] Capture a meeting-notes `.md` that contains a reusable workflow ("every sprint we do X, then Y, then Z")
+- [ ] Run `kms promote <file>`
+- [ ] A new structured note appears in the correct `Domain/` folder with type `workflow-template` (or similar)
+- [ ] Original note unchanged (no overwrite)
+- [ ] `audit_log` has a PROMOTED entry with confidence and reasoning
+- [ ] Low-confidence promotion stays as a suggestion, not auto-executed
+
+---
+
+## Phase 6 — Documentation Auto-Update
+
+**`INDEPENDENT (depends on Phase 0+1 only) · WEIGHT: medium`**
+
+One living page per active project in `Documentation/`. AI proposes updates based on new captures. Human approves.
+
+### What it does
 - `pipelines/documentation.py` — read project materials → diff against current doc → propose update
-- `prompts/documentation_update.yaml`
-- **Hard rule:** never overwrite a field where `updated_by_human = true`. Propose only; write only on explicit approval.
-- Conflict resolution rule: newest `updated_at` wins unless `updated_by_human = true`, in which case human always wins.
-- Update cycle: triggered on new capture to a project folder (not on a timer — event-driven)
-- Output → `Vault/Documentation/<project>.md`
-- Add `kms_documentation_update` to MCP tools once tested
+- `prompts/documentation_update.yaml` — update prompt
+- **Hard rule:** never overwrite a field where `updated_by_human = true`. Propose only; write only on explicit approval
+- Conflict resolution: newest `updated_at` wins unless `updated_by_human = true` (human always wins)
+- Update cycle: triggered on new capture to a project folder (event-driven, not timer)
+- Output → `Vault/Documentation/<project>.md` (capture-excluded folder — watcher skips it)
+- CLI: `kms update-docs <project>` or `kms update-docs --all`
+- When pipeline is tested, add `kms_documentation_update` tool to `mcp_server/tools.py`
+
+### Tech debt: none blocking
+
+### Open questions to be aware of (not blocking start)
+- **OQ-008** — Detecting human edits to capture-excluded AI-output folders. Documentation/ is capture-excluded, so human edits there won't trigger `updated_by_human`. Decide during `/grill` whether to add a lightweight edit-detection path for these folders
+
+### Co-authoring: deferred past 17 June
+Per-section AI/human merge (TD-006, OQ-002) is NOT in scope. Ship with the blunt whole-note gate: if human (or external AI via filesystem) edits this page, `updated_by_human = true` and AI stops updating it. V2 enhancement when real user feedback exists on what they actually want to edit. See Phase 4 "Actor rule" for how external AI edits are classified.
+
+### Acceptance criteria (behavior test)
+- [ ] Create project folder `Projects/Alpha/` with 3+ captured notes
+- [ ] Run `kms update-docs Alpha`
+- [ ] `Documentation/Alpha.md` appears with a synthesized project summary
+- [ ] Capture a new note to `Projects/Alpha/`
+- [ ] Run `kms update-docs Alpha` again — doc updates to include new content
+- [ ] Manually edit `Documentation/Alpha.md` (set `updated_by_human: true`)
+- [ ] Run `kms update-docs Alpha` — AI does NOT overwrite human sections
 
 ---
 
-## Phase 7 — Self-Learning _(Roadmap Feature 8)_
+## Phase 7 — Self-Learning
 
-No model fine-tuning. Just prompt augmentation from correction signals.
+**`BLOCKED BY: Phase 2 (Classify) · WEIGHT: light`**
 
-- `corrections` table already in schema from Phase 0 (zero additional storage work)
-- Hook: detect when user manually moves an AI-classified note → log the correction with original classification + confidence + destination chosen by human
-- Feed corrections as few-shot examples into the `classify.yaml` prompt at load time (most recent N corrections, configurable)
-- Accuracy metric: track classification confidence pre/post corrections in audit_log
-- This phase is lightweight because the infrastructure is already in place. The work is wiring the detection hook and the prompt injection.
+Track human corrections to AI classifications. Feed them back as few-shot examples to improve future accuracy. No model fine-tuning — just prompt augmentation.
 
----
+### What it does
+- Hook: detect when user manually moves a classified note → log correction with original classification + confidence + human-chosen destination
+- `corrections` table enrichment (schema exists from Phase 0, fields need extending)
+- Feed most recent N corrections as few-shot examples into `prompts/classify.yaml` at load time
+- Accuracy metric: track classification confidence pre/post corrections in `audit_log`
+- CLI: `kms corrections` (view correction history), `kms accuracy` (show improvement metrics)
 
-## Phase 8 — Daily Briefing _(Roadmap Feature — pulled to post-MCP)_
+### Tech debt to resolve DURING this phase
+- **TD-005** — Enrich `corrections` table with classifier-specific fields (feedback type, correction delta, confidence)
 
-Read-only consumer of audit_log. Was Phase 3 in the original plan; moved here because the MCP demo matters more to the boss than the briefing.
+### Open questions to be aware of
+- **OQ-002** — Fine-grained AI vs human authorship. Not blocking for Phase 7 (whole-note gate is sufficient for correction detection), but inform the `/grill` discussion
 
-- `briefings/classification_report.py` — what got moved where today, what needs human review
-- `briefings/daily.py` — compose the full daily report
-- `prompts/briefing.yaml`
-- Output → `Vault/Briefings/YYYY/MM_DD.md`
-- `scheduler/runner.py` + `jobs.yaml` — daily trigger at a configured time
-- Add `kms_briefing` to MCP tools
+### Why this is blocked on Phase 2
+Self-learning hooks into classify corrections. Without a working classify pipeline, there's nothing to correct. The watcher needs to compare "AI classified to X" vs "human moved to Y" — both sides need to exist.
 
-> **Note:** The briefing is useful but not demo-critical. The boss cares about search and capture, not the report. Ship this after M2.
-
----
-
-## Phase 9 — Weekly Synthesis _(Roadmap Feature 5 — post deadline)_
-
-Low urgency. No stakeholder is waiting for this. Ship it when the deadline pressure is off.
-
-- `pipelines/synthesis_weekly.py`, `prompts/synthesize_weekly.yaml`
-- Output → `Vault/Synthesis/`
-- Scheduler: Sunday trigger via `jobs.yaml`
-- Add `kms_synthesize` to MCP tools
+### Acceptance criteria (behavior test)
+- [ ] Classify a note (auto-moves to `Projects/Alpha/`)
+- [ ] Manually move it to `Projects/Beta/` (human correction)
+- [ ] Run `kms corrections` — shows the correction entry
+- [ ] Classify a similar note — the correction influences the new classification
+- [ ] `audit_log` shows confidence improvement signal
 
 ---
 
-## Rules of the road
+## Phase 8 — Daily Briefing
 
-- **Never skip Phase 0.** Every later phase imports from `core/`. Build it broken once and you rebuild everything.
+**`INDEPENDENT (depends on Phase 0+1 only — reads audit_log) · WEIGHT: medium`**
+
+Read-only consumer of audit_log. Generates a daily report: what got captured, what got classified, what needs human review, what patterns emerged.
+
+### What it does
+- `briefings/daily.py` — compose the full daily report from audit_log entries
+- `briefings/classification_report.py` — what got moved where today, what needs review
+- `prompts/briefing.yaml` — briefing prompt
+- Output → `Vault/Briefings/YYYY/MM_DD.md` (capture-excluded folder)
+- `scheduler/runner.py` + `jobs.yaml` — daily trigger at configured time (scheduler comes LAST — C-16)
+- CLI: `kms briefing` (generate today's briefing manually)
+- When pipeline is tested, add `kms_briefing` tool to `mcp_server/tools.py`
+
+### Tech debt: none blocking
+
+### Open questions: none blocking
+
+### Co-authoring: deferred past 17 June
+Same rule as Phase 6. Blunt whole-note gate. See Phase 6 "Co-authoring" note and Phase 4 "Actor rule".
+
+### Note on scheduler
+Build and verify `kms briefing` CLI first. Only add scheduler automation after CLI is verified (C-16).
+
+### Acceptance criteria (behavior test)
+- [ ] Capture + classify several notes throughout a session
+- [ ] Run `kms briefing`
+- [ ] `Briefings/2026/06_DD.md` appears with:
+  - Summary of what was captured today
+  - Classification decisions with confidence
+  - Items flagged for human review
+  - Patterns across today's notes (recurring themes, contradictions)
+- [ ] Briefing references source notes via wikilinks
+
+---
+
+## Phase 9 — Weekly Synthesis
+
+**`INDEPENDENT (depends on Phase 0+1 only — reads audit_log) · WEIGHT: light`**
+
+Connect dots across the week's notes. Surface recurring themes, contradictions, and action items. Similar pattern to Daily Briefing but broader scope.
+
+### What it does
+- `pipelines/synthesis_weekly.py` — read week's audit_log + notes → synthesize
+- `prompts/synthesize_weekly.yaml` — synthesis prompt
+- Output → `Vault/Synthesis/YYYY/week_WW.md` (capture-excluded folder)
+- Scheduler: weekly trigger via `jobs.yaml` (scheduler comes LAST — C-16)
+- CLI: `kms synthesize` (generate this week's synthesis manually)
+- When pipeline is tested, add `kms_synthesize` tool to `mcp_server/tools.py`
+
+### Tech debt: none blocking
+
+### Open questions: none blocking
+
+### Co-authoring: deferred past 17 June
+Same rule as Phase 6. Blunt whole-note gate. See Phase 6 "Co-authoring" note and Phase 4 "Actor rule".
+
+### Acceptance criteria (behavior test)
+- [ ] Accumulate 10+ notes across multiple projects/domains over several sessions
+- [ ] Run `kms synthesize`
+- [ ] `Synthesis/2026/week_WW.md` appears with:
+  - Recurring themes across projects
+  - Contradictions or tensions surfaced
+  - Action items extracted
+  - Cross-project connections the user might not have noticed
+- [ ] Synthesis references source notes via wikilinks
+
+---
+
+## Rules of the Road
+
+- **Never skip the pipeline.** Every task goes through `/grill` → `/tdd-implement`. No shortcuts.
 - **One handler, one pipeline, end-to-end before adding breadth.** Don't write 7 handlers before classify works.
-- **Audit log is non-negotiable from Phase 1.** Phase 8 (briefing) reads from it. No audit log = no briefing.
-- **Schedulers come last in each phase.** Manual CLI first, then automate.
-- **MCP tools are thin wrappers.** If you find yourself writing logic inside `mcp_server/tools.py`, stop. That logic belongs in a pipeline. The tool just calls the pipeline.
-- **Never add an MCP tool before its pipeline exists and is tested.** A stub tool is a lie.
-- **Scope the MVP hard.** Three MCP tools for the boss demo. Resist the urge to add more before M2.
-- **Every tag-generating pipeline MUST call `validate_tags` from `core/tags.py`.** This applies to capture (Phase 1), classify (Phase 2), promotion (Phase 5), and synthesis (Phase 9). Violations are logged as `TAG_VIOLATION` audit entries — never silently accepted. `NoteMetadata` field validators do NOT enforce the taxonomy (DECISION-019); the pipeline is the only enforcement point. A pipeline that skips `validate_tags` will silently pollute the taxonomy.
+- **Audit log is non-negotiable.** Phase 8 (briefing) reads from it. No audit log = no briefing.
+- **Schedulers come last in each phase.** Manual CLI first, then automate (C-16).
+- **MCP tools are thin wrappers.** Zero logic in `mcp_server/tools.py` (C-14). Logic belongs in a pipeline.
+- **Never add an MCP tool before its pipeline exists and is tested** (C-15). A stub tool is a lie.
+- **Every tag-generating pipeline MUST call `validate_tags`** from `core/tags.py` (TD-019). Violations are logged as `TAG_VIOLATION` audit entries — never silently accepted.
+- **Result types everywhere.** Every public function in `handlers/` and `pipelines/` returns `Success` or `Failure` (C-12).
+- **Prompts are YAML.** Never hardcode prompts in code (C-07). Use `PROMPTS["name"].render(**vars)`.
+- **Thresholds are config.** Never hardcode confidence thresholds in pipeline code (C-06).
+- **Work in worktrees.** Each contributor works in their own git worktree to avoid conflicts.
+- **Behavior test is the review gate.** No code review. Run the acceptance criteria. If it works, it ships.
+
+---
+
+## Tech Debt Not Assigned to Any Phase
+
+These items are tracked but not blocking any phase. Pay them opportunistically or in a dedicated cleanup pass post-deadline:
+
+| TD | What | When to pay |
+|----|------|-------------|
+| TD-009 | `updated_by_human` sync between frontmatter and SQLite | Post-Phase 7 audit |
+| TD-011 | Per-prompt model/temperature overrides | When a caller needs it |
+| TD-015 | CLAUDE.md section-merge for AI co-authoring | Post-deadline |
+| TD-016 | User explicit URL flagging in `enrich_urls` | Wishlist — no demand |
+| TD-017 | AI URL triage replacing structural heuristic | Adds latency — Phase 2+ |
+| TD-018 | Domain list refresh in `kms watch` | Post-deadline |
+| TD-020 | Research doc describes OLD attachment layout | Documentation debt |
+| TD-021 | Roadmap describes OLD attachment layout | Fixing now |
+| TD-029 | Rename gate logic mis-calibrated | Consider during Phase 2 `/grill` |
+| TD-031 | `move_attachment` TOCTOU window | Watcher hardening pass |
+| TD-032 | No `kms migrate-attachments` for legacy layout | Only if needed |
+| TD-033 | Watcher monkeypatch target documentation | Documentation-only |
+| TD-035 | Reconcile: location-tag mismatch on human override | Post-Phase 2 |
+| TD-036 | Reconcile: stale `batch_id` after file moves | Low risk, post-MVP |
+| TD-039 | Windows support for binary content-change detection | Post-deadline, Mac-first |
