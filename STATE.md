@@ -35,13 +35,13 @@ _Last updated: 2026-06-03 (Phase Pre-2 complete — TD-008 DB columns + TD-038 d
 - [x] 487 tests pass (all capture pipeline phases verified)
 - [x] audit_log wired: every capture writes CAPTURED + TAG_VIOLATION entries
 
-**Phase 1.5 — Revise Attachment Layout Checklist** _(PENDING; not in roadmap — design-change rework)_:
+**Phase 1.5 — Revise Attachment Layout Checklist** _(CLOSED — superseded by Phase 1.5 Pay-Debt block below)_:
 - [x] `core/config.py` — added `summaries_subdir: str = ".summaries"` Field; removed `attachment_path` @property; temporary callers in `capture.py:456`, `capture.py:627`, `cli/main.py:127` use `.root / .attachment_dir` with `# COUPLING:` comments marking Brief #2/#3 work. 576 tests pass.
 - [x] `vault/paths.py` — added `project_attachment`, `project_summaries`, `domain_attachment`, `domain_summaries` helpers reading `attachment_dir` + `summaries_subdir` from VaultConfig. No hardcoded subdir names. 8 new tests; 594 tests pass.
 - [x] `vault/indexer.py` — added `_DOT_ALLOWLIST: frozenset[str] = frozenset({".summaries"})`; updated both `dirnames[:] = [...]` prune expressions in `scan_non_md_drops` + `scan_vault` with scoped condition `(not d.startswith(".") or (d in _DOT_ALLOWLIST and dirpath.name == "attachment"))`. 99 vault tests pass, no regressions.
 - [x] `vault/frontmatter.py` — added `"attachment_path"` to `_KNOWN_KEYS`; added `attachment_path: str | None = None` field to `NoteMetadata` after `source_file`. 15 frontmatter tests pass.
 - [x] 4 architecture decisions recorded (DECISION-021 through -024); 5 TD items recorded (TD-020 through TD-024).
-- [ ] Claude CLI provider: metadata JSON parse fails on short DOCX extracts (~29 chars). Prompt hardening or empty-metadata fallback needed. (**TD-028**)
+- [x] Claude CLI provider: metadata JSON parse fails on short DOCX extracts — RESOLVED 2026-05-25, see TECH_DEBT.md. (**TD-028**)
 - [ ] Rename gate logic mis-calibrated (too liberal / too conservative). Needs research on competitor approaches + confidence-scored suggestion model. (**TD-029**)
 
 Other in-flight notes:
@@ -119,11 +119,4 @@ Triggered by `/superpowers:requesting-code-review`. Applied subset of review fin
 - Issue #8 — `move_attachment` TOCTOU window (existence check then `os.replace`). Tracked as **TD-031**.
 - Issue #9 — `kms migrate-attachments` for legacy `Vault/attachment/`+`Vault/Archive/` layout. Deferred greenfield — no production users. Tracked as **TD-032**.
 
-**Next roadmap work**: Phase Pre-2 (TD-008 + TD-038) — plan written 2026-06-03, then Phase 2 — Classify pipeline. Branch `fix/phase1.5-codereview` awaiting user push.
-
-**[Phase Pre-2 — TD-008 + TD-038 — Plan written 2026-06-03]** _(PENDING implementation)_:
-- [ ] Phase 1 — TD-008: Migration files (003/004/005 SQL)
-- [ ] Phase 2 — TD-008: Extend documents.py (DocumentRow + _row_from_sqlite + upsert + replace_path)
-- [ ] Phase 3 — TD-038: frontmatter.py changes (dumps() filter + remove domain field; fix 2 existing tests)
-- [ ] Phase 4 — TD-038: Fix pipeline consumers (capture.py + writer.py; fix 1 existing test)
-- [ ] Phase 5 — Full suite green
+**Next roadmap work**: Phase 2 — Classify pipeline.
