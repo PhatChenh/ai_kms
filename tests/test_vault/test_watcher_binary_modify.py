@@ -13,12 +13,10 @@ CONFIG is never imported at module scope — all tests use VaultConfig(root=tmp_
 from __future__ import annotations
 
 import hashlib
-import threading
 import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 
 from core.config import VaultConfig
 from vault.watcher import _VaultEventHandler, _is_lock_file
@@ -423,7 +421,6 @@ def test_lock_file_modify_event_ignored(tmp_path: Path, monkeypatch):
 
     # Directly call _handle_binary_modify should NOT be registered
     # because on_modified should filter lock files
-    from watchdog.events import FileModifiedEvent
 
     # Simulate the on_modified dispatch path
     # Since we can't easily mock watchdog events, test _is_lock_file directly
@@ -565,3 +562,49 @@ def test_write_note_failure_handled_gracefully(tmp_path: Path, monkeypatch):
 
     # Audit NOT written (we return before audit on write failure)
     assert len(audit_calls) == 0
+
+
+# ---------------------------------------------------------------------------
+# T11 — Editable binary at project root triggers binmod debounce
+# ---------------------------------------------------------------------------
+
+
+def test_on_modified_editable_binary_at_project_root_fires_binmod(tmp_path: Path):
+    """on_modified with .xlsx at Projects/Alpha/budget.xlsx (NOT in attachment/) fires binmod."""
+    handler, root, vault_cfg = _make_handler(tmp_path)
+
+    proj_dir = root / "Projects" / "Alpha"
+    proj_dir.mkdir(parents=True, exist_ok=True)
+    binary = proj_dir / "budget.xlsx"
+    binary.write_bytes(b"spreadsheet data")
+
+    from watchdog.events import FileModifiedEvent
+
+    event = FileModifiedEvent(str(binary))
+    handler.on_modified(event)
+
+    # Verify debounce timer was created with binmod: prefix
+    assert f"binmod:{binary}" in handler._timers
+
+
+# ---------------------------------------------------------------------------
+# T12 — Binary in AI-output folder does NOT trigger binmod debounce
+# ---------------------------------------------------------------------------
+
+
+def test_on_modified_binary_in_ai_output_folder_no_debounce(tmp_path: Path):
+    """on_modified with a binary in Briefings/ → no debounce fires."""
+    handler, root, vault_cfg = _make_handler(tmp_path)
+
+    briefings_dir = root / "Briefings"
+    briefings_dir.mkdir(parents=True, exist_ok=True)
+    binary = briefings_dir / "chart.png"
+    binary.write_bytes(b"png data")
+
+    from watchdog.events import FileModifiedEvent
+
+    event = FileModifiedEvent(str(binary))
+    handler.on_modified(event)
+
+    # No debounce timer should exist for this path
+    assert f"binmod:{binary}" not in handler._timers

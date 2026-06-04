@@ -39,7 +39,6 @@ from vault.indexer import IGNORE_DIRS
 from vault.paths import (
     _is_ai_output,
     _is_in_managed_attachment,
-    _is_misplaced,
     _location_context,
     resolve_placement,
 )
@@ -121,7 +120,6 @@ class _VaultEventHandler(FileSystemEventHandler):
         folder_cooldown: float = 5.0,
         on_folder_stable: Callable[[Path], None] | None = None,
         move_guard: MoveGuard | None = None,
-        binary_settle_seconds: float = 5.0,
     ) -> None:
         super().__init__()
         self._root = root
@@ -134,7 +132,6 @@ class _VaultEventHandler(FileSystemEventHandler):
         self._folder_cooldown = folder_cooldown
         self._on_folder_stable = on_folder_stable
         self._move_guard = move_guard
-        self._binary_settle_seconds = binary_settle_seconds
         # key: str(path) → (active timer, callable, args)
         self._timers: dict[str, tuple[threading.Timer, Callable, tuple]] = {}
         self._lock = threading.Lock()
@@ -212,13 +209,6 @@ class _VaultEventHandler(FileSystemEventHandler):
             return
 
         if self._should_skip(path):
-            return
-        if path.suffix.lower() == ".md" and _is_misplaced(
-            path, self._vault_config
-        ):
-            self._debounce(
-                f"misplaced:{path}", self._handle_misplaced_md, (path,)
-            )
             return
         self._debounce(str(path), self._on_create, (path,))
 
@@ -313,7 +303,7 @@ class _VaultEventHandler(FileSystemEventHandler):
                     first_src = cur_src  # Preserve the first src in the chain.
                     break
         if settle_key is None:
-            settle_key = unicodedata.normalize("NFC", str(src))
+            settle_key = str(src)
         self._reset_binary_move_timer(settle_key, first_src, dst)
 
     def _reset_binary_move_timer(self, settle_key: str, src: Path, dst: Path) -> None:
@@ -325,7 +315,7 @@ class _VaultEventHandler(FileSystemEventHandler):
             token = self._binary_move_tokens.get(settle_key, 0) + 1
             self._binary_move_tokens[settle_key] = token
             timer = threading.Timer(
-                self._binary_settle_seconds,
+                self._debounce_seconds,
                 self._fire_binary_move_settled,
                 args=[settle_key, src, dst, token],
             )
@@ -352,26 +342,10 @@ class _VaultEventHandler(FileSystemEventHandler):
         if event.is_directory:
             return
         path = Path(str(event.src_path))
-
-        # Binary modify detection fires for non-.md files inside the vault
-        # that are NOT AI-output (Briefings, Synthesis, Documentation).
-        # This covers both attachment/ binaries AND editable files at project
-        # root (e.g. Projects/Alpha/budget.xlsx).
-        # Lock files (~$... , .~lock... , ._... , *.lock) are filtered first —
-        # they are editor/Office artifacts, not real content changes.
-        # Mirrors on_deleted / on_moved ordering (TD-030 fix).
-        if path.suffix.lower() != ".md":
-            if _is_lock_file(path):
-                return
-            if self._is_internal(path) and not _is_ai_output(
-                path, self._vault_config
-            ):
-                self._debounce(
-                    f"binmod:{path}", self._handle_binary_modify, (path,)
-                )
-            return
-
         if self._should_skip(path):
+            return
+        if path.suffix.lower() != ".md":
+            # Binary modify deferred — TD-C6 (requires reverse attachment lookup)
             return
         self._debounce(str(path), self._on_modify, (path,))
 
@@ -413,65 +387,6 @@ class _VaultEventHandler(FileSystemEventHandler):
         else:
             # External drop via OS move (src outside vault root)
             self._debounce(str(dst), self._on_create, (dst,))
-
-    # ── misplaced-md sweep helper ────────────────────────────────────────
-
-    def _handle_misplaced_md(self, path: Path) -> None:
-        """Move a misplaced .md from bare Projects/Domain root to inbox."""
-        import structlog
-
-        structlog.contextvars.bind_contextvars(correlation_id=new_correlation_id())
-
-        if not path.exists():
-            return
-
-        inbox_dst = self._vault_config.inbox_path / path.name
-        # Collision handling
-        counter = 0
-        stem = inbox_dst.stem
-        suffix = inbox_dst.suffix
-        while inbox_dst.exists() and counter < 99:
-            counter += 1
-            inbox_dst = self._vault_config.inbox_path / f"{stem}-{counter}{suffix}"
-        if inbox_dst.exists():
-            _log.warning(
-                "watcher.misplaced_md_collision_exhausted path=%s", path
-            )
-            return
-
-        match move_note(path, inbox_dst, actor="ai"):
-            case Failure(error=e):
-                _log.warning(
-                    "watcher.misplaced_md_move_failed path=%s error=%s",
-                    path,
-                    e,
-                )
-                return
-            case Success():
-                pass
-
-        match audit_write(
-            AIDecision(
-                action="watcher:misplaced_sweep",
-                confidence=1.0,
-                reasoning=f"Misplaced md swept to inbox: {path.name}",
-                source_ids=[
-                    unicodedata.normalize(
-                        "NFC",
-                        str(path.relative_to(self._root).as_posix()),
-                    )
-                ],
-            ),
-            pipeline="watcher",
-            stage="sync",
-            outcome="MISPLACED",
-        ):
-            case Failure():
-                pass
-            case Success():
-                pass
-
-        self._on_create(inbox_dst)
 
     # ── binary sync helpers ────────────────────────────────────────────────
 
@@ -724,11 +639,11 @@ class _VaultEventHandler(FileSystemEventHandler):
 
             # Sub-step e — move binary if needed
             if placement.needs_move and final_binary != dst:
-                match move_attachment(dst, final_binary):
+                match move_attachment(src, final_binary):
                     case Failure(error=e):
                         _log.warning(
                             "watcher.binary_rehome_move_failed src=%s dst=%s error=%s",
-                            dst, final_binary, e,
+                            src, final_binary, e,
                         )
                         return
                     case Success():
@@ -829,83 +744,6 @@ class _VaultEventHandler(FileSystemEventHandler):
                 case Success():
                     pass
 
-    # ── binary modify detection (T9) ──────────────────────────────────────────
-
-    def _handle_binary_modify(self, path: Path) -> None:
-        """Called after debounce: compute SHA-256, compare with sibling source_hash.
-
-        If the hash differs from the stored value (or no source_hash exists),
-        update the sibling frontmatter and write a BINARY_MODIFIED audit row.
-        If the hash matches, silently return — the modify event was noise
-        (e.g. file-open timestamp update, not a real content change).
-
-        Does NOT re-summarize the sibling body — content-change detection is
-        separate from re-capture (future phase).
-        """
-        import hashlib
-        import structlog
-        structlog.contextvars.bind_contextvars(correlation_id=new_correlation_id())
-
-        # 1. Compute current hash
-        try:
-            current_hash = hashlib.sha256(path.read_bytes()).hexdigest()
-        except (OSError, IOError):
-            _log.warning("watcher.binary_modify_read_failed path=%s", path)
-            return
-
-        # 2. Find sibling
-        sibling = _sibling_for(path, self._vault_config)
-        if not sibling.exists():
-            _log.info("watcher.binary_modify_no_sibling path=%s", path)
-            return
-
-        # 3. Compare against stored hash
-        match read_note(sibling):
-            case Success(value=note):
-                stored_hash = note.metadata.source_hash
-                if stored_hash and stored_hash == current_hash:
-                    return  # No content change — ignore modify noise
-                # Update source_hash in sibling frontmatter
-                note.metadata.source_hash = current_hash
-                match write_note(sibling, note.content, note.metadata, actor="ai"):
-                    case Failure(error=e):
-                        _log.warning(
-                            "watcher.binary_modify_hash_update_failed path=%s error=%s",
-                            path, e,
-                        )
-                        return
-                    case Success():
-                        pass
-                # 4. Write audit row
-                sibling_vp = unicodedata.normalize(
-                    "NFC", str(sibling.relative_to(self._root).as_posix())
-                )
-                match audit_write(
-                    AIDecision(
-                        action="watcher:binary_modified",
-                        confidence=1.0,
-                        reasoning=(
-                            f"Binary content changed: {path.name} "
-                            f"(hash: {current_hash[:12]}...)"
-                        ),
-                        source_ids=[sibling_vp],
-                    ),
-                    pipeline="watcher",
-                    stage="sync",
-                    outcome="BINARY_MODIFIED",
-                ):
-                    case Failure(error=e):
-                        _log.warning(
-                            "watcher.binary_modify_audit_failed error=%s", e
-                        )
-                    case Success():
-                        pass
-            case Failure(error=e):
-                _log.warning(
-                    "watcher.binary_modify_read_sibling_failed path=%s error=%s",
-                    sibling, e,
-                )
-
 
 class VaultWatcher:
     """Watch a vault root and dispatch filesystem events to pipeline callbacks.
@@ -930,12 +768,9 @@ class VaultWatcher:
         on_move: Callable[[Path, Path], None],
         debounce_seconds: float = 3.0,
         folder_cooldown_seconds: float = 5.0,
-        binary_settle_seconds: float = 5.0,
         folder_max_workers: int = 4,
         on_folder_create: Callable[[Path], None] | None = None,
-        move_guard: MoveGuard | None = None,
     ) -> None:
-        self._move_guard = move_guard if move_guard is not None else MoveGuard()
         self._folder_executor = ThreadPoolExecutor(max_workers=folder_max_workers)
 
         def _on_folder_stable(folder_path: Path) -> None:
@@ -961,8 +796,6 @@ class VaultWatcher:
             debounce_seconds=debounce_seconds,
             folder_cooldown=folder_cooldown_seconds,
             on_folder_stable=_on_folder_stable,
-            move_guard=self._move_guard,
-            binary_settle_seconds=binary_settle_seconds,
         )
         self._observer = Observer()
         self._observer.schedule(self._handler, str(root), recursive=True)

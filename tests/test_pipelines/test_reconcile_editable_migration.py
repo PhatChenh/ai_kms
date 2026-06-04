@@ -131,7 +131,7 @@ async def test_editable_to_no_edit_migration(tmp_path: Path, monkeypatch):
     # Binary moved to attachment/ (no-edit destination)
     assert len(move_attachment_calls) == 1
     src, dst = move_attachment_calls[0]
-    assert dst.endswith(f"attachment/budget.xlsx")
+    assert dst.endswith("attachment/budget.xlsx")
 
     # Sibling moved to attachment/.summaries/
     assert len(move_note_calls) == 1

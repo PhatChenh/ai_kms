@@ -44,5 +44,5 @@ if not isinstance(rows, Success):
     raise RuntimeError(f"query failed: {rows.error}")
 
 assert len(rows.value) == 10, f"Expected 10 rows, got {len(rows.value)}"
-print(f"10 entries written")
+print("10 entries written")
 print(f"First entry: {rows.value[0]}")

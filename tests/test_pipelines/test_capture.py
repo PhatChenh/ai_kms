@@ -6,7 +6,7 @@ TDD order: _parse_metadata_json → extract → enrich_urls → summarize → me
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from pathlib import Path
 
 from core.result import Failure, Success
@@ -306,7 +306,7 @@ async def test_metadata_writes_audit_log_row(vault_root, pipeline_ctx, monkeypat
 
 @pytest.mark.asyncio
 async def test_metadata_ai_type_derived_from_type_tag(vault_root, pipeline_ctx, monkeypatch):
-    from pipelines.capture import metadata, MetadataResult, SummarizeResult
+    from pipelines.capture import metadata, SummarizeResult
     from llm.provider import LLMResponse
 
     md_file = vault_root / "inbox" / "note.md"
@@ -1101,7 +1101,7 @@ async def test_idempotent_md_not_in_db_runs_pipeline(vault_root, pipeline_ctx, m
 async def test_idempotent_binary_matching_source_hash_skipped(vault_root, pipeline_ctx, monkeypatch):
     """Binary with sibling whose source_hash matches → SKIPPED, pipeline not called."""
     from pipelines.capture import capture_file
-    from vault.writer import WriteOutcome, write_note
+    from vault.writer import write_note
     from vault.frontmatter import NoteMetadata
     from unittest.mock import MagicMock
     from storage.audit_log import query
@@ -1269,7 +1269,7 @@ async def test_audit_skipped_fails_silently_success_still_returned(vault_root, p
 async def test_idempotent_located_binary_matching_hash_skipped(vault_root, pipeline_ctx, monkeypatch):
     """LOCATED binary (Projects/Alpha/attachment/) with sibling at .summaries/ whose source_hash matches → SKIPPED, pipeline not called."""
     from pipelines.capture import capture_file
-    from vault.writer import WriteOutcome, write_note
+    from vault.writer import write_note
     from vault.frontmatter import NoteMetadata
     from unittest.mock import MagicMock
     import hashlib

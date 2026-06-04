@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, replace
-from pathlib import Path
 
 from core.audit import write as audit_write
 from core.confidence import AIDecision

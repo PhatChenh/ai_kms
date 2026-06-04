@@ -5,7 +5,6 @@ import os
 import unicodedata
 from pathlib import Path
 
-import pytest
 
 from core.result import Failure, Success
 from vault.frontmatter import NoteMetadata

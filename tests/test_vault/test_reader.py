@@ -4,7 +4,6 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-import pytest
 
 from core.result import Failure, Success
 

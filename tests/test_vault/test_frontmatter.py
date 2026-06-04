@@ -4,7 +4,6 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-import pytest
 
 from core.result import Failure, Success
 
@@ -323,7 +322,7 @@ def test_dumps_preserves_non_deprecated_extra_keys():
 
 def test_parse_yaml_with_domain_produces_no_domain_attr(tmp_path):
     """YAML with domain: parses to extra, not a domain attribute on NoteMetadata."""
-    from vault.frontmatter import NoteMetadata, parse
+    from vault.frontmatter import parse
 
     f = write_file(tmp_path, "n.md", "---\ndomain: finance\n---\nbody")
     result = parse(f)
