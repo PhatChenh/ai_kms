@@ -2,6 +2,8 @@
 
 **Status:** Proposed
 
+> **NOT IMPLEMENTED as of Phase Pre-2 (2026-06-03).** The `no_edit_extensions` config key and editable-file routing do not exist in `src/`. Vocabulary from this ADR (editable file, no-edit file) appears in CONTEXT.md marked as "planned." Do not reference these terms as current behavior.
+
 ## Context
 
 Target user is a non-technical executive whose real working files are office documents (xlsx, docx, pptx). The current pipeline hides every captured binary in the Obsidian-hidden `Projects/<A>/attachment/` folder, which removes editable files from the user's view. Reference files (pdf, images) are fine to hide since the user does not edit them in place.
