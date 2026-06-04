@@ -18,6 +18,7 @@ import structlog
 
 import handlers  # noqa: F401 — side-effect: populates HandlerRegistry
 from core.confidence import AIDecision
+from core.config import VaultConfig
 from core.pipeline import PipelineContext, run_pipeline
 from core.result import Failure, Result, Success
 from handlers.base import RawContent
@@ -26,8 +27,9 @@ from handlers.url_fetcher import detect_urls, fetch_url_content
 from llm.prompt_loader import PROMPTS
 from llm.provider import LLMResponse, get_provider
 from vault.frontmatter import NoteMetadata
-from vault.paths import _location_context, to_vault_path
+from vault.paths import _is_misplaced, _location_context, resolve_placement, to_vault_path
 from vault.reader import read_note
+from vault.move_guard import get_active
 from vault.writer import WriteOutcome, move_attachment, move_folder, move_note, write_note
 import core.audit as audit
 from core.logging_setup import new_correlation_id
@@ -547,12 +549,6 @@ async def _store_nonmd(
     CLUELESS: no path context → binary parked in inbox, pending-routing marker written for
               Phase 2 Classify (DECISION-027).
     """
-    from vault.paths import (
-        domain_attachment,
-        domain_summaries,
-        project_attachment,
-        project_summaries,
-    )
 
     src = mr.raw.source_path
     suffix = src.suffix
@@ -561,18 +557,15 @@ async def _store_nonmd(
     # ── Inline destination resolution (DECISION-026: pure path math, no AI) ─
     target_type: str | None = None
     target_name: str | None = None
-    needs_move = False
 
     if vault_cfg.projects_path in src.parents:
         rel = src.relative_to(vault_cfg.projects_path)
         if len(rel.parts) >= 2:
             target_type, target_name = "project", rel.parts[0]
-            needs_move = rel.parts[1] != vault_cfg.attachment_dir
     elif vault_cfg.domain_path in src.parents:
         rel = src.relative_to(vault_cfg.domain_path)
         if len(rel.parts) >= 2:
             target_type, target_name = "domain", rel.parts[0]
-            needs_move = rel.parts[1] != vault_cfg.attachment_dir
 
     if target_type is not None:
         # LOCATED path: rename gate + rich sibling body + binary move
@@ -590,19 +583,19 @@ async def _store_nonmd(
         _audit_rename_gate(decision, src, ctx)
         sanitized_stem = decision.final_stem or src.stem
 
-        if target_type == "project":
-            att_dir = project_attachment(target_name)  # type: ignore[arg-type]
-            sum_dir = project_summaries(target_name)  # type: ignore[arg-type]
-        else:
-            att_dir = domain_attachment(target_name)  # type: ignore[arg-type]
-            sum_dir = domain_summaries(target_name)  # type: ignore[arg-type]
+        placement = resolve_placement(src, target_type, target_name, vault_cfg)
+        _is_no_edit = src.suffix.lower() in vault_cfg.no_edit_extensions
 
-        if needs_move:
-            attachment_dst = att_dir / f"{sanitized_stem}{suffix}"
+        # Ensure destination directories exist (resolve_placement is pure — no mkdir).
+        placement.final_dir.mkdir(parents=True, exist_ok=True)
+        placement.sibling_dir.mkdir(parents=True, exist_ok=True)
+
+        if placement.needs_move:
+            attachment_dst = placement.final_dir / f"{sanitized_stem}{suffix}"
             counter = 0
-            while attachment_dst.exists() and counter < 100:
+            while attachment_dst.exists() and counter < 99:
                 counter += 1
-                attachment_dst = att_dir / f"{sanitized_stem}-{counter}{suffix}"
+                attachment_dst = placement.final_dir / f"{sanitized_stem}-{counter}{suffix}"
             if attachment_dst.exists():
                 return Failure(
                     error="attachment collision: all 100 slots taken",
@@ -630,12 +623,12 @@ async def _store_nonmd(
         # Step 4: WRITE SIBLING FIRST (DECISION-025)
         # Sibling name = binary's full filename + ".md" (e.g. report.pdf.md) so
         # that report.pdf and report.docx never collide on the same sibling.
-        sibling_path = sum_dir / f"{attachment_dst.name}.md"
+        sibling_path = placement.sibling_dir / f"{attachment_dst.name}.md"
         attachment_vault_path = to_vault_path(attachment_dst)
         # Compute source_hash from the binary at its FINAL destination path.
-        # If needs_move is True, the binary hasn't been moved yet — hash src now.
+        # If placement.needs_move is True, the binary hasn't been moved yet — hash src now.
         # After the move, the bytes are identical, so src hash == dst hash.
-        _src_for_hash = src if needs_move else attachment_dst
+        _src_for_hash = src if placement.needs_move else attachment_dst
         _source_hash = hashlib.sha256(_src_for_hash.read_bytes()).hexdigest()
         sibling_meta = NoteMetadata(
             type="attachment-summary",
@@ -654,7 +647,10 @@ async def _store_nonmd(
                 pass
 
         # Step 5: MOVE BINARY (only if not already at destination)
-        if needs_move:
+        if placement.needs_move:
+            _g = get_active()
+            if _g:
+                _g.register(attachment_dst)
             match move_attachment(src, attachment_dst):
                 case Failure() as f:
                     # Sibling written with broken pointer — accepted failure mode
@@ -674,7 +670,7 @@ async def _store_nonmd(
         located_decision = AIDecision(
             action="capture:store",
             confidence=1.0,
-            reasoning=f"Routed to {target_type}/{target_name}",
+            reasoning=f"Routed to {target_type}/{target_name} ({'no-edit→attachment' if _is_no_edit else 'editable→root'})",
             source_ids=[to_vault_path(src)],
         )
         match audit.write(
@@ -705,9 +701,12 @@ async def _store_nonmd(
             # Move binary to inbox with collision handling
             inbox_dst = vault_cfg.inbox_path / src.name
             counter = 0
-            while inbox_dst.exists() and counter < 100:
+            while inbox_dst.exists() and counter < 99:
                 counter += 1
                 inbox_dst = vault_cfg.inbox_path / f"{src.stem}-{counter}{suffix}"
+            _g = get_active()
+            if _g:
+                _g.register(inbox_dst)
             match move_attachment(src, inbox_dst):
                 case Failure() as f:
                     return f
@@ -951,7 +950,7 @@ async def scan_capture(
         valid_domains,
     )
 
-    match scan_vault(_root):
+    match scan_vault(_root, vault_cfg=CONFIG.main.vault):
         case Failure() as f:
             return f
         case Success(value=entries):
@@ -961,8 +960,48 @@ async def scan_capture(
                 case Success(value=summary):
                     pass
             outcomes: list[WriteOutcome] = []
+            vault_cfg = CONFIG.main.vault  # type: ignore[attr-defined]
             for entry in summary.added:
                 path = _root / entry.vault_path
+                # ── Phase 5 (T4): Misplaced-md sweep ──────────────────────────
+                # If an .md file is at the bare root of Projects/ or Domain/
+                # (e.g. Projects/stray.md), sweep it to inbox before capture.
+                # This prevents phantom project/domain creation from stray drops.
+                if path.suffix.lower() == ".md" and _is_misplaced(path, vault_cfg):
+                    inbox_dst = vault_cfg.inbox_path / path.name
+                    counter = 0
+                    while inbox_dst.exists() and counter < 99:
+                        counter += 1
+                        inbox_dst = (
+                            vault_cfg.inbox_path / f"{path.stem}-{counter}{path.suffix}"
+                        )
+                    # Clean up stale DB row before moving
+                    documents.delete_by_path(
+                        to_vault_path(path), db_path=_db_path
+                    )
+                    match move_note(path, inbox_dst, actor="ai"):
+                        case Failure(error=e):
+                            logger.warning(
+                                "scan_capture.misplaced_sweep_failed path=%s error=%s",
+                                path, e,
+                            )
+                            continue  # skip capture_file for this file
+                        case Success():
+                            pass
+                    # Write MISPLACED audit row
+                    audit.write(
+                        AIDecision(
+                            action="capture:sweep",
+                            confidence=1.0,
+                            reasoning="Misplaced md swept to inbox",
+                            source_ids=[to_vault_path(path)],
+                        ),
+                        pipeline="capture",
+                        stage="store",
+                        outcome="MISPLACED",
+                        db_path=_db_path,
+                    )
+                    path = inbox_dst
                 ctx = PipelineContext(
                     config=CONFIG.main,  # type: ignore[attr-defined]
                     db_path=_db_path,
@@ -1084,12 +1123,15 @@ def _build_vault_context(vault_cfg) -> str:
     return f"Domains: {domains}\nProjects: {projects}"
 
 
-def _collect_folder_files(folder_path: Path) -> list[Path]:
+def _collect_folder_files(folder_path: Path, vault_cfg: VaultConfig) -> list[Path]:
     """Walk folder_path, returning capturable files.
 
-    Skips: directories, dotfiles, and any path passing through an IGNORE_DIRS part.
+    Skips: directories, dotfiles, any path passing through an IGNORE_DIRS or
+    managed-subdir (attachment_dir, summaries_subdir) part.
     """
     from vault.indexer import IGNORE_DIRS
+
+    skip_names = {vault_cfg.attachment_dir, vault_cfg.summaries_subdir}
 
     files: list[Path] = []
     for p in sorted(folder_path.rglob("*")):
@@ -1098,7 +1140,7 @@ def _collect_folder_files(folder_path: Path) -> list[Path]:
         if p.name.startswith("."):
             continue
         rel_parts = p.relative_to(folder_path).parts
-        if any(part in IGNORE_DIRS for part in rel_parts):
+        if any(part in IGNORE_DIRS or part in skip_names for part in rel_parts):
             continue
         files.append(p)
     return files
@@ -1251,14 +1293,15 @@ async def capture_folder(
         context = await _build_default_context()
     ctx = context
 
+    vault_cfg = ctx.config.vault
+
     # Stage 1: collect capturable files.
-    files = _collect_folder_files(folder_path)
+    files = _collect_folder_files(folder_path, vault_cfg)
     if not files:
         logger.info("capture_folder.empty", folder=str(folder_path))
         return Success([])
 
     # Stage 2: determine location.
-    vault_cfg = ctx.config.vault
     loc_type, loc_name = _location_context(folder_path, vault_cfg)
 
     # ── Case B: project/domain drop — skip LLM, route by path. ──────────────
@@ -1294,6 +1337,9 @@ async def capture_folder(
         # Folder move goes through the writer chokepoint (M1). On failure the
         # folder is left in inbox — fall through to the CLUELESS handling below
         # (per-file markers in place), mirroring the LLM-failure treatment.
+        _g = get_active()
+        if _g:
+            _g.register(destination)
         match move_folder(folder_path, destination):
             case Failure(error=e):
                 logger.warning(
@@ -1303,7 +1349,7 @@ async def capture_folder(
                     error=e,
                 )
             case Success(value=new_folder):
-                new_files = _collect_folder_files(new_folder)
+                new_files = _collect_folder_files(new_folder, vault_cfg)
                 batch_id = _insert_batch(
                     folder_path.name, target_type, target_name, confidence,
                     "ROUTING", len(new_files), ctx,

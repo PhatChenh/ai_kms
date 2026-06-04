@@ -440,11 +440,118 @@ def test_scan_non_md_drops_rule2_scans_inbox_binary_without_sibling(vault_root, 
 
 
 def test_scan_non_md_drops_stray_drop_outside_project_domain_scanned(vault_root, vault_config):
-    """File in Briefings/ or other non-project folder is returned (stray drop)."""
-    (vault_root / "Briefings" / "stray.docx").write_bytes(b"binary")
+    """File in a non-AI-output, non-project, non-domain folder is returned (stray drop).
+
+    Phase 5 (T4): Briefings/ is an AI-output dir and will be pruned.
+    Here we use a custom folder that is not AI-output to verify scanning still works.
+    """
+    custom_dir = vault_root / "some-random-folder"
+    custom_dir.mkdir(exist_ok=True)
+    (custom_dir / "stray.docx").write_bytes(b"binary")
 
     from vault.indexer import scan_non_md_drops
 
     result = scan_non_md_drops(vault_root, vault_config)
     names = [p.name for p in result]
     assert "stray.docx" in names
+
+
+# ---------------------------------------------------------------------------
+# Phase 5, T4 — AI-output dirname prune in scanners
+# ---------------------------------------------------------------------------
+
+
+class TestScanNonMdDropsAiOutputPrune:
+    """4 tests: scan_non_md_drops skips files inside AI-output directories."""
+
+    def test_skips_file_in_briefings(self, vault_root, vault_config):
+        """Briefings is an AI-output dir — binary inside must be skipped."""
+        (vault_root / "Briefings" / "stray.docx").write_bytes(b"binary")
+
+        from vault.indexer import scan_non_md_drops
+
+        result = scan_non_md_drops(vault_root, vault_config)
+        names = [p.name for p in result]
+        assert "stray.docx" not in names, (
+            f"Expected Briefings/ to be pruned, got {names}"
+        )
+
+    def test_skips_file_in_synthesis(self, vault_root, vault_config):
+        """Synthesis is an AI-output dir — binary inside must be skipped."""
+        (vault_root / "Synthesis" / "stray.pdf").write_bytes(b"binary")
+
+        from vault.indexer import scan_non_md_drops
+
+        result = scan_non_md_drops(vault_root, vault_config)
+        names = [p.name for p in result]
+        assert "stray.pdf" not in names
+
+    def test_skips_file_in_documentation(self, vault_root, vault_config):
+        """Documentation is an AI-output dir — binary inside must be skipped."""
+        (vault_root / "Documentation" / "stray.png").write_bytes(b"binary")
+
+        from vault.indexer import scan_non_md_drops
+
+        result = scan_non_md_drops(vault_root, vault_config)
+        names = [p.name for p in result]
+        assert "stray.png" not in names
+
+    def test_still_scans_file_in_inbox(self, vault_root, vault_config):
+        """Inbox is NOT an AI-output dir — files there must still be scanned."""
+        (vault_root / "inbox" / "new.pdf").write_bytes(b"%PDF content")
+
+        from vault.indexer import scan_non_md_drops
+
+        result = scan_non_md_drops(vault_root, vault_config)
+        names = [p.name for p in result]
+        assert "new.pdf" in names
+
+
+class TestScanVaultAiOutputPrune:
+    """4 tests: scan_vault skips .md files inside AI-output directories
+    when vault_cfg is provided."""
+
+    def test_skips_md_in_briefings_with_vault_cfg(self, vault_root, vault_config):
+        from vault.indexer import scan_vault
+
+        (vault_root / "Briefings" / "2026" / "daily.md").parent.mkdir(parents=True, exist_ok=True)
+        _write_md(vault_root / "Briefings" / "2026" / "daily.md", "briefing content")
+
+        result = scan_vault(vault_root, vault_cfg=vault_config)
+        assert isinstance(result, Success)
+        paths = [e.vault_path for e in result.value]
+        assert not any("Briefings" in p for p in paths), (
+            f"Expected no Briefings paths, got {paths}"
+        )
+
+    def test_skips_md_in_synthesis_with_vault_cfg(self, vault_root, vault_config):
+        from vault.indexer import scan_vault
+
+        (vault_root / "Synthesis" / "2026-W23.md").parent.mkdir(parents=True, exist_ok=True)
+        _write_md(vault_root / "Synthesis" / "2026-W23.md", "synthesis content")
+
+        result = scan_vault(vault_root, vault_cfg=vault_config)
+        assert isinstance(result, Success)
+        paths = [e.vault_path for e in result.value]
+        assert not any("Synthesis" in p for p in paths)
+
+    def test_skips_md_in_documentation_with_vault_cfg(self, vault_root, vault_config):
+        from vault.indexer import scan_vault
+
+        (vault_root / "Documentation" / "Alpha.md").parent.mkdir(parents=True, exist_ok=True)
+        _write_md(vault_root / "Documentation" / "Alpha.md", "doc content")
+
+        result = scan_vault(vault_root, vault_cfg=vault_config)
+        assert isinstance(result, Success)
+        paths = [e.vault_path for e in result.value]
+        assert not any("Documentation" in p for p in paths)
+
+    def test_still_indexes_md_in_inbox_with_vault_cfg(self, vault_root, vault_config):
+        from vault.indexer import scan_vault
+
+        _write_md(vault_root / "inbox" / "note.md", "inbox note")
+
+        result = scan_vault(vault_root, vault_cfg=vault_config)
+        assert isinstance(result, Success)
+        paths = [e.vault_path for e in result.value]
+        assert "inbox/note.md" in paths

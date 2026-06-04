@@ -644,8 +644,13 @@ def test_on_moved_binary_different_folder_orphans_old_sibling(
         from core.result import Success
         return Success(1)
 
+    def fake_get_by_path(vault_path, db_path=None):
+        from core.result import Success
+        return Success(None)  # Not in DB → triggers orphan fallback
+
     monkeypatch.setattr("vault.watcher.move_note", fake_move_note)
     monkeypatch.setattr("vault.watcher.delete_by_path", fake_delete_by_path)
+    monkeypatch.setattr("vault.watcher.get_by_path", fake_get_by_path)
     def _fake_audit_write(*args, **kwargs):
         from core.result import Success
         return Success(None)
@@ -1006,3 +1011,74 @@ def test_pending_folder_removed_after_stable_fires(tmp_path: Path) -> None:
     assert folder_key not in handler._pending_folder_paths, (
         "Expected folder removed from _pending_folder_paths after stable fires"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5, T4 — AI-output exclusion in _should_skip
+# ---------------------------------------------------------------------------
+
+
+class TestShouldSkipAiOutput:
+    """6 tests: _should_skip returns True for files inside AI-output folders.
+
+    AI-output folders are Briefings, Synthesis, Documentation — the folders
+    the system writes to itself. Skipping them prevents infinite feedback loops.
+    """
+
+    def test_should_skip_returns_true_for_briefings_file(self, tmp_path: Path):
+        handler, root, _ = _make_handler(tmp_path)
+        path = root / "Briefings" / "2026" / "06_04.md"
+        assert handler._should_skip(path) is True
+
+    def test_should_skip_returns_true_for_synthesis_file(self, tmp_path: Path):
+        handler, root, _ = _make_handler(tmp_path)
+        path = root / "Synthesis" / "2026-W23.md"
+        assert handler._should_skip(path) is True
+
+    def test_should_skip_returns_true_for_documentation_file(self, tmp_path: Path):
+        handler, root, _ = _make_handler(tmp_path)
+        path = root / "Documentation" / "Alpha.md"
+        assert handler._should_skip(path) is True
+
+    def test_should_skip_returns_false_for_valid_project_path(self, tmp_path: Path):
+        handler, root, _ = _make_handler(tmp_path)
+        path = root / "Projects" / "Alpha" / "note.md"
+        assert handler._should_skip(path) is False
+
+    def test_should_skip_logs_debug_for_ai_output(self, tmp_path: Path, caplog):
+        import logging
+        handler, root, _ = _make_handler(tmp_path)
+        path = root / "Briefings" / "daily.md"
+        with caplog.at_level(logging.DEBUG, logger="vault.watcher"):
+            result = handler._should_skip(path)
+        assert result is True
+        assert "watcher.skip.ai_output" in caplog.text, (
+            f"Expected 'watcher.skip.ai_output' in logs, got: {caplog.text}"
+        )
+
+    def test_td033_guard_patch_vault_watcher_not_paths(self, tmp_path: Path, monkeypatch):
+        """TD-033: _is_ai_output must be patchable at vault.watcher._is_ai_output.
+
+        Module-level imports in watcher.py copy the reference — patching
+        vault.paths._is_ai_output would leave vault.watcher._is_ai_output
+        pointing at the original. Tests MUST patch vault.watcher._is_ai_output.
+        """
+        handler, root, _ = _make_handler(tmp_path)
+
+        # Patch vault.watcher._is_ai_output (correct TD-033 target)
+        monkeypatch.setattr(
+            "vault.watcher._is_ai_output",
+            lambda path, vault_cfg: True,
+        )
+
+        # Even a valid project path should be skipped when _is_ai_output is forced True
+        path = root / "Projects" / "Alpha" / "note.md"
+        assert handler._should_skip(path) is True
+
+        # Verify the original vault.paths._is_ai_output is NOT patched
+        from vault.paths import _is_ai_output as real_is_ai_output
+        from core.config import VaultConfig
+        r = root
+        vc = VaultConfig(root=r)
+        # Real function still returns False for project paths
+        assert real_is_ai_output(r / "Projects" / "Alpha" / "note.md", vc) is False

@@ -14,6 +14,7 @@ sub-paths that require a name or date argument.
 
 from __future__ import annotations
 
+import dataclasses
 import unicodedata
 from datetime import date
 from pathlib import Path
@@ -21,6 +22,82 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from core.config import VaultConfig
+
+
+# ---------------------------------------------------------------------------
+# Placement — frozen result of resolve_placement
+# ---------------------------------------------------------------------------
+
+@dataclasses.dataclass(frozen=True)
+class Placement:
+    """Where a captured binary should live.
+
+    Returned by ``resolve_placement`` — the single authoritative answer to
+    "where does this file belong?".  All later consumers (capture pipeline,
+    watcher re-home, Phase 2 Classify) call the same function so the
+    editable / no-edit routing rule lives in exactly one place.
+
+    Attributes:
+        final_dir:   Directory the binary should land in.
+        sibling_dir: Directory for the AI-written ``.summaries/`` summary
+                     (always *final_dir* / ``vault_cfg.summaries_subdir``).
+        needs_move:  True when *final_dir* differs from the file's current
+                     parent — the caller must move the binary.
+    """
+
+    final_dir: Path
+    sibling_dir: Path
+    needs_move: bool
+
+
+# ---------------------------------------------------------------------------
+# resolve_placement — pure path arithmetic
+# ---------------------------------------------------------------------------
+
+def resolve_placement(
+    file_path: Path,
+    target_type: str,
+    target_name: str,
+    vault_cfg: VaultConfig,
+) -> Placement:
+    """Return the Placement for *file_path* given its resolved home.
+
+    Pure path arithmetic — no filesystem calls, no CONFIG import, no side
+    effects.  The editable / no-edit rule is *only* encoded here; every
+    consumer calls this one function.
+
+    Args:
+        file_path:   Absolute path to the binary file.
+        target_type: ``"project"`` or ``"domain"``.
+        target_name: Project or domain folder name (e.g. ``"Alpha"``).
+        vault_cfg:   VaultConfig with layout fields.
+
+    Returns:
+        ``Placement`` with *final_dir*, *sibling_dir*, and *needs_move*.
+    """
+    # 1. Determine the base directory for this project/domain.
+    if target_type == "project":
+        base_dir = vault_cfg.projects_path / target_name
+    else:
+        base_dir = vault_cfg.domain_path / target_name
+
+    # 2. Is this a no-edit file?
+    is_no_edit = file_path.suffix.lower() in vault_cfg.no_edit_extensions
+
+    # 3. Final directory: attachment/ for no-edit files, root for editable.
+    final_dir = base_dir / vault_cfg.attachment_dir if is_no_edit else base_dir
+
+    # 4. Sibling directory always follows the binary's final parent.
+    sibling_dir = final_dir / vault_cfg.summaries_subdir
+
+    # 5. Does the file need to move?
+    needs_move = file_path.parent != final_dir
+
+    return Placement(
+        final_dir=final_dir,
+        sibling_dir=sibling_dir,
+        needs_move=needs_move,
+    )
 
 
 def _is_in_managed_attachment(file_path: Path, vault_cfg: VaultConfig) -> bool:
@@ -82,6 +159,82 @@ def _is_managed_summaries_area(path: Path, vault_cfg: VaultConfig) -> bool:
     if path == inbox_path or inbox_path in path.parents:
         return True
     return _is_in_managed_attachment(path, vault_cfg)
+
+
+def _is_ai_output(path: Path, vault_cfg: "VaultConfig") -> bool:
+    """Return True if any part of *path* matches a folder the system writes to itself.
+
+    The system writes to ``Briefings/``, ``Synthesis/``, and ``Documentation/``.
+    This predicate prevents the capture pipeline from re-ingesting its own output
+    and creating an infinite feedback loop.
+
+    Name-matching is depth-agnostic — the folder name can appear at any position
+    in ``path.parts``.  Pure path arithmetic: no filesystem I/O, no CONFIG import.
+
+    Args:
+        path:      Absolute path to the file being tested.
+        vault_cfg: VaultConfig with ai_output_dirs.
+
+    Returns:
+        True if any part of *path* appears in ``vault_cfg.ai_output_dirs``.
+    """
+    ai_dirs = vault_cfg.ai_output_dirs
+    for part in path.parts:
+        if part in ai_dirs:
+            return True
+    return False
+
+
+def _is_misplaced(path: Path, vault_cfg: "VaultConfig") -> bool:
+    """Return True if *path* is an .md file dropped at the bare root of Projects/ or Domain/.
+
+    A file is misplaced when it sits directly under ``Projects/`` or ``Domain/``
+    without a real subfolder (e.g. ``Projects/stray.md`` or ``Domain/loose.md``).
+    Such files have no project or domain context — they are orphan drops that
+    should be swept to inbox.
+
+    Inbox and AI-output folders are always valid (they have their own handlers).
+    Files nested inside a subfolder (e.g. ``Projects/Alpha/note.md``) are NOT
+    misplaced — they have a valid project/domain container.
+
+    Uses ``len(rel.parts) >= 2`` directly rather than calling ``_location_context``,
+    which would treat ``Projects/<file>.md`` as ``("project", "<file>")`` and create
+    a phantom project.
+
+    Pure path arithmetic — no filesystem I/O, no CONFIG import.
+
+    Args:
+        path:      Absolute path to the file being tested.
+        vault_cfg: VaultConfig with projects_path, domain_path, inbox_path.
+
+    Returns:
+        True if *path* is at the bare root of Projects/ or Domain/.
+    """
+    inbox_path = vault_cfg.inbox_path
+
+    # Inbox is always valid.
+    if path.parent == inbox_path or inbox_path in path.parents:
+        return False
+
+    # AI-output folders are always valid.
+    if _is_ai_output(path, vault_cfg):
+        return False
+
+    # Check Projects/ bare root: file is directly under Projects/, not nested.
+    projects_path = vault_cfg.projects_path
+    if projects_path in path.parents:
+        rel = path.relative_to(projects_path)
+        if len(rel.parts) < 2:
+            return True
+
+    # Check Domain/ bare root: file is directly under Domain/, not nested.
+    domain_path = vault_cfg.domain_path
+    if domain_path in path.parents:
+        rel = path.relative_to(domain_path)
+        if len(rel.parts) < 2:
+            return True
+
+    return False
 
 
 def _location_context(
