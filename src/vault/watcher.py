@@ -57,6 +57,22 @@ def _is_binary(path: Path) -> bool:
     return path.suffix.lower() != ".md"
 
 
+# Lock-file prefixes from Office (~$...) and LibreOffice (.~lock...).
+# macOS resource forks (._...) are also skipped — they are metadata, not content.
+_LOCK_PREFIXES: tuple[str, ...] = ("~$", ".~lock", "._")
+_LOCK_SUFFIXES: tuple[str, ...] = (".lock",)
+
+
+def _is_lock_file(path: Path) -> bool:
+    """Return True if *path* is a temporary lock file from an editor or office app."""
+    name = path.name
+    if name.startswith(_LOCK_PREFIXES):
+        return True
+    if name.endswith(_LOCK_SUFFIXES):
+        return True
+    return False
+
+
 def _sibling_for(binary: Path, vault_config: VaultConfig) -> Path:
     """Return the expected sibling .md path for a binary file.
 
@@ -326,10 +342,22 @@ class _VaultEventHandler(FileSystemEventHandler):
         if event.is_directory:
             return
         path = Path(str(event.src_path))
-        if self._should_skip(path):
-            return
+
+        # Binary modify detection fires for non-.md files in managed attachment
+        # areas, even though _should_skip would normally filter them out.
+        # Lock files (~$... , .~lock... , ._... , *.lock) are filtered first —
+        # they are editor/Office artifacts, not real content changes.
+        # Mirrors on_deleted / on_moved ordering (TD-030 fix).
         if path.suffix.lower() != ".md":
-            # Binary modify deferred — TD-C6 (requires reverse attachment lookup)
+            if _is_lock_file(path):
+                return
+            if _is_in_managed_attachment(path, self._vault_config):
+                self._debounce(
+                    f"binmod:{path}", self._handle_binary_modify, (path,)
+                )
+            return
+
+        if self._should_skip(path):
             return
         self._debounce(str(path), self._on_modify, (path,))
 
@@ -727,6 +755,83 @@ class _VaultEventHandler(FileSystemEventHandler):
                     _log.warning("watcher.binary_rehome_audit_failed error=%s", e)
                 case Success():
                     pass
+
+    # ── binary modify detection (T9) ──────────────────────────────────────────
+
+    def _handle_binary_modify(self, path: Path) -> None:
+        """Called after debounce: compute SHA-256, compare with sibling source_hash.
+
+        If the hash differs from the stored value (or no source_hash exists),
+        update the sibling frontmatter and write a BINARY_MODIFIED audit row.
+        If the hash matches, silently return — the modify event was noise
+        (e.g. file-open timestamp update, not a real content change).
+
+        Does NOT re-summarize the sibling body — content-change detection is
+        separate from re-capture (future phase).
+        """
+        import hashlib
+        import structlog
+        structlog.contextvars.bind_contextvars(correlation_id=new_correlation_id())
+
+        # 1. Compute current hash
+        try:
+            current_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+        except (OSError, IOError):
+            _log.warning("watcher.binary_modify_read_failed path=%s", path)
+            return
+
+        # 2. Find sibling
+        sibling = _sibling_for(path, self._vault_config)
+        if not sibling.exists():
+            _log.info("watcher.binary_modify_no_sibling path=%s", path)
+            return
+
+        # 3. Compare against stored hash
+        match read_note(sibling):
+            case Success(value=note):
+                stored_hash = note.metadata.source_hash
+                if stored_hash and stored_hash == current_hash:
+                    return  # No content change — ignore modify noise
+                # Update source_hash in sibling frontmatter
+                note.metadata.source_hash = current_hash
+                match write_note(sibling, note.content, note.metadata, actor="ai"):
+                    case Failure(error=e):
+                        _log.warning(
+                            "watcher.binary_modify_hash_update_failed path=%s error=%s",
+                            path, e,
+                        )
+                        return
+                    case Success():
+                        pass
+                # 4. Write audit row
+                sibling_vp = unicodedata.normalize(
+                    "NFC", str(sibling.relative_to(self._root).as_posix())
+                )
+                match audit_write(
+                    AIDecision(
+                        action="watcher:binary_modified",
+                        confidence=1.0,
+                        reasoning=(
+                            f"Binary content changed: {path.name} "
+                            f"(hash: {current_hash[:12]}...)"
+                        ),
+                        source_ids=[sibling_vp],
+                    ),
+                    pipeline="watcher",
+                    stage="sync",
+                    outcome="BINARY_MODIFIED",
+                ):
+                    case Failure(error=e):
+                        _log.warning(
+                            "watcher.binary_modify_audit_failed error=%s", e
+                        )
+                    case Success():
+                        pass
+            case Failure(error=e):
+                _log.warning(
+                    "watcher.binary_modify_read_sibling_failed path=%s error=%s",
+                    sibling, e,
+                )
 
 
 class VaultWatcher:
