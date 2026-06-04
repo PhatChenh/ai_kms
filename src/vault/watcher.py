@@ -128,6 +128,14 @@ class _VaultEventHandler(FileSystemEventHandler):
         # without cancelling it (timer-cancel race, C2).
         self._folder_tokens: dict[str, int] = {}
         self._folder_lock = threading.Lock()
+        # Binary-move settle registry: coalesces rapid multi-hop moves so only
+        # the final src→dst pair triggers a re-home (T7 settle window).
+        # Key: stable binary identity (str of the *first* src path seen in the chain).
+        # Value: (current_src, current_dst, timer).
+        self._pending_binary_moves: dict[str, tuple[Path, Path, threading.Timer]] = {}
+        # Per-key identity token — guards against stale-timer-pop race (same as folder tokens).
+        self._binary_move_tokens: dict[str, int] = {}
+        self._binary_move_lock = threading.Lock()
 
     def _should_skip(self, path: Path) -> bool:
         """Return True if this path should never trigger a callback.
@@ -259,6 +267,61 @@ class _VaultEventHandler(FileSystemEventHandler):
         if self._on_folder_stable:
             self._on_folder_stable(folder_path)
 
+    # ── binary-move settle window helpers (T7) ─────────────────────────────
+
+    def _register_binary_move(self, src: Path, dst: Path) -> None:
+        """Register src→dst as a pending cross-folder move, starting/resetting its timer.
+
+        Uses the FIRST src path in the chain as the stable identity key so
+        subsequent hops (where src == previous dst) update the same entry.
+        When coalescing, preserves the original first_src and only updates dst.
+        """
+        # Try to find an existing entry where the current_dst matches this src
+        # (i.e., this is a second hop of the same binary).
+        settle_key: str | None = None
+        first_src: Path = src
+        with self._binary_move_lock:
+            for key, (cur_src, cur_dst, _timer) in self._pending_binary_moves.items():
+                if cur_dst == src:
+                    settle_key = key
+                    first_src = cur_src  # Preserve the first src in the chain.
+                    break
+        if settle_key is None:
+            settle_key = str(src)
+        self._reset_binary_move_timer(settle_key, first_src, dst)
+
+    def _reset_binary_move_timer(self, settle_key: str, src: Path, dst: Path) -> None:
+        """Cancel the existing timer for *settle_key*, then install a new one."""
+        with self._binary_move_lock:
+            existing = self._pending_binary_moves.pop(settle_key, None)
+            if existing is not None:
+                existing[2].cancel()
+            token = self._binary_move_tokens.get(settle_key, 0) + 1
+            self._binary_move_tokens[settle_key] = token
+            timer = threading.Timer(
+                self._debounce_seconds,
+                self._fire_binary_move_settled,
+                args=[settle_key, src, dst, token],
+            )
+            self._pending_binary_moves[settle_key] = (src, dst, timer)
+            timer.start()
+
+    def _fire_binary_move_settled(
+        self, settle_key: str, src: Path, dst: Path, token: int
+    ) -> None:
+        """Called when the settle timer fires — execute the actual re-home.
+
+        *token* guards against stale timers popping newer entries (same pattern
+        as _fire_folder_stable's C2 fix).
+        """
+        with self._binary_move_lock:
+            if self._binary_move_tokens.get(settle_key) != token:
+                return  # Stale fire — a newer timer owns this key.
+            self._pending_binary_moves.pop(settle_key, None)
+            self._binary_move_tokens.pop(settle_key, None)
+        # Execute the actual re-home with the final (src, dst) pair.
+        self._handle_binary_move(src, dst, _settled=True)
+
     def on_modified(self, event: DirModifiedEvent | FileModifiedEvent) -> None:
         if event.is_directory:
             return
@@ -352,7 +415,7 @@ class _VaultEventHandler(FileSystemEventHandler):
             case Success():
                 pass
 
-    def _handle_binary_move(self, src: Path, dst: Path) -> None:
+    def _handle_binary_move(self, src: Path, dst: Path, *, _settled: bool = False) -> None:
         """Sync sibling when a binary file is renamed or moved."""
         import structlog
         structlog.contextvars.bind_contextvars(correlation_id=new_correlation_id())
@@ -433,6 +496,15 @@ class _VaultEventHandler(FileSystemEventHandler):
             # Sub-step a — MoveGuard check
             if self._move_guard is not None and self._move_guard.check_and_consume(dst):
                 _log.info("watcher.rehome_skip path=%s reason=pipeline_initiated", dst)
+                return
+
+            # Sub-step a2 — Settle window (T7): coalesce multi-hop moves.
+            # Register src→dst and start/reset a settle timer.  When the
+            # timer fires, _fire_binary_move_settled calls _handle_binary_move
+            # again with _settled=True and the final accumulated pair.  This
+            # prevents N separate re-home operations for an N-hop drag.
+            if not _settled:
+                self._register_binary_move(src, dst)
                 return
 
             # Sub-step b — determine new location
