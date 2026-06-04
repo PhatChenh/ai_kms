@@ -208,7 +208,7 @@ async def test_scan_capture_skips_summaries_in_modified_loop(
     summaries_dir.mkdir(parents=True, exist_ok=True)
     sibling = summaries_dir / "report.md"
     sibling.write_text("# Summary of report.pdf\n\nAI-generated summary.", encoding="utf-8")
-    sibling_vp = f"Projects/Alpha/attachment/.summaries/report.md"
+    sibling_vp = "Projects/Alpha/attachment/.summaries/report.md"
 
     # Insert DB row with a DIFFERENT content_hash — makes it appear as "modified"
     import hashlib
@@ -551,7 +551,6 @@ class TestScanCaptureMisplacedMd:
         stray.write_text("# Stray\n\nbody", encoding="utf-8")
 
         def fake_move_note(src, dst, actor):
-            from core.result import Failure
             return Failure(error="move failed", recoverable=False, context={})
 
         monkeypatch.setattr("pipelines.capture.move_note", fake_move_note)

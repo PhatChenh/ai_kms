@@ -11,7 +11,6 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
-import pytest
 
 from vault.paths import (
     _is_in_managed_attachment,

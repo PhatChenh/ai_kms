@@ -5,7 +5,6 @@ These three tests verify the module exports and async contract only.
 from __future__ import annotations
 
 import asyncio
-import inspect
 
 
 def test_import():
@@ -25,8 +24,6 @@ def test_pipeline_has_no_heavy_imports():
     core/pipeline.py must not import llm/, vault/, handlers/, storage/, or core/audit.
     Verified by inspecting the module's source — cheap and dependency-free.
     """
-    import importlib
-    import importlib.util
     from pathlib import Path
 
     src = (Path(__file__).parents[2] / "src" / "core" / "pipeline.py").read_text()

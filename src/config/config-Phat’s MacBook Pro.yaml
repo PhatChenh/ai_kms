@@ -5,7 +5,6 @@ capture:
     office_extensions: [".md", ".docx", ".xlsx", ".pptx", ".txt"]
     max_stem_length: 120
   folder_cooldown_seconds: 5.0
-  binary_settle_seconds: 5.0
   folder_max_workers: 4
 claude:
   max_tokens: 1024

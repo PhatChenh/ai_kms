@@ -131,30 +131,26 @@ def _is_in_managed_attachment(file_path: Path, vault_cfg: VaultConfig) -> bool:
 
 
 def _is_managed_summaries_area(path: Path, vault_cfg: VaultConfig) -> bool:
-    """Return True if path lives inside an area where AI-managed ``.summaries/`` siblings exist.
+    """Return True if path lives inside an area where AI-managed `.summaries/` siblings exist.
 
-    Managed summaries areas (where the capture pipeline writes sibling ``.md``
+    Managed summaries areas (where the capture pipeline writes sibling `.md`
     files for binaries, per DECISION-021 + DECISION-027):
 
-      - ``Projects/<A>/<attachment_dir>/`` and its ``.summaries/`` subdir
+      - `Projects/<A>/<attachment_dir>/` and its `.summaries/` subdir
         (LOCATED captures — rich sibling next to project binary)
-      - ``Domain/<D>/<attachment_dir>/`` and its ``.summaries/`` subdir
+      - `Domain/<D>/<attachment_dir>/` and its `.summaries/` subdir
         (LOCATED captures — rich sibling next to domain binary)
-      - ``Projects/<A>/.summaries/`` (editable-file siblings — Phase 3/4
-        editable→root routing; e.g. ``.docx`` binary at project root)
-      - ``Domain/<D>/.summaries/`` (same for domain editable binaries)
-      - ``<inbox_dir>/`` and its ``.summaries/`` subdir
+      - `<inbox_dir>/` and its `.summaries/` subdir
         (CLUELESS pending-routing markers — Phase 2 Classify resolves them)
 
-    Differs from ``_is_in_managed_attachment``: that one is the *binary* pipeline
+    Differs from `_is_in_managed_attachment`: that one is the *binary* pipeline
     area (used to suppress double-capture). This one is the *sibling* hosting
-    area (used by reconcile Stage 4 to scope ``.summaries/`` walks safely, and
-    Stage 7 editable-migration).
+    area (used by reconcile Stage 4 to scope `.summaries/` walks safely).
 
     Args:
         path: Absolute path to a file or directory being tested.
         vault_cfg: VaultConfig with projects_path, domain_path, attachment_dir,
-                   inbox_path, summaries_subdir.
+                   inbox_path.
 
     Returns:
         True if path is inside any managed summaries area (or IS the area itself).
@@ -162,25 +158,7 @@ def _is_managed_summaries_area(path: Path, vault_cfg: VaultConfig) -> bool:
     inbox_path = vault_cfg.inbox_path
     if path == inbox_path or inbox_path in path.parents:
         return True
-    if _is_in_managed_attachment(path, vault_cfg):
-        return True
-    # Editable-file summaries: Projects/<A>/.summaries/ and Domain/<D>/.summaries/.
-    # These house siblings for binaries that resolve_placement routes to the
-    # project/domain root (editable extension → final_dir = base_dir).
-    projects_path = vault_cfg.projects_path
-    domain_path = vault_cfg.domain_path
-    summaries = vault_cfg.summaries_subdir
-    # Check if *path itself* is a managed .summaries/ directory.
-    if path.name == summaries:
-        grandparent = path.parent
-        if grandparent.parent == projects_path or grandparent.parent == domain_path:
-            return True
-    for parent in path.parents:
-        if parent.name == summaries:
-            grandparent = parent.parent
-            if grandparent.parent == projects_path or grandparent.parent == domain_path:
-                return True
-    return False
+    return _is_in_managed_attachment(path, vault_cfg)
 
 
 def _is_ai_output(path: Path, vault_cfg: "VaultConfig") -> bool:
@@ -208,13 +186,11 @@ def _is_ai_output(path: Path, vault_cfg: "VaultConfig") -> bool:
 
 
 def _is_misplaced(path: Path, vault_cfg: "VaultConfig") -> bool:
-    """Return True if *path* is a file dropped at the bare root of Projects/ or Domain/.
+    """Return True if *path* is an .md file dropped at the bare root of Projects/ or Domain/.
 
-    The predicate is intentionally type-agnostic — callers add their own
-    extension filter (e.g. ``.md``-only in the watcher).  A file is misplaced
-    when it sits directly under ``Projects/`` or ``Domain/`` without a real
-    subfolder (e.g. ``Projects/stray.md`` or ``Domain/loose.xlsx``).  Such
-    files have no project or domain context — they are orphan drops that
+    A file is misplaced when it sits directly under ``Projects/`` or ``Domain/``
+    without a real subfolder (e.g. ``Projects/stray.md`` or ``Domain/loose.md``).
+    Such files have no project or domain context — they are orphan drops that
     should be swept to inbox.
 
     Inbox and AI-output folders are always valid (they have their own handlers).

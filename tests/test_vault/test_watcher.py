@@ -15,7 +15,6 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 from watchdog.events import (
     DirCreatedEvent,
     FileCreatedEvent,
@@ -665,6 +664,7 @@ def test_on_moved_binary_different_folder_orphans_old_sibling(
         on_delete=lambda p: None,
         on_move=lambda s, d: None,
         debounce_seconds=0.01,
+        binary_settle_seconds=0.01,
     )
 
     # Binary moved from Projects/Alpha/attachment/ to Domain/Finance/attachment/

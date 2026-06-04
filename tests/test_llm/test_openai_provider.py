@@ -5,7 +5,6 @@ Unit tests for OpenAIProvider. No real API calls — openai.AsyncOpenAI is mocke
 Integration test (marked `integration`) calls real Fireworks endpoint.
 """
 
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import openai
@@ -14,7 +13,6 @@ import pytest
 from core.config import OpenAICompatConfig
 from core.exceptions import ConfigError
 from core.result import Failure, Success
-from llm.provider import LLMResponse
 
 
 # ---------------------------------------------------------------------------

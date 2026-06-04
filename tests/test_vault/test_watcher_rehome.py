@@ -9,14 +9,10 @@ CONFIG is never imported at module scope — all tests use VaultConfig(root=tmp_
 
 from __future__ import annotations
 
-import contextvars
-import threading
 import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
-from watchdog.events import FileMovedEvent
 
 from core.config import VaultConfig
 from vault.move_guard import MoveGuard
@@ -32,6 +28,7 @@ def _make_handler(
     on_move=None,
     move_guard: MoveGuard | None = None,
     debounce: float = 0.01,
+    binary_settle: float = 0.01,
 ) -> tuple[_VaultEventHandler, Path, VaultConfig]:
     root = tmp_path / "vault"
     root.mkdir(exist_ok=True)
@@ -45,6 +42,7 @@ def _make_handler(
         on_delete=on_delete or (lambda p: None),
         on_move=on_move or (lambda s, d: None),
         debounce_seconds=debounce,
+        binary_settle_seconds=binary_settle,
     )
     if move_guard is not None:
         handler._move_guard = move_guard
@@ -175,7 +173,7 @@ def test_no_edit_pdf_cross_folder_rehome(tmp_path: Path, monkeypatch):
     assert len(move_attachment_calls) == 1, (
         f"Expected 1 move_attachment, got {len(move_attachment_calls)}"
     )
-    assert move_attachment_calls[0] == (str(src), str(final_binary))
+    assert move_attachment_calls[0] == (str(dst), str(final_binary))
 
     # Sibling moved via move_note
     assert len(move_note_calls) == 1
@@ -697,7 +695,7 @@ def test_sibling_rebuild_from_db_when_absent(tmp_path: Path, monkeypatch):
     path_arg, body, att_path, actor = write_note_calls[0]
     assert path_arg == str(new_sibling)
     assert body == "DB summary text"
-    assert att_path == f"Projects/B/attachment/report.pdf"
+    assert att_path == "Projects/B/attachment/report.pdf"
     assert actor == "ai"
 
 
@@ -865,7 +863,7 @@ def test_domain_symmetry(tmp_path: Path, monkeypatch):
 
     # Binary moved to domain attachment
     assert len(move_attachment_calls) == 1
-    assert move_attachment_calls[0] == (str(src), str(final_binary))
+    assert move_attachment_calls[0] == (str(dst), str(final_binary))
 
     # Sibling moved
     assert len(move_note_calls) == 1
@@ -1038,3 +1036,90 @@ def test_correlation_id_is_non_empty_string(tmp_path: Path, monkeypatch):
         f"correlation_id must be str, got {type(captured_cids[0])}"
     )
     assert len(captured_cids[0]) > 0, "correlation_id must be non-empty"
+
+
+# ---------------------------------------------------------------------------
+# T12 — move_attachment uses dst (current location), not src (stale path)
+# ---------------------------------------------------------------------------
+
+
+def test_rehome_move_attachment_uses_dst_not_src(tmp_path: Path, monkeypatch):
+    """After settle window, OS already moved file to dst. move_attachment must
+    use dst (where the binary actually is), not src (stale original path)."""
+    handler, root, vault_cfg = _make_handler(tmp_path)
+
+    # Cross-folder re-home: PDF from A/attachment → B/ (user drag)
+    src = root / "Projects" / "A" / "attachment" / "data.pdf"
+    dst = root / "Projects" / "B" / "data.pdf"
+    old_sibling = (
+        root / "Projects" / "A" / "attachment" / ".summaries" / "data.pdf.md"
+    )
+    final_binary = root / "Projects" / "B" / "attachment" / "data.pdf"
+
+    old_sibling.parent.mkdir(parents=True, exist_ok=True)
+    old_sibling.write_text(
+        "---\nattachment_path: Projects/A/attachment/data.pdf\n---\n# Data\n",
+        encoding="utf-8",
+    )
+
+    move_attachment_calls: list[tuple] = []
+
+    def fake_move_attachment(s, d):
+        move_attachment_calls.append((str(s), str(d)))
+        from core.result import Success
+        return Success(d)
+
+    def fake_move_note(s, d, actor):
+        from core.result import Success
+        return Success(None)
+
+    def fake_write_note(path, body, metadata, actor):
+        from core.result import Success
+        return Success(MagicMock())
+
+    def fake_read_note(path):
+        from vault.frontmatter import NoteMetadata
+        from vault.reader import Note
+        from core.result import Success
+        return Success(Note(
+            path=path,
+            content="# Data\n",
+            metadata=NoteMetadata(
+                attachment_path="Projects/A/attachment/data.pdf",
+            ),
+            content_hash="abc",
+        ))
+
+    def fake_rename_doc(old, new, db_path=None):
+        from core.result import Success
+        return Success(1)
+
+    def fake_audit_write(*args, **kwargs):
+        from core.result import Success
+        return Success(None)
+
+    def fake_get_by_path(vp, db_path=None):
+        from core.result import Success
+        return Success(_fake_document_row())
+
+    monkeypatch.setattr("vault.watcher.move_attachment", fake_move_attachment)
+    monkeypatch.setattr("vault.watcher.move_note", fake_move_note)
+    monkeypatch.setattr("vault.watcher.write_note", fake_write_note)
+    monkeypatch.setattr("vault.watcher.read_note", fake_read_note)
+    monkeypatch.setattr("vault.watcher.rename_doc", fake_rename_doc)
+    monkeypatch.setattr("vault.watcher.audit_write", fake_audit_write)
+    monkeypatch.setattr("vault.watcher.get_by_path", fake_get_by_path)
+
+    handler._handle_binary_move(src, dst)
+
+    time.sleep(0.05)
+
+    # move_attachment MUST use dst (where OS placed the file), not src
+    assert len(move_attachment_calls) == 1
+    assert move_attachment_calls[0] == (str(dst), str(final_binary)), (
+        f"Expected move_attachment(dst, final), got move_attachment{move_attachment_calls[0]}"
+    )
+    # Explicitly verify src was NOT used as first arg
+    assert move_attachment_calls[0][0] != str(src), (
+        "move_attachment must NOT use stale src path"
+    )

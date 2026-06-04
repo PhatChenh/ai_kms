@@ -43,7 +43,6 @@ Test map (read this before adding new tests):
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -56,13 +55,9 @@ from pydantic import ValidationError
 # requires real config files to be present on every developer's machine.
 # ---------------------------------------------------------------------------
 from core.config import (
-    _load_yaml,
-    load_config,
     ApiKeys,
     ClaudeConfig,
     ConfidenceBand,
-    DatabaseConfig,
-    LoggingConfig,
     MainConfig,
     MCPConfig,
     OllamaConfig,
@@ -587,6 +582,16 @@ class TestCaptureConfig:
         from core.config import CaptureConfig
         with pytest.raises(ValidationError):
             CaptureConfig(max_urls_per_note=-1)
+
+    def test_default_binary_settle_seconds_is_5(self):
+        from core.config import CaptureConfig
+        c = CaptureConfig()
+        assert c.binary_settle_seconds == 5.0
+
+    def test_binary_settle_seconds_rejects_negative(self):
+        from core.config import CaptureConfig
+        with pytest.raises(ValidationError):
+            CaptureConfig(binary_settle_seconds=-1.0)
 
     def test_main_config_has_capture_field(self, vault_dir: Path):
         cfg = MainConfig(vault={"root": str(vault_dir)})

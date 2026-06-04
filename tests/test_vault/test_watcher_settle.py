@@ -13,7 +13,6 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 
 from core.config import VaultConfig
 from vault.move_guard import MoveGuard
@@ -29,6 +28,7 @@ def _make_handler(
     on_move=None,
     move_guard: MoveGuard | None = None,
     debounce: float = 0.01,
+    binary_settle: float = 0.01,
 ) -> tuple[_VaultEventHandler, Path, VaultConfig]:
     root = tmp_path / "vault"
     root.mkdir(exist_ok=True)
@@ -42,6 +42,7 @@ def _make_handler(
         on_delete=on_delete or (lambda p: None),
         on_move=on_move or (lambda s, d: None),
         debounce_seconds=debounce,
+        binary_settle_seconds=binary_settle,
     )
     if move_guard is not None:
         handler._move_guard = move_guard
@@ -165,7 +166,7 @@ def test_single_hop_processed_after_settle(tmp_path: Path, monkeypatch):
     assert len(move_attachment_calls) == 1, (
         f"Expected 1 move_attachment, got {len(move_attachment_calls)}"
     )
-    assert move_attachment_calls[0] == (str(src), str(final_binary))
+    assert move_attachment_calls[0] == (str(dst), str(final_binary))
 
     assert len(move_note_calls) == 1
     assert move_note_calls[0] == (str(old_sibling), str(new_sibling), "ai")
@@ -268,10 +269,10 @@ def test_two_hop_coalesced_into_single_rehome(tmp_path: Path, monkeypatch):
     _, kwargs = audit_calls[0]
     assert kwargs["outcome"] == "REHOMED"
 
-    # Verify move_attachment uses final src→dst: A/attachment/ → C/attachment/
+    # Verify move_attachment uses dst (where OS moved file) → final attachment dir
     assert len(move_attachment_calls) == 1
-    assert str(src1) in move_attachment_calls[0][0], (
-        f"Expected src={src1}, got {move_attachment_calls[0][0]}"
+    assert str(dst2) in move_attachment_calls[0][0], (
+        f"Expected dst={dst2}, got {move_attachment_calls[0][0]}"
     )
     assert "Projects/C/attachment/report.pdf" in move_attachment_calls[0][1]
 
@@ -364,9 +365,9 @@ def test_three_hop_coalesced_into_single_rehome(tmp_path: Path, monkeypatch):
     _, kwargs = audit_calls[0]
     assert kwargs["outcome"] == "REHOMED"
 
-    # move_attachment uses first src → last dst
+    # move_attachment uses final dst (where OS placed file) → last attachment dir
     assert len(move_attachment_calls) == 1
-    assert str(src) in move_attachment_calls[0][0]
+    assert str(dst_final) in move_attachment_calls[0][0]
     assert "Projects/D/attachment/report.pdf" in move_attachment_calls[0][1]
 
 
@@ -685,3 +686,103 @@ def test_move_guard_suppression_with_settle(tmp_path: Path, monkeypatch):
     assert len(audit_calls) == 0, (
         "MoveGuard should suppress audit"
     )
+
+
+# ---------------------------------------------------------------------------
+# T8: Settle timer uses binary_settle_seconds, not debounce_seconds
+# ---------------------------------------------------------------------------
+
+
+def test_settle_timer_uses_binary_settle_seconds(tmp_path: Path, monkeypatch):
+    """binary_settle_seconds=0.2 but debounce=0.01 — settle must wait the
+    full 0.2 s before firing the re-home."""
+    root = tmp_path / "vault"
+    root.mkdir(exist_ok=True)
+    vault_cfg = VaultConfig(root=root)
+
+    handler = _VaultEventHandler(
+        root=root,
+        vault_config=vault_cfg,
+        on_create=lambda p: None,
+        on_modify=lambda p: None,
+        on_delete=lambda p: None,
+        on_move=lambda s, d: None,
+        debounce_seconds=0.01,
+        binary_settle_seconds=0.2,
+    )
+
+    src = root / "Projects" / "A" / "attachment" / "report.pdf"
+    dst = root / "Projects" / "B" / "report.pdf"
+    old_sibling = (
+        root / "Projects" / "A" / "attachment" / ".summaries" / "report.pdf.md"
+    )
+    old_sibling.parent.mkdir(parents=True, exist_ok=True)
+    old_sibling.write_text(
+        "---\nattachment_path: Projects/A/attachment/report.pdf\n---\n# Summary\n",
+        encoding="utf-8",
+    )
+
+    audit_calls: list = []
+
+    def fake_move_attachment(s, d):
+        from core.result import Success
+        return Success(d)
+
+    def fake_move_note(s, d, actor):
+        from core.result import Success
+        return Success(None)
+
+    def fake_write_note(path, body, metadata, actor):
+        from core.result import Success
+        return Success(MagicMock())
+
+    def fake_read_note(path):
+        from vault.frontmatter import NoteMetadata
+        from vault.reader import Note
+        from core.result import Success
+        return Success(Note(
+            path=path,
+            content="# Summary\n",
+            metadata=NoteMetadata(
+                attachment_path="Projects/A/attachment/report.pdf",
+            ),
+            content_hash="abc",
+        ))
+
+    def fake_rename_doc(old, new, db_path=None):
+        from core.result import Success
+        return Success(1)
+
+    def fake_audit_write(*args, **kwargs):
+        audit_calls.append((args, kwargs))
+        from core.result import Success
+        return Success(None)
+
+    def fake_get_by_path(vp, db_path=None):
+        from core.result import Success
+        return Success(_fake_document_row())
+
+    monkeypatch.setattr("vault.watcher.move_attachment", fake_move_attachment)
+    monkeypatch.setattr("vault.watcher.move_note", fake_move_note)
+    monkeypatch.setattr("vault.watcher.write_note", fake_write_note)
+    monkeypatch.setattr("vault.watcher.read_note", fake_read_note)
+    monkeypatch.setattr("vault.watcher.rename_doc", fake_rename_doc)
+    monkeypatch.setattr("vault.watcher.audit_write", fake_audit_write)
+    monkeypatch.setattr("vault.watcher.get_by_path", fake_get_by_path)
+
+    handler._handle_binary_move(src, dst)
+
+    # After debounce_seconds (0.01) but before binary_settle_seconds (0.2),
+    # the re-home should NOT have fired yet.
+    time.sleep(0.05)
+    assert len(audit_calls) == 0, (
+        "Settle timer should use binary_settle_seconds (0.2), not debounce_seconds (0.01)"
+    )
+
+    # After binary_settle_seconds fires
+    time.sleep(0.25)
+    assert len(audit_calls) == 1, (
+        f"Expected 1 audit after binary_settle_seconds, got {len(audit_calls)}"
+    )
+    _, kwargs = audit_calls[0]
+    assert kwargs["outcome"] == "REHOMED"

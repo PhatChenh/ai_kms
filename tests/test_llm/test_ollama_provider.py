@@ -4,13 +4,13 @@ tests/test_llm/test_ollama_provider.py
 Unit tests for OllamaProvider. _post() is mocked — no real Ollama server needed.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from core.config import OllamaConfig
 from core.result import Failure, Success
-from llm.provider import LLMProvider, LLMResponse
+from llm.provider import LLMProvider
 
 
 # ---------------------------------------------------------------------------

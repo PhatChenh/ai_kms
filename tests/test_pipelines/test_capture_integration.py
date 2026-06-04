@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
-from core.result import Failure, Success
+from core.result import Success
 from llm.provider import LLMResponse
 
 

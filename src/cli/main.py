@@ -257,6 +257,8 @@ def watch() -> None:
             on_modify=on_modify,
             on_delete=on_delete,
             on_move=on_move,
+            folder_cooldown_seconds=CONFIG.main.capture.folder_cooldown_seconds,
+            binary_settle_seconds=CONFIG.main.capture.binary_settle_seconds,
         )
         from vault.move_guard import set_active as set_active_guard
         set_active_guard(watcher._move_guard)

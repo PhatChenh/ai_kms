@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from core.result import Failure, Success
+from core.result import Success
 from storage.db import init_db
 
 

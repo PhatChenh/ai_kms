@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -268,7 +268,6 @@ async def test_store_nonmd_clueless_projects_root_drop(vault_root, pipeline_ctx)
 async def test_store_nonmd_located_project_needs_move(vault_root, pipeline_ctx, monkeypatch):
     """PDF in Projects/Strategy/report.pdf → LOCATED: sibling first, binary moved to attachment/."""
     from pipelines.capture import store
-    from vault.writer import WriteOutcome
     from llm.provider import LLMResponse
     from unittest.mock import AsyncMock
 

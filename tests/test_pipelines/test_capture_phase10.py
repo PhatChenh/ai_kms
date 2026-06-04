@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import shutil
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -194,7 +193,6 @@ async def test_scan_capture_deleted_loop_failure_logs_warning_continues(
     from pipelines.capture import scan_capture
     from vault.writer import write_note
     from vault.frontmatter import NoteMetadata
-    from storage.documents import get_by_path
     import storage.documents as docs
 
     # Seed DB with two notes, then delete both from disk

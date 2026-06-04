@@ -25,7 +25,7 @@ from handlers.base import RawContent
 from handlers.registry import HandlerRegistry
 from handlers.url_fetcher import detect_urls, fetch_url_content
 from llm.prompt_loader import PROMPTS
-from llm.provider import LLMResponse, get_provider
+from llm.provider import get_provider
 from vault.frontmatter import NoteMetadata
 from vault.paths import _is_misplaced, _location_context, resolve_placement, to_vault_path
 from vault.reader import read_note

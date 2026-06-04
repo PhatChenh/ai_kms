@@ -1,7 +1,6 @@
 """Tests for handlers/registry.py — HandlerRegistry dispatch."""
 from pathlib import Path
 
-import pytest
 
 import handlers  # noqa: F401 — triggers __init__.py bootstrap
 from handlers.base import BaseHandler, RawContent
