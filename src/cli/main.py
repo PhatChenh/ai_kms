@@ -258,6 +258,8 @@ def watch() -> None:
             on_delete=on_delete,
             on_move=on_move,
         )
+        from vault.move_guard import set_active as set_active_guard
+        set_active_guard(watcher._move_guard)
         watcher.start()
         click.echo(f"Watching {root} — Ctrl-C to stop")
         try:

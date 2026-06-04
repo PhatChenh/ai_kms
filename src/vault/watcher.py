@@ -34,11 +34,17 @@ from core.audit import write as audit_write
 from core.confidence import AIDecision
 from core.logging_setup import new_correlation_id
 from core.result import Failure, Success
-from storage.documents import delete_by_path, rename as rename_doc
+from storage.documents import delete_by_path, get_by_path, rename as rename_doc
 from vault.indexer import IGNORE_DIRS
-from vault.paths import _is_in_managed_attachment
+from vault.paths import (
+    _is_ai_output,
+    _is_in_managed_attachment,
+    _location_context,
+    resolve_placement,
+)
 from vault.reader import read_note
-from vault.writer import move_note, write_note
+from vault.move_guard import MoveGuard
+from vault.writer import move_attachment, move_note, write_note
 
 if TYPE_CHECKING:
     from core.config import VaultConfig
@@ -97,6 +103,7 @@ class _VaultEventHandler(FileSystemEventHandler):
         debounce_seconds: float,
         folder_cooldown: float = 5.0,
         on_folder_stable: Callable[[Path], None] | None = None,
+        move_guard: MoveGuard | None = None,
     ) -> None:
         super().__init__()
         self._root = root
@@ -108,6 +115,7 @@ class _VaultEventHandler(FileSystemEventHandler):
         self._debounce_seconds = debounce_seconds
         self._folder_cooldown = folder_cooldown
         self._on_folder_stable = on_folder_stable
+        self._move_guard = move_guard
         # key: str(path) → (active timer, callable, args)
         self._timers: dict[str, tuple[threading.Timer, Callable, tuple]] = {}
         self._lock = threading.Lock()
@@ -130,6 +138,9 @@ class _VaultEventHandler(FileSystemEventHandler):
         if path.suffix.lower() != ".md" and _is_in_managed_attachment(
             path, self._vault_config
         ):
+            return True
+        if _is_ai_output(path, self._vault_config):
+            _log.debug("watcher.skip.ai_output path=%s", path.name)
             return True
         if path.name.startswith("."):
             return True
@@ -418,33 +429,230 @@ class _VaultEventHandler(FileSystemEventHandler):
                 case Success():
                     pass
         else:
-            # Different folder or sibling doesn't exist: orphan old sibling
-            old_sibling_vp = _vp(old_sibling)
-            match delete_by_path(old_sibling_vp):
-                case Success(value=rowcount):
-                    if rowcount == 0:
+            # ── cross-folder re-home ────────────────────────────────────────
+            # Sub-step a — MoveGuard check
+            if self._move_guard is not None and self._move_guard.check_and_consume(dst):
+                _log.info("watcher.rehome_skip path=%s reason=pipeline_initiated", dst)
+                return
+
+            # Sub-step b — determine new location
+            loc_type, loc_name = _location_context(dst, self._vault_config)
+            if loc_type is None:
+                # Unknown location: fall back to orphan path
+                old_sibling_vp = _vp(old_sibling)
+                match delete_by_path(old_sibling_vp):
+                    case Success(value=rowcount):
+                        if rowcount == 0:
+                            _log.warning(
+                                "watcher.binary_move_rehome_unknown_location orphan_not_found binary=%s sibling=%s",
+                                src, old_sibling_vp,
+                            )
+                    case Failure(error=e):
                         _log.warning(
-                            "watcher.binary_move_orphan_not_in_index binary=%s sibling=%s",
-                            src, old_sibling_vp,
+                            "watcher.binary_move_rehome_unknown_location_orphan_failed binary=%s error=%s",
+                            src, e,
                         )
+                match audit_write(
+                    AIDecision(
+                        action="watcher:binary_move",
+                        confidence=1.0,
+                        reasoning=(
+                            f"Binary moved to unknown location: {src.name} → {dst.name}"
+                        ),
+                        source_ids=[_vp(src)] if src.exists() else [],
+                    ),
+                    pipeline="watcher",
+                    stage="sync",
+                    outcome="SIBLING_ORPHANED",
+                ):
+                    case Failure(error=e):
+                        _log.warning(
+                            "watcher.binary_move_rehome_unknown_location_audit_failed error=%s",
+                            e,
+                        )
+                    case Success():
+                        pass
+                return
+
+            # Sub-step c — pre-check updated_by_human on old sibling
+            old_sibling_vp = _vp(old_sibling)
+            match get_by_path(old_sibling_vp):
                 case Failure(error=e):
                     _log.warning(
-                        "watcher.binary_move_orphan_failed binary=%s error=%s",
-                        src, e,
+                        "watcher.binary_rehome_get_row_failed sibling=%s error=%s",
+                        old_sibling_vp, e,
                     )
+                    # Fall back to orphan path
+                    match delete_by_path(old_sibling_vp):
+                        case Success():
+                            pass
+                        case Failure():
+                            pass
+                    match audit_write(
+                        AIDecision(
+                            action="watcher:binary_move",
+                            confidence=1.0,
+                            reasoning=(
+                                f"Binary moved, DB lookup failed: {src.name} → {dst.name}"
+                            ),
+                            source_ids=[_vp(src)] if src.exists() else [],
+                        ),
+                        pipeline="watcher",
+                        stage="sync",
+                        outcome="SIBLING_ORPHANED",
+                    ):
+                        case Failure():
+                            pass
+                        case Success():
+                            pass
+                    return
+                case Success(value=None):
+                    _log.info(
+                        "watcher.binary_rehome_row_not_found sibling=%s",
+                        old_sibling_vp,
+                    )
+                    # Fall back to orphan path
+                    match delete_by_path(old_sibling_vp):
+                        case Success():
+                            pass
+                        case Failure():
+                            pass
+                    match audit_write(
+                        AIDecision(
+                            action="watcher:binary_move",
+                            confidence=1.0,
+                            reasoning=(
+                                f"Binary moved, no DB row: {src.name} → {dst.name}"
+                            ),
+                            source_ids=[_vp(src)] if src.exists() else [],
+                        ),
+                        pipeline="watcher",
+                        stage="sync",
+                        outcome="SIBLING_ORPHANED",
+                    ):
+                        case Failure():
+                            pass
+                        case Success():
+                            pass
+                    return
+                case Success(value=row):
+                    if row.updated_by_human:
+                        _log.info(
+                            "watcher.binary_rehome_human_lock binary=%s sibling=%s",
+                            src, old_sibling_vp,
+                        )
+                        return
+
+            # Sub-step d — compute placement
+            placement = resolve_placement(dst, loc_type, loc_name, self._vault_config)
+            final_binary = placement.final_dir / dst.name
+            new_sibling_path = placement.sibling_dir / f"{dst.name}.md"
+            new_sibling_vp = _vp(new_sibling_path)
+
+            # Sub-step e — move binary if needed
+            if placement.needs_move and final_binary != dst:
+                match move_attachment(src, final_binary):
+                    case Failure(error=e):
+                        _log.warning(
+                            "watcher.binary_rehome_move_failed src=%s dst=%s error=%s",
+                            src, final_binary, e,
+                        )
+                        return
+                    case Success():
+                        pass
+
+            # Sub-step f — write new sibling card
+            if old_sibling.exists():
+                match move_note(old_sibling, new_sibling_path, actor="ai"):
+                    case Failure(error=e):
+                        _log.warning(
+                            "watcher.binary_rehome_move_note_failed src=%s dst=%s error=%s",
+                            old_sibling, new_sibling_path, e,
+                        )
+                        return
+                    case Success():
+                        pass
+                match read_note(new_sibling_path):
+                    case Success(value=note):
+                        note.metadata.attachment_path = _vp(final_binary)
+                        match write_note(
+                            new_sibling_path, note.content, note.metadata, actor="ai"
+                        ):
+                            case Failure(error=e):
+                                _log.warning(
+                                    "watcher.binary_rehome_pointer_update_failed sibling=%s error=%s",
+                                    new_sibling_path, e,
+                                )
+                            case Success():
+                                pass
+                    case Failure(error=e):
+                        _log.warning(
+                            "watcher.binary_rehome_read_sibling_failed sibling=%s error=%s",
+                            new_sibling_path, e,
+                        )
+            else:
+                # Sibling absent on disk: rebuild from DB row
+                from vault.frontmatter import NoteMetadata
+                rebuilt_meta = NoteMetadata(
+                    type="attachment-summary",
+                    confidence=row.confidence,
+                    attachment_path=_vp(final_binary),
+                    updated_by_human=False,
+                    summary=row.summary,
+                    extra={
+                        "title": row.title,
+                        "note_type": row.note_type or "attachment-summary",
+                        "content_hash": row.content_hash,
+                    },
+                )
+                match write_note(
+                    new_sibling_path,
+                    row.summary or "",
+                    rebuilt_meta,
+                    actor="ai",
+                ):
+                    case Failure(error=e):
+                        _log.warning(
+                            "watcher.binary_rehome_rebuild_failed sibling=%s error=%s",
+                            new_sibling_path, e,
+                        )
+                        return
+                    case Success():
+                        pass
+
+            # Sub-step g — update the database
+            match rename_doc(old_sibling_vp, new_sibling_vp):
+                case Success(value=0):
+                    _log.warning(
+                        "watcher.binary_rehome_db_row_not_found old=%s new=%s",
+                        old_sibling_vp, new_sibling_vp,
+                    )
+                case Failure(error=e):
+                    _log.warning(
+                        "watcher.binary_rehome_rename_failed old=%s error=%s",
+                        old_sibling_vp, e,
+                    )
+                case Success():
+                    pass
+
+            # Sub-step h — write audit row
+            is_no_edit = dst.suffix.lower() in self._vault_config.no_edit_extensions
+            direction = "no-edit→attachment" if is_no_edit else "editable→root"
             match audit_write(
                 AIDecision(
-                    action="watcher:binary_move",
+                    action="watcher:binary_rehome",
                     confidence=1.0,
-                    reasoning=f"Binary moved outside attachment: {src.name} → {dst.name}",
-                    source_ids=[_vp(src)] if src.exists() else [],
+                    reasoning=(
+                        f"Re-homed {src.name} → {_vp(final_binary)} ({direction})"
+                    ),
+                    source_ids=[new_sibling_vp],
                 ),
                 pipeline="watcher",
                 stage="sync",
-                outcome="SIBLING_ORPHANED",
+                outcome="REHOMED",
             ):
                 case Failure(error=e):
-                    _log.warning("watcher.binary_move_orphan_audit_failed error=%s", e)
+                    _log.warning("watcher.binary_rehome_audit_failed error=%s", e)
                 case Success():
                     pass
 

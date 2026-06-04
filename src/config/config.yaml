@@ -75,3 +75,4 @@ vault:
   projects_dir: Projects
   root: /Users/phatchenh/ai_kms_test_vault
   synthesis_dir: Synthesis
+  no_edit_extensions: [".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"]
