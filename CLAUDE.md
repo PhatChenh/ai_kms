@@ -33,12 +33,15 @@ _Architecture and design:_
 - `docs/architecture/system_diagram.md` — context diagram of the whole system
 - `docs/architecture/system_adr/` — system-wide Architecture Decision Records
 
-_Skill output folders (where skills read/write):_
-- `docs/design/` — output of `/codebase-design-analysis`; input to `/writing-detailed-specs`
-- `docs/specs/` — output of `/writing-detailed-specs`; input to `/research` and `/plan-from-specs`
-- `docs/research/` — output of `/research`; consumed by `/plan-from-specs`
-- `docs/plan/` — output of `/plan-from-specs`; executed by `/tdd-implement`
+_Skill output folders (where skills read/write — numbered by pipeline stage):_
+- `docs/0. draft/` — raw input drafts (pipeline input)
+- `docs/1. design/` — output of `/codebase-design-analysis`; input to `/writing-detailed-specs`
+- `docs/1.5 usability_test/` — success criteria from `/codebase-design-analysis`
+- `docs/2. specs/` — output of `/writing-detailed-specs`; input to `/research` and `/plan-from-specs`
+- `docs/2.5 research/` — output of `/research`; consumed by `/plan-from-specs`
+- `docs/3. plans/` — output of `/plan-from-specs`; executed by `/tdd-implement`
 - `docs/discussions/` — output of `/capture_discussion_v2`; historical design rationale
+- `/build-pipeline` orchestrates `design→spec→research→plan` as isolated subagents (lean main session); the four skills above still run standalone.
 ---
 
 ## Tech stack
