@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# claude-switch — provider toggle for Claude Code on this machine.
+#
+# Writes ~/.claude/settings.json, which the VS Code extension AND the
+# Claude app's Claude Code subagents both read. (The VS Code extension
+# ignores CLAUDE_CONFIG_DIR — known bug anthropics/claude-code#30538 —
+# so there is one shared config, not per-surface configs.)
+#
+# The app's TOP-LEVEL chat is always Claude (server-side); this only
+# affects VS Code + the subagents Claude Code spawns.
+#
+#   claude-switch deepseek    route VS Code + subagents to DeepSeek
+#   claude-switch claude      restore Claude subscription
+#   claude-switch status      show current provider
+
+set -euo pipefail
+
+SETTINGS="$HOME/.claude/settings.json"
+KEY_FILE="$HOME/.claude/.deepseek-key"
+MODEL="deepseek-v4-pro[1m]"
+BASE_URL="https://api.deepseek.com/anthropic"
+
+mkdir -p "$HOME/.claude"
+[ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
+
+case "${1:-}" in
+  deepseek)
+    [ -f "$KEY_FILE" ] || { echo "Missing $KEY_FILE (DeepSeek key, one line). Create + chmod 600." >&2; exit 1; }
+    if [ "$(uname -s)" = "Darwin" ]; then perms="$(stat -f '%Lp' "$KEY_FILE")"; else perms="$(stat -c '%a' "$KEY_FILE")"; fi
+    [ "$perms" = "600" ] || { echo "chmod 600 $KEY_FILE first (now $perms)." >&2; exit 1; }
+    SETTINGS="$SETTINGS" KEY="$(cat "$KEY_FILE")" MODEL="$MODEL" BASE_URL="$BASE_URL" python3 - <<'PY'
+import json, os
+p = os.environ['SETTINGS']
+with open(p) as f: s = json.load(f)
+m = os.environ['MODEL']
+s.setdefault('env', {}).update({
+    'ANTHROPIC_BASE_URL': os.environ['BASE_URL'],
+    'ANTHROPIC_AUTH_TOKEN': os.environ['KEY'],
+    'ANTHROPIC_MODEL': m,
+    'ANTHROPIC_DEFAULT_OPUS_MODEL': m,
+    'ANTHROPIC_DEFAULT_SONNET_MODEL': m,
+    'ANTHROPIC_DEFAULT_HAIKU_MODEL': m,
+    'CLAUDE_CODE_SUBAGENT_MODEL': m,
+})
+with open(p, 'w') as f: json.dump(s, f, indent=2)
+PY
+    chmod 600 "$SETTINGS"
+    echo "→ DeepSeek   (restart VS Code / reload window to pick it up)"
+    ;;
+  claude)
+    SETTINGS="$SETTINGS" python3 - <<'PY'
+import json, os
+p = os.environ['SETTINGS']
+with open(p) as f: s = json.load(f)
+for k in ['ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_MODEL',
+          'ANTHROPIC_DEFAULT_OPUS_MODEL','ANTHROPIC_DEFAULT_SONNET_MODEL',
+          'ANTHROPIC_DEFAULT_HAIKU_MODEL','CLAUDE_CODE_SUBAGENT_MODEL']:
+    s.get('env', {}).pop(k, None)
+if s.get('env') == {}: s.pop('env', None)
+with open(p, 'w') as f: json.dump(s, f, indent=2)
+PY
+    chmod 600 "$SETTINGS"
+    echo "→ Claude subscription   (restart VS Code / reload window to pick it up)"
+    ;;
+  status)
+    SETTINGS="$SETTINGS" python3 - <<'PY'
+import json, os
+p = os.environ['SETTINGS']
+try:
+    with open(p) as f: s = json.load(f)
+except FileNotFoundError:
+    s = {}
+url = s.get('env', {}).get('ANTHROPIC_BASE_URL', '')
+print('current: DeepSeek' if 'deepseek' in url else 'current: Claude subscription')
+PY
+    ;;
+  *)
+    echo "Usage: claude-switch <deepseek|claude|status>" >&2
+    exit 1
+    ;;
+esac
