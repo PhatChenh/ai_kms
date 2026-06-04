@@ -1,6 +1,6 @@
 """pipelines/reconcile.py
 
-5-stage reconcile pipeline: paths → orphan_binaries → stale_binaries → orphan_siblings → stale_tags.
+6-stage reconcile pipeline: paths → orphan_binaries → stale_binaries → orphan_siblings → stale_tags → stale_batch_refs.
 Entry point: reconcile(ctx) -> Result[ReconcileResult]
 """
 
@@ -26,19 +26,21 @@ __all__ = [
     "reconcile_stale_binaries",
     "reconcile_orphan_siblings",
     "reconcile_stale_tags",
+    "reconcile_stale_batch_refs",
     "reconcile",
 ]
 
 
 @dataclass(frozen=True)
 class ReconcileResult:
-    """Counters accumulated across the 5 reconcile stages."""
+    """Counters accumulated across the 6 reconcile stages."""
 
     paths_reconciled: int = 0
     new_captures: int = 0
     restale_count: int = 0
     orphans_cleaned: int = 0
     tags_updated: int = 0
+    batch_refs_cleared: int = 0
 
     def replace(self, **kwargs: int) -> ReconcileResult:
         return replace(self, **kwargs)
@@ -298,7 +300,7 @@ async def reconcile_stale_tags(
     - Strips any domain/<X> tag where X is no longer a valid domain folder.
     - Adds missing domain/<X> tag when the note lives under Domain/<X>/.
     - Sets project: to the folder name when the note lives under Projects/<A>/.
-    - Skips notes with updated_by_human=True (write_note returns Failure recoverable=True).
+    - Skips notes with updated_by_human=True (write_note returns Failure recoverable=False).
 
     Args:
         entries: Pre-scanned VaultEntry list from reconcile() entry point.
@@ -360,9 +362,12 @@ async def reconcile_stale_tags(
         match write_note(entry.path, note.content, new_meta, actor="ai"):
             case Success():
                 tags_updated += 1
-            case Failure(recoverable=False) as f if "human" in str(f.error).lower():
-                # updated_by_human=True — write_note returns recoverable=False with
-                # "note locked by human edit". Skip silently; no retry will fix this.
+            case Failure(recoverable=False, context=fc) as f if fc and "vault_path" in fc:
+                # updated_by_human=True — write_note's human-lock branch is the
+                # only recoverable=False failure that carries a "vault_path"
+                # context key (writer.py human-lock guard). Keying off that
+                # context key avoids coupling to the prose error message.
+                # Skip silently; no retry will fix this.
                 pass
             case Failure() as f:
                 _log.warning("reconcile_stale_tags.write_failed path=%s error=%s",
@@ -372,12 +377,87 @@ async def reconcile_stale_tags(
 
 
 # ---------------------------------------------------------------------------
+# Stage 6 — null out batch_id on documents that moved away from batch destination
+# ---------------------------------------------------------------------------
+
+
+async def reconcile_stale_batch_refs(
+    result: ReconcileResult, ctx: PipelineContext
+) -> Result[ReconcileResult]:
+    """Stage 6: null out batch_id on documents that moved away from their batch destination.
+
+    For each documents row with a non-NULL batch_id, computes the expected
+    vault_path prefix from batches.destination_type + destination_name.
+    If the row's vault_path no longer starts with that prefix, sets batch_id = NULL.
+
+    Safe to run before Phase 4 is deployed: if the batches table does not exist,
+    returns Success(result) unchanged.
+    """
+    import sqlite3
+
+    from storage.db import get_connection
+
+    counter = 0
+    try:
+        with get_connection(ctx.db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT d.vault_path, b.destination_type, b.destination_name
+                FROM documents d
+                JOIN batches b ON d.batch_id = b.batch_id
+                WHERE d.batch_id IS NOT NULL
+                """,
+            ).fetchall()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc).lower():
+            return Success(result)
+        return Failure(
+            error=str(exc),
+            recoverable=False,
+            context={"stage": "reconcile_stale_batch_refs"},
+        )
+
+    vault_cfg = ctx.config.vault
+    stale_paths = []
+    for vault_path, destination_type, destination_name in rows:
+        # Derive the prefix from config (not hardcoded "Projects/"/"Domain/"),
+        # so non-default projects_dir/domain_dir deployments still match. Keep
+        # the trailing slash so Projects/Alpha/ does not match Projects/AlphaBeta/.
+        if destination_type == "project":
+            top_dir = vault_cfg.projects_dir
+        else:
+            top_dir = vault_cfg.domain_dir
+        expected_prefix = f"{top_dir}/{destination_name}/"
+
+        if not vault_path.startswith(expected_prefix):
+            stale_paths.append(vault_path)
+
+    if stale_paths:
+        try:
+            with get_connection(ctx.db_path) as conn:
+                for vault_path in stale_paths:
+                    conn.execute(
+                        "UPDATE documents SET batch_id = NULL WHERE vault_path = ?",
+                        (vault_path,),
+                    )
+                    counter += 1
+        except sqlite3.OperationalError as exc:
+            return Failure(
+                error=str(exc),
+                recoverable=False,
+                context={"stage": "reconcile_stale_batch_refs"},
+            )
+
+    return Success(replace(result, batch_refs_cleared=result.batch_refs_cleared + counter))
+
+
+# ---------------------------------------------------------------------------
 # Pipeline entry point
 # ---------------------------------------------------------------------------
 
 
 async def reconcile(ctx: PipelineContext) -> Result[ReconcileResult]:
-    """Run all 5 reconcile stages in sequence.
+    """Run all 6 reconcile stages in sequence.
 
     Args:
         ctx: PipelineContext with config, correlation_id, and db_path.
@@ -415,6 +495,11 @@ async def reconcile(ctx: PipelineContext) -> Result[ReconcileResult]:
         case Success(value=r):
             result = r
     match await reconcile_stale_tags(result, ctx, entries):
+        case Failure() as f:
+            return f
+        case Success(value=r):
+            result = r
+    match await reconcile_stale_batch_refs(result, ctx):
         case Failure() as f:
             return f
         case Success(value=r):

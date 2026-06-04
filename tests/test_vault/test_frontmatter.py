@@ -103,7 +103,6 @@ def test_dumps_round_trips_known_fields(tmp_path):
         type="note",
         tags=["a", "b"],
         project="X",
-        domain="Y",
         created=date(2026, 1, 1),
         updated=datetime(2026, 1, 2, tzinfo=timezone.utc),
         confidence=0.9,
@@ -122,7 +121,6 @@ def test_dumps_round_trips_known_fields(tmp_path):
     assert meta2.type == meta.type
     assert meta2.tags == meta.tags
     assert meta2.project == meta.project
-    assert meta2.domain == meta.domain
     assert meta2.created == meta.created
     assert meta2.confidence == meta.confidence
     assert meta2.updated_by_human == meta.updated_by_human
@@ -293,3 +291,43 @@ def test_source_hash_field_parsed_not_in_extra(tmp_path):
     meta, _ = r.value
     assert meta.source_hash == fake_hash
     assert "source_hash" not in meta.extra
+
+
+# ---------------------------------------------------------------------------
+# Phase 3A — _DEPRECATED_KEYS dumps() filter (TD-038)
+# ---------------------------------------------------------------------------
+
+
+def test_dumps_strips_deprecated_domain_key():
+    """domain: in metadata.extra is stripped from YAML output by _DEPRECATED_KEYS filter."""
+    from vault.frontmatter import NoteMetadata, dumps
+
+    meta = NoteMetadata(extra={"domain": "finance"})
+    rendered = dumps(meta, "body")
+    assert "domain:" not in rendered
+
+
+def test_dumps_preserves_non_deprecated_extra_keys():
+    """Non-deprecated keys in metadata.extra survive dumps() unchanged."""
+    from vault.frontmatter import NoteMetadata, dumps
+
+    meta = NoteMetadata(extra={"custom_field": "value"})
+    rendered = dumps(meta, "body")
+    assert "custom_field:" in rendered
+
+
+# ---------------------------------------------------------------------------
+# Phase 3B — domain scalar field removal (TD-038)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_yaml_with_domain_produces_no_domain_attr(tmp_path):
+    """YAML with domain: parses to extra, not a domain attribute on NoteMetadata."""
+    from vault.frontmatter import NoteMetadata, parse
+
+    f = write_file(tmp_path, "n.md", "---\ndomain: finance\n---\nbody")
+    result = parse(f)
+    assert isinstance(result, Success)
+    meta, _ = result.value
+    assert hasattr(meta, "domain") is False
+    assert meta.extra.get("domain") == "finance"
