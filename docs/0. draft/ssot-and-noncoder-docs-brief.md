@@ -144,6 +144,7 @@ Rationale: clean the ground (1-2) before building the source of truth on top of 
 - **Two near-twin predicates in `vault/paths.py`:** `_is_in_managed_attachment` vs `_is_managed_summaries_area`. Picking the wrong one is silent. Confirm which scope a new scenario/check needs.
 - **Two skills, not one.** Don't merge Skill A and Skill B — different source, trigger, cadence. They share only the `draw-diagram` delegation.
 - **Inventory + system_story are living sources** — never regenerate them from scratch; they hold human state (`human_reviewed`, `spec_ref`, the curated narrative).
+- **Render = script (0 tokens), LLM = delta-only.** The mechanical steps — inventory→`TESTING_GUIDE.md`, inventory→setup script (Skill A jobs 3+4), system_story→arch note (Skill B) — MUST be deterministic templating, NOT an LLM prompt. Two reasons: (1) cost — wholesale regeneration runs often, keep it free; (2) determinism — "derive from the same source → cannot desync" only holds if it's code, not a prompt (a prompt drifts each run). The LLM jobs (Draft, Link, Reconcile) run on the **delta only** (the new/changed phase + scenarios touching changed files via git diff), never the whole inventory. Trap: building render as "here's the inventory, Claude, write the guide" — that makes wholesale expensive AND non-deterministic. The expensive job is **Reconcile** (job 5): scope it to behavior-changing runs and changed-file scenarios, not all entries every time.
 
 ---
 
