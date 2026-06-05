@@ -107,8 +107,8 @@ def _configure_structlog() -> None:
         # 3. Add log level string ("info", "warning", etc.).
         structlog.stdlib.add_log_level,
 
-        # 4. Add ISO-8601 timestamp. fmt="iso" → "2026-05-01T14:23:01.123456Z"
-        structlog.processors.TimeStamper(fmt="iso", utc=True),
+        # 4. Add human-readable timestamp. e.g. "2026-06-05 07:54:52"
+        structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S", utc=True),
 
         # 5. If an exception was passed via exc_info=True, format the traceback
         #    into the event dict so it survives JSON serialisation.
@@ -158,7 +158,7 @@ def _configure_stdlib_handlers(log_level: str, dev_mode: bool) -> None:
             structlog.contextvars.merge_contextvars,
             structlog.stdlib.add_logger_name,
             structlog.stdlib.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso", utc=True),
+            structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S", utc=True),
         ],
         # The final renderer: turns the event dict into a JSON string.
         processor=structlog.processors.JSONRenderer(),
@@ -182,7 +182,7 @@ def _configure_stdlib_handlers(log_level: str, dev_mode: bool) -> None:
                 structlog.contextvars.merge_contextvars,
                 structlog.stdlib.add_logger_name,
                 structlog.stdlib.add_log_level,
-                structlog.processors.TimeStamper(fmt="iso", utc=True),
+                structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S", utc=True),
             ],
             # ConsoleRenderer adds colours and aligns columns for readability.
             processor=structlog.dev.ConsoleRenderer(colors=True),

@@ -50,6 +50,14 @@
 
 ---
 
+### OQ-009 · Image capture (PNG/JPG) — build vision-LLM/OCR or drop the behavior?
+**Blocks:** Phase 2 (Classify), if it assumes image drops produce summaries
+**Status:** 🔴 Open
+**Question:** `PngHandler`/`JpgHandler.extract()` are not-implemented stubs that return `Failure("image extraction requires a vision-capable LLM — not yet implemented", recoverable=False)` (`src/handlers/image_handler.py:21-26, :30-38`). Images are NOT captured — no sibling `.md`, no summary. The behavior inventory `P15-HDL-07` claims images get a sibling summary (OCR or filename-based). Build image capture (vision-capable LLM or Tesseract OCR), or drop/defer and retire `P15-HDL-07`?
+**Context:** Surfaced during the 2026-06-05 behavior-inventory reconcile as a design-vs-implementation conflict (`P15-HDL-07`, `status: conflict`). Blocks nothing today, but Phase 2 Classify must not assume image drops produce summaries. Decision needed before any feature depends on image content.
+
+---
+
 ## ✅ Closed
 
 ### OQ-001 · Move/rename detection when note is edited AND moved simultaneously

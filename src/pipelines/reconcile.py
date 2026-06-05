@@ -1,6 +1,6 @@
 """pipelines/reconcile.py
 
-6-stage reconcile pipeline: paths → orphan_binaries → stale_binaries → orphan_siblings → stale_tags → stale_batch_refs.
+7-stage reconcile pipeline: paths → orphan_binaries → stale_binaries → orphan_siblings → stale_tags → stale_batch_refs → editable_migration.
 Entry point: reconcile(ctx) -> Result[ReconcileResult]
 """
 

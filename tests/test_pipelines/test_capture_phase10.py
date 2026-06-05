@@ -283,3 +283,63 @@ async def test_scan_capture_zero_modified_deleted_moved_no_extra_calls(
 
     assert isinstance(result, Success)
     assert result.value == []
+
+
+# ---------------------------------------------------------------------------
+# test 8 — added loop: un-indexed .md captured, already-indexed unchanged skipped
+#          (behavior_inventory P1-CAP-05)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_scan_capture_added_unindexed_captured_indexed_unchanged_skipped(
+    vault_root, db_path, pipeline_ctx, monkeypatch
+):
+    """un-indexed .md → captured (added loop); already-indexed unchanged .md → not re-processed."""
+    from pipelines.capture import scan_capture
+    from vault.writer import write_note
+    from vault.frontmatter import NoteMetadata
+    from llm.provider import LLMResponse
+    import storage.documents as docs
+
+    # Already-indexed file: write via write_note + seed DB with matching hash.
+    # On disk it stays unchanged → detect_changes classifies it as unchanged → skipped.
+    indexed = vault_root / "inbox" / "already-indexed.md"
+    wr = write_note(
+        indexed, "Indexed body unchanged.", NoteMetadata(summary="Indexed summary."), actor="ai"
+    )
+    assert isinstance(wr, Success)
+    docs.upsert(wr.value, db_path=db_path)
+
+    # Un-indexed file: on disk, NO DB row → detect_changes classifies it as added.
+    unindexed = vault_root / "inbox" / "brand-new.md"
+    unindexed.write_text("# Brand new\n\nNever captured before.\n", encoding="utf-8")
+
+    # Pass the cooldown/stability gate for both files.
+    mtime = max(indexed.stat().st_mtime, unindexed.stat().st_mtime)
+    monkeypatch.setattr("pipelines.capture.time", MagicMock(time=lambda: mtime + 120))
+
+    mock_provider = AsyncMock()
+    mock_provider.complete.side_effect = [
+        Success(LLMResponse(content="New file summary.", model="test", usage={})),
+        Success(LLMResponse(
+            content='{"title": "brand-new", "tags": ["type/capture"]}',
+            model="test",
+            usage={},
+        )),
+    ]
+    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+
+    result = await scan_capture(root=vault_root, db_path=db_path)
+
+    assert isinstance(result, Success)
+    # Only the un-indexed file was captured
+    assert len(result.value) == 1
+    # Provider ran for the new file only (summarize + metadata = 2 calls)
+    assert mock_provider.complete.call_count == 2
+    # Un-indexed file now carries the fresh summary
+    assert "New file summary." in unindexed.read_text(encoding="utf-8")
+    # Already-indexed file untouched — original summary preserved, no re-processing
+    indexed_text = indexed.read_text(encoding="utf-8")
+    assert "Indexed summary." in indexed_text
+    assert "New file summary." not in indexed_text

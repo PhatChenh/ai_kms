@@ -1,20 +1,28 @@
 # Behavior Inventory — AI-KMS
 # Living file. Edited in place, never recreated. Holds irreplaceable human state.
 # Last seeded: 2026-06-04 from current code + design docs.
+# Reconciled: 2026-06-05 — origin/granularity backfilled by code-match (Job 5);
+#   43 entries verified MATCH (origin: implementation), 1 conflict (P15-HDL-07).
 #
 # Schema per entry:
 #   id:             unique slug (phase prefix + number)
 #   behavior:       one-line description of observable outcome
 #   tier:           smoke | phase | full
 #   phase:          originating phase number or name
+#   origin:         design | implementation — WHO created this entry (provenance)
+#   granularity:    outcome | mechanism — WHAT level of detail
 #   trigger:        CLI command or event that fires this behavior
 #   fixtures:       list of files the setup script must create
 #   steps:          what the tester does (plain English)
 #   expected:       what must be true after (vault-visible for smoke/phase, DB/log for full)
+#   expected_design:         only populated when status: conflict (design intent)
+#   expected_implementation: only populated when status: conflict (what code does)
 #   spec_ref:       roadmap/spec clause or "NONE -- needs human"
 #   human_reviewed: yes | no
+#   last_tested:    null or ISO date of last manual test (e.g. "2026-06-05")
+#   last_result:    null or "pass" / "fail" / "pass — <observation>" / "fail — <observation>"
 #   pytest_ref:     test function path or null
-#   status:         active | planned | retired
+#   status:         active | planned | retired | conflict
 #   retired:        null or "<date>: <reason>"
 
 # ═══════════════════════════════════════════════════════════════
@@ -27,38 +35,49 @@
   behavior: ".md file captured in-place with AI summary in frontmatter"
   tier: smoke
   phase: 1
+  origin: implementation
+  granularity: outcome
   trigger: "kms capture <file.md>"
   fixtures:
     - inbox/test-md-capture.md
-  steps: "Run kms capture on a .md file with body text and no frontmatter"
-  expected: >
-    File stays at same path.
-    Frontmatter block added with summary: (non-empty), tags: (at least one type/ tag),
-    confidence: (float). Body text below --- unchanged.
+  steps: "`uv run kms capture inbox/test-md-capture.md`"
+  expected:
+    - "File stays at inbox/test-md-capture.md (not moved)"
+    - "Open file — frontmatter block (between --- markers) added at top"
+    - "summary: field present and non-empty"
+    - "tags: includes at least one type/ tag"
+    - "confidence: has a decimal number"
+    - "Body text below --- unchanged from original"
   spec_ref: "roadmap §Phase1 'capture pipeline: markdown in-place'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_capture.py::test_capture_file_md_end_to_end_returns_write_outcome"
   status: active
   retired: null
 
 - id: P1-CAP-02
-  behavior: "PDF creates sibling .md summary + binary relocated to attachment/"
+  behavior: "PDF already in a project folder creates sibling .md and moves binary to attachment/"
   tier: smoke
   phase: 1
-  trigger: "kms capture <file.pdf>"
+  origin: implementation
+  granularity: outcome
+  trigger: "kms capture <Projects/Alpha/sample-report.pdf>"
   fixtures:
-    - inbox/sample-report.pdf
-  steps: "Run kms capture on a PDF in inbox/"
-  expected: >
-    inbox/sample-report.pdf is GONE.
-    Binary appears at Projects/<A>/attachment/sample-report.pdf or
-    stays in inbox/ (CLUELESS).
-    Sibling .md at <parent>/attachment/.summaries/sample-report.pdf.md
-    with frontmatter: attachment_path pointing to binary, type: attachment-summary,
-    summary: non-empty.
+    - Projects/Alpha/sample-report.pdf
+  steps: "`uv run kms capture Projects/Alpha/sample-report.pdf`"
+  expected:
+    - "Projects/Alpha/sample-report.pdf is GONE from Projects/Alpha/ (moved to attachment/)"
+    - "Binary appears at `Projects/Alpha/attachment/sample-report.pdf`"
+    - "Sibling .md at `Projects/Alpha/attachment/.summaries/sample-report.pdf.md`"
+    - "Sibling frontmatter has attachment_path: pointing to binary location"
+    - "Sibling frontmatter has type: attachment-summary"
+    - "Sibling frontmatter has summary: (non-empty)"
   spec_ref: "roadmap §Phase1 'non-md -> sibling summary'"
-  human_reviewed: no
-  pytest_ref: null
+  human_reviewed: yes
+  last_tested: "2026-06-05"
+  last_result: "passed"
+  pytest_ref: "tests/test_pipelines/test_capture_phase12.py::test_store_nonmd_located_happy_path_documents_row"
   status: active
   retired: null
 
@@ -66,16 +85,22 @@
   behavior: "Body text of .md file preserved exactly after capture"
   tier: smoke
   phase: 1
+  origin: implementation
+  granularity: outcome
   trigger: "kms capture <file.md>"
   fixtures:
     - inbox/test-body-preservation.md
-  steps: "Run kms capture on .md with known body text. Compare body before/after."
-  expected: >
-    Body text below second --- is byte-identical to original.
-    summary: appears only in frontmatter, never injected into body.
+  steps:
+    - "Note down the body text of inbox/test-body-preservation.md before running"
+    - "`uv run kms capture inbox/test-body-preservation.md`"
+  expected:
+    - "Body text below second --- is byte-identical to original"
+    - "summary: appears only inside frontmatter (between --- markers), never in body"
   spec_ref: "roadmap §Phase1 'frontmatter-only writes'"
-  human_reviewed: no
-  pytest_ref: null
+  human_reviewed: yes
+  last_tested: "2026-06-05"
+  last_result: "passed"
+  pytest_ref: "tests/test_handlers/test_markdown_handler.py::test_extract_body_text_matches_known_body"
   status: active
   retired: null
 
@@ -83,17 +108,25 @@
   behavior: "Re-capture does not rename already-captured .md file (rename gate Rule 1)"
   tier: smoke
   phase: 1
+  origin: implementation
+  granularity: outcome
   trigger: "kms capture <file.md> (second run)"
   fixtures:
     - inbox/test-rename-gate.md
-  steps: "Capture file once (creates DB record). Capture same file again."
-  expected: >
-    File keeps original name after second capture.
-    summary: may update but filename unchanged.
-    No duplicate file appears.
+  steps:
+    - "Run once:"
+    - "`uv run kms capture inbox/test-rename-gate.md`"
+    - "Then run again without editing the file:"
+    - "`uv run kms capture inbox/test-rename-gate.md`"
+  expected:
+    - "File keeps original name test-rename-gate.md after second capture"
+    - "summary: may update but filename unchanged"
+    - "No duplicate file appears on disk"
   spec_ref: "roadmap §Phase1 'rename gate: skip already-captured'"
-  human_reviewed: no
-  pytest_ref: null
+  human_reviewed: yes
+  last_tested: "2026-06-05"
+  last_result: "passed"
+  pytest_ref: "tests/test_pipelines/test_capture_rename.py::test_rename_gate_skip_on_recapture"
   status: active
   retired: null
 
@@ -101,35 +134,51 @@
   behavior: "Scan captures un-indexed .md files, skips already-indexed"
   tier: smoke
   phase: 1
+  origin: implementation
+  granularity: outcome
   trigger: "kms capture --scan"
   fixtures:
+    - inbox/test-md-capture.md
     - inbox/test-scan-uncaptured.md
-  steps: "Capture one file manually. Drop a second file. Run kms capture --scan."
-  expected: >
-    Second file gets summary: in frontmatter.
-    First file's summary: unchanged (not re-processed).
+  steps:
+    - "Both files are in inbox. Capture test-md-capture.md first to get it indexed:"
+    - "`uv run kms capture inbox/test-md-capture.md`"
+    - "Now run scan — test-scan-uncaptured.md is in inbox but not yet indexed:"
+    - "`uv run kms capture --scan`"
+  expected:
+    - "test-scan-uncaptured.md gets summary: in frontmatter"
+    - "test-md-capture.md summary: unchanged (not re-processed)"
   spec_ref: "roadmap §Phase1 'scan_capture: added loop'"
-  human_reviewed: no
-  pytest_ref: null
+  human_reviewed: yes
+  last_tested: "2026-06-05"
+  last_result: "passed"
+  pytest_ref: "tests/test_pipelines/test_capture_phase10.py::test_scan_capture_added_unindexed_captured_indexed_unchanged_skipped"
   status: active
   retired: null
 
 # --- Phase tier (test when capture code changes) ---
 
 - id: P1-CAP-06
-  behavior: "DOCX file creates sibling .md summary"
+  behavior: "DOCX file dropped in inbox creates pending-routing marker (no summary yet)"
   tier: phase
   phase: 1
-  trigger: "kms capture <file.docx>"
+  origin: implementation
+  granularity: outcome
+  trigger: "kms capture <inbox/file.docx>"
   fixtures:
     - inbox/q3-planning-brief.docx
-  steps: "Run kms capture on a .docx file in inbox/"
-  expected: >
-    Sibling .md created with summary: in frontmatter.
-    Original .docx moved out of inbox/.
+  steps: "`uv run kms capture inbox/q3-planning-brief.docx`"
+  expected:
+    - "q3-planning-brief.docx stays in inbox/ (not moved)"
+    - "Sibling .md created at inbox/.summaries/q3-planning-brief.docx.md"
+    - "Sibling frontmatter has type: attachment-summary"
+    - "Sibling frontmatter has status: pending-routing"
+    - "Sibling frontmatter has NO summary: field (deferred to Phase 2 Classify)"
   spec_ref: "roadmap §Phase1 'handler: docx'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_handlers/test_docx_handler.py::test_extract_returns_success_with_raw_content"
   status: active
   retired: null
 
@@ -137,17 +186,23 @@
   behavior: "Watcher auto-captures new file drops"
   tier: phase
   phase: 1
+  origin: implementation
+  granularity: outcome
   trigger: "kms watch + file created"
   fixtures:
     - inbox/auto-capture-test.md
-  steps: >
-    Start kms watch in one terminal.
-    Create a new .md file in inbox/ from another terminal.
-    Wait ~10 seconds.
-  expected: >
-    New file gets summary: in frontmatter without manual kms capture.
+  steps:
+    - "In Terminal 1, start the watcher:"
+    - "`uv run kms watch`"
+    - "In Terminal 2, copy the fixture to inbox/ and wait ~10 seconds:"
+    - "`cp tests/fixtures/auto-capture-test.md <vault>/inbox/`"
+  expected:
+    - "auto-capture-test.md gets summary: in frontmatter automatically"
+    - "No manual kms capture was needed"
   spec_ref: "roadmap §Phase1 'watcher auto-capture'"
   human_reviewed: no
+  last_tested: null
+  last_result: null
   pytest_ref: null
   status: active
   retired: null
@@ -156,16 +211,20 @@
   behavior: "Gibberish-named PDF gets FULL_RENAME to AI-chosen title"
   tier: phase
   phase: 1
+  origin: implementation
+  granularity: outcome
   trigger: "kms capture <gibberish.pdf>"
   fixtures:
     - inbox/xkjdhfs83.pdf
-  steps: "Run kms capture on a PDF with a gibberish filename"
-  expected: >
-    Sibling .md has AI-chosen title (not xkjdhfs83).
-    Audit log shows rename_gate outcome=FULL_RENAME.
+  steps: "`uv run kms capture inbox/xkjdhfs83.pdf`"
+  expected:
+    - "Sibling .md has an AI-chosen title (not xkjdhfs83)"
+    - "Audit log shows rename_gate outcome=FULL_RENAME"
   spec_ref: "roadmap §Phase1 'rename gate: confidence routing'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_capture_rename.py::test_rename_gate_full_rename_on_illegible_binary"
   status: active
   retired: null
 
@@ -173,16 +232,25 @@
   behavior: "Idempotent capture — unchanged .md file skipped"
   tier: phase
   phase: 1
+  origin: implementation
+  granularity: outcome
   trigger: "kms capture <file.md> (same content)"
   fixtures:
     - inbox/test-idempotent.md
-  steps: "Capture a .md file. Run capture again without editing."
-  expected: >
-    Second run returns OK (SKIPPED). content_hash match → no LLM call.
-    summary: field identical.
+  steps:
+    - "Run once:"
+    - "`uv run kms capture inbox/test-idempotent.md`"
+    - "Then run again without editing the file:"
+    - "`uv run kms capture inbox/test-idempotent.md`"
+  expected:
+    - "Second run returns OK (SKIPPED) in terminal output"
+    - "content_hash match — no LLM call made"
+    - "summary: field identical to first capture"
   spec_ref: "roadmap §Phase1 'idempotent capture guard'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_capture.py::test_idempotent_md_unchanged_returns_skipped"
   status: active
   retired: null
 
@@ -190,18 +258,23 @@
   behavior: "CLUELESS routing — inbox binary gets pending-routing marker"
   tier: phase
   phase: 1
+  origin: implementation
+  granularity: outcome
   trigger: "kms capture <binary> (no project/domain context)"
   fixtures:
     - inbox/mystery-file.pdf
-  steps: "Run kms capture on a PDF in inbox/ with no project/domain hint"
-  expected: >
-    Binary stays in inbox/.
-    Marker .md at inbox/.summaries/<filename>.md with
-    status: pending-routing in frontmatter, type: attachment-summary.
-    Body contains placeholder text.
+  steps: "`uv run kms capture inbox/mystery-file.pdf` (no project/domain hint in filename or content)"
+  expected:
+    - "mystery-file.pdf stays in inbox/ (not moved)"
+    - "Marker .md created at inbox/.summaries/mystery-file.pdf.md"
+    - "Marker frontmatter has status: pending-routing"
+    - "Marker frontmatter has type: attachment-summary"
+    - "Marker body contains placeholder text (not a real summary)"
   spec_ref: "roadmap §Phase1.5 'CLUELESS pending-routing markers'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_capture_phase3.py::test_store_nonmd_clueless_inbox_binary_stays_pending_marker"
   status: active
   retired: null
 
@@ -209,15 +282,19 @@
   behavior: "URL enrichment — sparse note with URLs gets content fetched"
   tier: phase
   phase: 1
+  origin: implementation
+  granularity: outcome
   trigger: "kms capture <file.md> (body has URLs, < 500 chars)"
   fixtures:
     - inbox/test-url-note.md
-  steps: "Capture a .md file with a URL and minimal body text"
-  expected: >
-    Summary reflects content from the URL, not just the sparse body.
+  steps: "`uv run kms capture inbox/test-url-note.md` (file body has a URL and less than 500 chars of text)"
+  expected:
+    - "Open file — summary: reflects content from the URL, not just the sparse body text"
   spec_ref: "roadmap §Phase1 'enrich_urls stage'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_capture.py::test_enrich_urls_sparse_text_fetches_and_augments"
   status: active
   retired: null
 
@@ -227,15 +304,26 @@
   behavior: "Audit trail written for every capture decision"
   tier: full
   phase: 1
+  origin: implementation
+  granularity: mechanism
   trigger: "kms capture <any file>"
   fixtures: []
-  steps: "Capture any file. Query audit_log table."
-  expected: >
-    audit_log row with pipeline=capture, stage=metadata, outcome=CAPTURED.
-    correlation_id matches log output. Reasoning field non-empty.
+  steps:
+    - "Capture any file:"
+    - "`uv run kms capture inbox/test-md-capture.md`"
+    - "Then query the audit log:"
+    - "`sqlite3 data/kb.db \"SELECT * FROM audit_log ORDER BY rowid DESC LIMIT 5\"`"
+  expected:
+    - "audit_log row exists with pipeline=capture"
+    - "stage=metadata in the row"
+    - "outcome=CAPTURED"
+    - "correlation_id matches the ID shown in terminal output"
+    - "reasoning field is non-empty"
   spec_ref: "CONSTRAINTS.md C-12 'audit log non-negotiable'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_capture.py::test_metadata_writes_audit_log_row"
   status: active
   retired: null
 
@@ -243,15 +331,20 @@
   behavior: "Tag violation audited — invalid tags stripped and logged"
   tier: full
   phase: 1
+  origin: implementation
+  granularity: mechanism
   trigger: "kms capture <file.md> (LLM returns bad tag)"
   fixtures: []
-  steps: "Force a capture where LLM returns a tag not in tags.yaml taxonomy"
-  expected: >
-    audit_log row with stage=tag_violation, outcome=TAG_VIOLATION.
-    Bad tag removed from final tags list. Valid tags preserved.
+  steps: "Force a capture where LLM returns a tag not in tags.yaml taxonomy (developer test — requires mocking LLM response)"
+  expected:
+    - "audit_log row with stage=tag_violation, outcome=TAG_VIOLATION"
+    - "Bad tag removed from final tags list in frontmatter"
+    - "Valid tags preserved in frontmatter"
   spec_ref: "roadmap §Phase1 'tag validation against taxonomy'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_capture.py::test_metadata_with_violations_writes_two_audit_rows"
   status: active
   retired: null
 
@@ -259,15 +352,22 @@
   behavior: "File-lost guard — deleted file between event and pipeline"
   tier: full
   phase: 1
+  origin: implementation
+  granularity: mechanism
   trigger: "kms capture <path> (file deleted before pipeline reads)"
   fixtures: []
-  steps: "Trigger capture on a path that no longer exists on disk"
-  expected: >
-    Failure(recoverable=True) returned. audit_log row with
-    stage=file_lost, outcome=FILE_LOST. No DB row created.
+  steps:
+    - "Run capture on a path that does not exist on disk:"
+    - "`uv run kms capture inbox/nonexistent-file.md`"
+  expected:
+    - "Terminal shows Failure(recoverable=True)"
+    - "audit_log row with stage=file_lost, outcome=FILE_LOST"
+    - "No DB row created in documents table"
   spec_ref: "roadmap §Phase1.5 'FILE_LOST guard'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_capture.py::test_capture_file_entry_guard_fires_when_file_not_found"
   status: active
   retired: null
 
@@ -275,14 +375,22 @@
   behavior: "Cooldown gate rejects file still being written"
   tier: full
   phase: 1
+  origin: implementation
+  granularity: mechanism
   trigger: "kms capture <file> (mtime < cooldown_seconds ago)"
   fixtures: []
-  steps: "Capture a file immediately after writing it (within cooldown window)"
-  expected: >
-    Failure(recoverable=True). No LLM call. No DB row.
+  steps:
+    - "Write a new file to inbox/, then immediately run capture (within the cooldown window, before mtime ages):"
+    - "`uv run kms capture inbox/<that-file>.md`"
+  expected:
+    - "Terminal shows Failure(recoverable=True)"
+    - "No LLM call made"
+    - "No DB row created in documents table"
   spec_ref: "roadmap §Phase1 'cooldown gate'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_capture_phase3.py::test_capture_file_rejects_too_recent_file"
   status: active
   retired: null
 
@@ -290,15 +398,24 @@
   behavior: "Pending-routing guard blocks re-capture of CLUELESS binary"
   tier: full
   phase: 1
+  origin: implementation
+  granularity: mechanism
   trigger: "kms capture <binary> (already has pending-routing marker)"
   fixtures: []
-  steps: "Capture a CLUELESS binary once, then capture again"
-  expected: >
-    Second capture returns Failure(recoverable=True).
-    No duplicate marker created. No LLM call.
+  steps:
+    - "Run once to create the CLUELESS marker:"
+    - "`uv run kms capture inbox/mystery-file.pdf`"
+    - "Then run again without changing anything:"
+    - "`uv run kms capture inbox/mystery-file.pdf`"
+  expected:
+    - "Second capture returns Failure(recoverable=True)"
+    - "No duplicate marker .md created"
+    - "No LLM call made on second run"
   spec_ref: "roadmap §Phase1.5 'pending-routing guard'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_capture_phase3.py::test_capture_file_skips_pending_routing_binary"
   status: active
   retired: null
 
@@ -312,16 +429,20 @@
   behavior: "Note in Domain/ folder gets domain/<D> tag"
   tier: smoke
   phase: 1.5
+  origin: implementation
+  granularity: outcome
   trigger: "kms capture <Domain/Finance/note.md>"
   fixtures:
     - Domain/Finance/test-domain-tag.md
-  steps: "Run kms capture on a .md file under Domain/Finance/"
-  expected: >
-    Frontmatter tags: contains domain/Finance.
-    No domain: scalar field (only tag).
+  steps: "`uv run kms capture Domain/Finance/test-domain-tag.md`"
+  expected:
+    - "Open file — frontmatter tags: contains domain/Finance"
+    - "No domain: scalar field in frontmatter (only the tag)"
   spec_ref: "roadmap §Phase1.5 'apply_location_tags: domain'"
-  human_reviewed: no
-  pytest_ref: null
+  human_reviewed: yes
+  last_tested: "2026-06-05"
+  last_result: "passed"
+  pytest_ref: "tests/test_pipelines/test_capture.py::test_apply_location_tags_domain_file_adds_tag"
   status: active
   retired: null
 
@@ -329,15 +450,19 @@
   behavior: "Note in Projects/ folder gets project field"
   tier: smoke
   phase: 1.5
+  origin: implementation
+  granularity: outcome
   trigger: "kms capture <Projects/Alpha/note.md>"
   fixtures:
     - Projects/Alpha/test-project-tag.md
-  steps: "Run kms capture on a .md file under Projects/Alpha/"
-  expected: >
-    Frontmatter has project: Alpha.
+  steps: "`uv run kms capture Projects/Alpha/test-project-tag.md`"
+  expected:
+    - "Open file — frontmatter has project: Alpha"
   spec_ref: "roadmap §Phase1.5 'apply_location_tags: project'"
-  human_reviewed: no
-  pytest_ref: null
+  human_reviewed: yes
+  last_tested: "2026-06-05"
+  last_result: "passed"
+  pytest_ref: "tests/test_pipelines/test_capture.py::test_apply_location_tags_project_file_sets_ai_project"
   status: active
   retired: null
 
@@ -347,18 +472,22 @@
   behavior: "Reconcile removes stale domain tag when folder deleted"
   tier: phase
   phase: 1.5
+  origin: implementation
+  granularity: outcome
   trigger: "kms reconcile"
   fixtures:
     - inbox/test-stale-domain-tag.md
-  steps: >
-    Create a note with domain/OldDomain tag but no Domain/OldDomain/ folder exists.
-    Run kms reconcile.
-  expected: >
-    domain/OldDomain tag removed from frontmatter.
-    Other tags preserved.
+  steps:
+    - "Place inbox/test-stale-domain-tag.md with a domain/OldDomain tag in frontmatter (but no Domain/OldDomain/ folder exists on disk). Then run reconcile:"
+    - "`uv run kms reconcile`"
+  expected:
+    - "Open file — domain/OldDomain tag removed from frontmatter"
+    - "Other tags preserved"
   spec_ref: "roadmap §Phase1.5 'reconcile_stale_tags: remove stale'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_reconcile.py::test_reconcile_stale_tags_removes_stale_domain_tag"
   status: active
   retired: null
 
@@ -366,18 +495,22 @@
   behavior: "Reconcile adds missing domain tag for note in Domain/ folder"
   tier: phase
   phase: 1.5
+  origin: implementation
+  granularity: outcome
   trigger: "kms reconcile"
   fixtures:
     - Domain/Engineering/test-missing-domain-tag.md
-  steps: >
-    Place a note under Domain/Engineering/ without domain/Engineering tag.
-    Run kms reconcile.
-  expected: >
-    domain/Engineering tag added to frontmatter.
-    Body unchanged.
+  steps:
+    - "Place Domain/Engineering/test-missing-domain-tag.md without a domain/Engineering tag in frontmatter. Then run reconcile:"
+    - "`uv run kms reconcile`"
+  expected:
+    - "Open file — domain/Engineering tag added to frontmatter"
+    - "Body text unchanged"
   spec_ref: "roadmap §Phase1.5 'reconcile_stale_tags: add missing'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_reconcile.py::test_reconcile_stale_tags_adds_missing_domain_tag"
   status: active
   retired: null
 
@@ -385,18 +518,23 @@
   behavior: "Reconcile captures orphan binaries missing sibling .md"
   tier: phase
   phase: 1.5
+  origin: implementation
+  granularity: outcome
   trigger: "kms reconcile"
   fixtures:
     - Projects/Alpha/attachment/orphan-report.pdf
-  steps: >
-    Place a PDF in attachment/ without any .summaries/<name>.md sibling.
-    Run kms reconcile.
-  expected: >
-    Sibling .md created at Projects/Alpha/attachment/.summaries/orphan-report.pdf.md
-    with summary and attachment_path pointer.
+  steps:
+    - "Place Projects/Alpha/attachment/orphan-report.pdf on disk without any .summaries/orphan-report.pdf.md sibling. Then run reconcile:"
+    - "`uv run kms reconcile`"
+  expected:
+    - "Sibling .md created at Projects/Alpha/attachment/.summaries/orphan-report.pdf.md"
+    - "Sibling frontmatter has summary: (non-empty)"
+    - "Sibling frontmatter has attachment_path: pointing to orphan-report.pdf"
   spec_ref: "roadmap §Phase1.5 'reconcile_orphan_binaries'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_reconcile.py::test_reconcile_orphan_binaries_captures_binary_without_sibling"
   status: active
   retired: null
 
@@ -404,17 +542,22 @@
   behavior: "Reconcile deletes orphan sibling when binary is gone"
   tier: phase
   phase: 1.5
+  origin: implementation
+  granularity: outcome
   trigger: "kms reconcile"
   fixtures:
     - Projects/Alpha/attachment/.summaries/deleted-file.pdf.md
-  steps: >
-    Create a sibling .md with type: attachment-summary but no corresponding
-    binary at attachment_path. Run kms reconcile.
-  expected: >
-    Orphan sibling .md deleted from disk and DB row removed.
+  steps:
+    - "Place Projects/Alpha/attachment/.summaries/deleted-file.pdf.md on disk (with type: attachment-summary in frontmatter) but NO corresponding binary at the attachment_path. Then run reconcile:"
+    - "`uv run kms reconcile`"
+  expected:
+    - "Orphan sibling deleted-file.pdf.md deleted from disk"
+    - "DB row for deleted-file.pdf.md removed from documents table"
   spec_ref: "roadmap §Phase1.5 'reconcile_orphan_siblings'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_reconcile.py::test_reconcile_orphan_siblings_removes_ghost_when_binary_gone"
   status: active
   retired: null
 
@@ -422,16 +565,22 @@
   behavior: "Reconcile clears stale batch_id when doc moved away from batch destination"
   tier: phase
   phase: 1.5
+  origin: implementation
+  granularity: mechanism
   trigger: "kms reconcile"
   fixtures: []
-  steps: >
-    Move a document that has batch_id set to a folder not matching
-    batch destination. Run kms reconcile.
-  expected: >
-    batch_id set to NULL in documents table.
+  steps:
+    - "Move a document with batch_id set to a folder not matching the batch destination. Run reconcile:"
+    - "`uv run kms reconcile`"
+    - "Then verify the batch_id was cleared:"
+    - "`sqlite3 data/kb.db \"SELECT vault_path, batch_id FROM documents WHERE batch_id IS NOT NULL\"`"
+  expected:
+    - "batch_id set to NULL in documents table for the moved document"
   spec_ref: "roadmap §Phase1.5 'reconcile_stale_batch_refs'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_reconcile.py::test_stale_batch_refs_file_moved_away"
   status: active
   retired: null
 
@@ -439,15 +588,20 @@
   behavior: "XLSX file captured with sibling .md"
   tier: phase
   phase: 1.5
+  origin: implementation
+  granularity: outcome
   trigger: "kms capture <file.xlsx>"
   fixtures:
     - inbox/q2-budget.xlsx
-  steps: "Run kms capture on an .xlsx file"
-  expected: >
-    Sibling .md created with summary. Binary moved out of inbox/.
+  steps: "`uv run kms capture inbox/q2-budget.xlsx`"
+  expected:
+    - "Sibling .md created with summary: in frontmatter"
+    - "q2-budget.xlsx moved out of inbox/"
   spec_ref: "roadmap §Phase1.5 'handler: xlsx'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_handlers/test_xlsx_handler.py::test_single_sheet_has_data_rows"
   status: active
   retired: null
 
@@ -455,15 +609,20 @@
   behavior: "PPTX file captured with sibling .md"
   tier: phase
   phase: 1.5
+  origin: implementation
+  granularity: outcome
   trigger: "kms capture <file.pptx>"
   fixtures:
     - inbox/deck.pptx
-  steps: "Run kms capture on a .pptx file"
-  expected: >
-    Sibling .md created with summary. Binary moved out of inbox/.
+  steps: "`uv run kms capture inbox/deck.pptx`"
+  expected:
+    - "Sibling .md created with summary: in frontmatter"
+    - "deck.pptx moved out of inbox/"
   spec_ref: "roadmap §Phase1.5 'handler: pptx'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_handlers/test_pptx_handler.py::test_slide_without_title_has_plain_header"
   status: active
   retired: null
 
@@ -471,15 +630,19 @@
   behavior: "CSV file captured with sibling .md"
   tier: phase
   phase: 1.5
+  origin: implementation
+  granularity: outcome
   trigger: "kms capture <file.csv>"
   fixtures:
     - inbox/data.csv
-  steps: "Run kms capture on a .csv file"
-  expected: >
-    Sibling .md created with summary.
+  steps: "`uv run kms capture inbox/data.csv`"
+  expected:
+    - "Sibling .md created with summary: in frontmatter"
   spec_ref: "roadmap §Phase1.5 'handler: csv'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_handlers/test_csv_handler.py::test_valid_csv_returns_success"
   status: active
   retired: null
 
@@ -487,15 +650,19 @@
   behavior: "HTML file captured with sibling .md"
   tier: phase
   phase: 1.5
+  origin: implementation
+  granularity: outcome
   trigger: "kms capture <file.html>"
   fixtures:
     - inbox/page.html
-  steps: "Run kms capture on an .html file"
-  expected: >
-    Sibling .md created with summary.
+  steps: "`uv run kms capture inbox/page.html`"
+  expected:
+    - "Sibling .md created with summary: in frontmatter"
   spec_ref: "roadmap §Phase1.5 'handler: html'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_handlers/test_html_handler.py::test_valid_html_returns_success"
   status: active
   retired: null
 
@@ -503,15 +670,20 @@
   behavior: "EML email file captured with sibling .md"
   tier: phase
   phase: 1.5
+  origin: implementation
+  granularity: outcome
   trigger: "kms capture <file.eml>"
   fixtures:
     - inbox/message.eml
-  steps: "Run kms capture on an .eml file"
-  expected: >
-    Sibling .md created with summary including from/to/subject.
+  steps: "`uv run kms capture inbox/message.eml`"
+  expected:
+    - "Sibling .md created with summary: in frontmatter"
+    - "Summary mentions from/to/subject from the email"
   spec_ref: "roadmap §Phase1.5 'handler: eml'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_handlers/test_eml_handler.py::test_simple_eml_returns_success"
   status: active
   retired: null
 
@@ -519,15 +691,20 @@
   behavior: "MSG Outlook file captured with sibling .md"
   tier: phase
   phase: 1.5
+  origin: implementation
+  granularity: outcome
   trigger: "kms capture <file.msg>"
   fixtures:
     - inbox/outlook-msg.msg
-  steps: "Run kms capture on a .msg file"
-  expected: >
-    Sibling .md created with summary including from/to/subject.
+  steps: "`uv run kms capture inbox/outlook-msg.msg`"
+  expected:
+    - "Sibling .md created with summary: in frontmatter"
+    - "Summary mentions from/to/subject from the email"
   spec_ref: "roadmap §Phase1.5 'handler: msg'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_handlers/test_msg_handler.py::test_valid_msg_returns_success"
   status: active
   retired: null
 
@@ -535,36 +712,50 @@
   behavior: "PNG/JPG image file captured with sibling .md"
   tier: phase
   phase: 1.5
+  origin: design
+  granularity: outcome
   trigger: "kms capture <file.png>"
   fixtures:
     - inbox/screenshot.png
-  steps: "Run kms capture on an image file"
-  expected: >
+  steps: "`uv run kms capture inbox/screenshot.png`"
+  expected:
+    - "Sibling .md created with summary (OCR text or filename-based)"
+  expected_design: >
     Sibling .md created with summary (OCR text or filename-based).
+  expected_implementation: >
+    NOT implemented. PngHandler/JpgHandler.extract() return
+    Failure("image extraction requires a vision-capable LLM — not yet implemented",
+    recoverable=False) at src/handlers/image_handler.py:21-26 and :30-38.
+    No sibling .md is created; no summary is produced. Images are NOT captured.
   spec_ref: "roadmap §Phase1.5 'handler: image'"
-  human_reviewed: no
-  pytest_ref: null
-  status: active
+  human_reviewed: yes
+  last_tested: "2026-06-05"
+  last_result: "failed - img LLM not yet implemented"
+  pytest_ref: "tests/test_handlers/test_image_handler.py::test_always_returns_failure"
+  status: conflict
   retired: null
 
 - id: P15-FOLD-01
   behavior: "Folder dropped in inbox classified and routed by LLM"
   tier: phase
   phase: 1.5
+  origin: implementation
+  granularity: outcome
   trigger: "kms capture --scan (folder in inbox/) or watcher folder event"
   fixtures:
     - inbox/new-project-folder/file1.md
     - inbox/new-project-folder/file2.pdf
-  steps: >
-    Create a folder in inbox/ with 2+ files. Run kms capture --scan
-    or wait for watcher folder-stable event.
-  expected: >
-    Folder moved to Projects/<name>/ or Domain/<name>/ (AUTO),
-    or stays in inbox/ with PENDING_REVIEW/CLUELESS status.
-    batches table row created with destination + confidence.
+  steps:
+    - "Create inbox/new-project-folder/ with inbox/new-project-folder/file1.md and inbox/new-project-folder/file2.pdf inside. Then run scan:"
+    - "`uv run kms capture --scan`"
+  expected:
+    - "Folder moved to `Projects/<name>/` or `Domain/<name>/` (AUTO confidence) OR stays in inbox/ with PENDING_REVIEW/CLUELESS status"
+    - "Query `sqlite3 data/kb.db \"SELECT * FROM batches ORDER BY rowid DESC LIMIT 5\"` — row created with destination and confidence"
   spec_ref: "roadmap §Phase1.5 'folder drop classification'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_capture_folder.py::test_inbox_auto_confidence_moves_folder_and_captures_files"
   status: active
   retired: null
 
@@ -574,16 +765,24 @@
   behavior: "Watcher binary-delete sync — sibling cleaned up"
   tier: full
   phase: 1.5
+  origin: implementation
+  granularity: mechanism
   trigger: "Delete a binary file while kms watch running"
   fixtures: []
-  steps: "Start watcher. Delete a binary from attachment/. Wait 5s."
-  expected: >
-    Sibling .md at .summaries/<binary.name>.md deleted.
-    DB row for sibling removed.
-    audit_log: watcher:binary_delete (SIBLING_ORPHANED).
+  steps:
+    - "In Terminal 1, start the watcher:"
+    - "`uv run kms watch`"
+    - "In Terminal 2, delete a binary from `Projects/<A>/attachment/` and wait ~5 seconds:"
+    - "`rm <vault>/Projects/Alpha/attachment/report.pdf`"
+  expected:
+    - "Sibling .md at `.summaries/<binary.name>.md` deleted from disk"
+    - "DB row for sibling removed from documents table"
+    - "audit_log row with stage=watcher:binary_delete, outcome=SIBLING_ORPHANED"
   spec_ref: "roadmap §Phase1.5 'binary sync on delete'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_vault/test_watcher.py::test_on_deleted_binary_removes_sibling_from_db"
   status: active
   retired: null
 
@@ -591,16 +790,24 @@
   behavior: "Watcher binary-rename sync — sibling renamed"
   tier: full
   phase: 1.5
+  origin: implementation
+  granularity: mechanism
   trigger: "Rename a binary file while kms watch running"
   fixtures: []
-  steps: "Start watcher. Rename old.pdf to new.pdf in same attachment/ folder."
-  expected: >
-    Sibling renamed from old.pdf.md to new.pdf.md.
-    attachment_path in sibling frontmatter updated.
-    DB row path + attachment_path updated.
+  steps:
+    - "In Terminal 1, start the watcher:"
+    - "`uv run kms watch`"
+    - "In Terminal 2, rename a binary in attachment/ and wait ~5 seconds:"
+    - "`mv <vault>/Projects/Alpha/attachment/old.pdf <vault>/Projects/Alpha/attachment/new.pdf`"
+  expected:
+    - "Sibling renamed from old.pdf.md to new.pdf.md in .summaries/"
+    - "Open sibling — attachment_path in frontmatter updated to new.pdf"
+    - "DB row path and attachment_path both updated"
   spec_ref: "roadmap §Phase1.5 'binary sync on rename'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_vault/test_watcher.py::test_on_moved_binary_same_folder_renames_sibling"
   status: active
   retired: null
 
@@ -608,15 +815,24 @@
   behavior: "Watcher binary cross-folder move — old sibling orphaned"
   tier: full
   phase: 1.5
+  origin: implementation
+  granularity: mechanism
   trigger: "Move binary between attachment/ folders while kms watch running"
   fixtures: []
-  steps: "Start watcher. Move file.pdf from Projects/A/attachment/ to Projects/B/attachment/."
-  expected: >
-    Old sibling .md deleted. DB row for old sibling removed.
-    New orphan binary picked up on next reconcile.
+  steps:
+    - "In Terminal 1, start the watcher:"
+    - "`uv run kms watch`"
+    - "In Terminal 2, move a binary across folders and wait ~5 seconds:"
+    - "`mv <vault>/Projects/A/attachment/file.pdf <vault>/Projects/B/attachment/file.pdf`"
+  expected:
+    - "Old sibling .md in Projects/A/attachment/.summaries/ deleted"
+    - "DB row for old sibling removed"
+    - "New orphan binary in Projects/B/attachment/ picked up on next `uv run kms reconcile`"
   spec_ref: "roadmap §Phase1.5 'binary sync cross-folder'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_vault/test_watcher.py::test_on_moved_binary_different_folder_orphans_old_sibling"
   status: active
   retired: null
 
@@ -624,15 +840,23 @@
   behavior: "Reconcile stage 3 — re-summarize stale binaries"
   tier: full
   phase: 1.5
+  origin: implementation
+  granularity: mechanism
   trigger: "kms reconcile"
   fixtures: []
-  steps: "Modify a binary (change mtime > sibling mtime). Run reconcile."
-  expected: >
-    Sibling .md re-summarized with updated content.
-    DB row updated.
+  steps:
+    - "Update a binary's mtime so it is newer than its sibling .md:"
+    - "`touch <vault>/Projects/Alpha/attachment/report.pdf`"
+    - "Then run reconcile:"
+    - "`uv run kms reconcile`"
+  expected:
+    - "Sibling .md re-summarized with updated content"
+    - "DB row updated with new content_hash"
   spec_ref: "roadmap §Phase1.5 'reconcile_stale_binaries'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_reconcile.py::test_reconcile_stale_binaries_recaptures_when_binary_newer"
   status: active
   retired: null
 
@@ -640,15 +864,23 @@
   behavior: "Debounce coalescing — rapid file events produce single capture"
   tier: full
   phase: 1.5
+  origin: implementation
+  granularity: mechanism
   trigger: "kms watch + rapid file saves"
   fixtures: []
-  steps: "Start watcher. Save same file 5 times within 1 second."
-  expected: >
-    Only one capture_file call fires (after 3.0s debounce window).
-    No duplicate DB rows.
+  steps:
+    - "In Terminal 1, start the watcher:"
+    - "`uv run kms watch`"
+    - "In Terminal 2, save the same file 5 times within 1 second:"
+    - "`for i in 1 2 3 4 5; do touch <vault>/inbox/test.md; done`"
+  expected:
+    - "Only one capture_file call fires (after 3.0s debounce window)"
+    - "No duplicate DB rows in documents table"
   spec_ref: "roadmap §Phase1 'watcher debounce'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_vault/test_watcher.py::test_debounce_rapid_creates_fire_once"
   status: active
   retired: null
 
@@ -656,15 +888,21 @@
   behavior: "Scan skips .summaries/ paths in added loop"
   tier: full
   phase: 1.5
+  origin: implementation
+  granularity: mechanism
   trigger: "kms capture --scan"
   fixtures: []
-  steps: "Run scan with .summaries/ sibling files already on disk"
-  expected: >
-    Sibling .md files inside .summaries/ NOT re-captured.
-    No rename or identity wipe.
+  steps:
+    - "Ensure .summaries/ sibling files exist on disk (from a prior capture). Then run scan:"
+    - "`uv run kms capture --scan`"
+  expected:
+    - "Sibling .md files inside .summaries/ NOT re-captured"
+    - "No rename or identity wipe on existing siblings"
   spec_ref: "CLAUDE.md 'scan_capture modified loop skips .summaries/'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_capture_phase9.py::test_scan_capture_skips_summaries_in_modified_loop"
   status: active
   retired: null
 
@@ -676,16 +914,24 @@
   behavior: "Capture populates project, status, key_topics DB columns"
   tier: phase
   phase: pre-2
+  origin: implementation
+  granularity: mechanism
   trigger: "kms capture <Projects/Alpha/note.md>"
   fixtures:
     - Projects/Alpha/test-db-columns.md
-  steps: "Capture a note under Projects/Alpha/. Query documents table."
-  expected: >
-    DB row has project=Alpha. key_topics contains JSON array
-    of topic tags. status column present (may be NULL).
+  steps:
+    - "`uv run kms capture Projects/Alpha/test-db-columns.md`"
+    - "Then query the DB to verify columns:"
+    - "`sqlite3 data/kb.db \"SELECT vault_path, project, status, key_topics FROM documents WHERE vault_path LIKE '%test-db-columns%'\"`"
+  expected:
+    - "DB row has project=Alpha"
+    - "key_topics contains a JSON array of topic tags"
+    - "status column present (may be NULL)"
   spec_ref: "roadmap §Phase-Pre-2 'TD-008 documents columns'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_capture_phase12.py::test_store_nonmd_located_happy_path_documents_row"
   status: active
   retired: null
 
@@ -693,16 +939,20 @@
   behavior: "Old domain: scalar stripped on re-write (lazy migration)"
   tier: phase
   phase: pre-2
+  origin: implementation
+  granularity: outcome
   trigger: "kms capture <file with domain: scalar>"
   fixtures:
     - inbox/test-old-domain-scalar.md
-  steps: "Capture a .md that has domain: finance in frontmatter"
-  expected: >
-    domain: scalar key GONE from frontmatter after capture.
-    domain/Finance in tags: list preserved (if present).
+  steps: "`uv run kms capture inbox/test-old-domain-scalar.md` (file has domain: finance in existing frontmatter)"
+  expected:
+    - "Open file — domain: scalar key GONE from frontmatter"
+    - "domain/Finance in tags: list preserved (if it was present before)"
   spec_ref: "roadmap §Phase-Pre-2 'TD-038 deprecated keys filter'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_vault/test_frontmatter.py::test_dumps_strips_deprecated_domain_key"
   status: active
   retired: null
 
@@ -714,14 +964,21 @@
   behavior: "No-edit binary (PDF/PNG/JPG) routed to attachment/"
   tier: phase
   phase: vault-restructure
+  origin: implementation
+  granularity: outcome
   trigger: "kms capture <no-edit binary>"
   fixtures: []
-  steps: "Capture a PDF — should route to attachment/ subfolder"
-  expected: >
-    Binary at Projects/<A>/attachment/<file>. Same as current behavior.
+  steps:
+    - "Run capture on a no-edit binary such as a PDF or PNG:"
+    - "`uv run kms capture inbox/<no-edit-file>.pdf`"
+  expected:
+    - "Binary routed to `Projects/<A>/attachment/<file>` (hidden from Obsidian)"
+    - "Same routing as before vault-restructure"
   spec_ref: "ADR-0006 'no-edit → attachment/'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_capture.py::test_noedit_in_attachment_no_move"
   status: active
   retired: null
 
@@ -729,15 +986,21 @@
   behavior: "Editable binary (XLSX/DOCX/PPTX) routed to project/domain root"
   tier: phase
   phase: vault-restructure
+  origin: implementation
+  granularity: outcome
   trigger: "kms capture <editable binary>"
   fixtures: []
-  steps: "Capture an XLSX — should route to project root, not attachment/"
-  expected: >
-    Binary at Projects/<A>/<file>.xlsx (visible in Obsidian).
-    Sibling .md at Projects/<A>/.summaries/<file>.xlsx.md.
+  steps:
+    - "Run capture on an editable binary such as an XLSX, DOCX, or PPTX:"
+    - "`uv run kms capture inbox/<editable-file>.xlsx`"
+  expected:
+    - "Binary routed to `Projects/<A>/<file>.xlsx` (visible in Obsidian, NOT in attachment/)"
+    - "Sibling .md at `Projects/<A>/.summaries/<file>.xlsx.md`"
   spec_ref: "ADR-0006 'editable → root'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_capture.py::test_editable_in_attachment_moved_to_root"
   status: active
   retired: null
 
@@ -745,14 +1008,21 @@
   behavior: "Watcher and scan skip AI-output folders (Briefings/Synthesis/Documentation)"
   tier: phase
   phase: vault-restructure
+  origin: implementation
+  granularity: outcome
   trigger: "kms capture --scan or kms watch"
   fixtures: []
-  steps: "Place a file in Briefings/. Run scan or let watcher see it."
-  expected: >
-    File NOT captured. No DB row created.
+  steps:
+    - "Place a .md file in the Briefings/ folder. Then run scan:"
+    - "`uv run kms capture --scan`"
+  expected:
+    - "File in Briefings/ NOT captured (skipped)"
+    - "No DB row created in documents table for the file"
   spec_ref: "ADR-0006 'capture-excluded folders'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_vault/test_watcher.py::test_should_skip_logs_debug_for_ai_output"
   status: active
   retired: null
 
@@ -760,15 +1030,21 @@
   behavior: "Misplaced binary re-homed to correct placement"
   tier: phase
   phase: vault-restructure
+  origin: implementation
+  granularity: outcome
   trigger: "kms reconcile (stage 7)"
   fixtures: []
-  steps: "Place editable file in attachment/. Run reconcile."
-  expected: >
-    File moved from attachment/ to project root.
-    Sibling .md path updated.
+  steps:
+    - "Place an editable file (e.g. .xlsx) in `Projects/<A>/attachment/` (wrong location). Then run reconcile:"
+    - "`uv run kms reconcile`"
+  expected:
+    - "File moved from attachment/ to project root (`Projects/<A>/`)"
+    - "Sibling .md path updated to reflect new location"
   spec_ref: "ADR-0006 'reconcile_editable_migration'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_pipelines/test_reconcile_editable_migration.py::test_editable_to_no_edit_migration"
   status: active
   retired: null
 
@@ -776,14 +1052,21 @@
   behavior: "Binary content change detected and re-summarized"
   tier: full
   phase: vault-restructure
+  origin: implementation
+  granularity: mechanism
   trigger: "kms watch + binary file edited"
   fixtures: []
-  steps: "Edit an XLSX file content. Watcher detects SHA-256 change."
-  expected: >
-    Sibling .md re-summarized with new content.
-    source_hash updated in frontmatter and DB.
+  steps:
+    - "Start the watcher:"
+    - "`uv run kms watch`"
+    - "Edit an XLSX file's content (not just touch — actual data change) and wait for the watcher to detect the SHA-256 change."
+  expected:
+    - "Sibling .md re-summarized with updated content"
+    - "source_hash updated in sibling frontmatter and DB row"
   spec_ref: "ADR-0006 'content_change_detect'"
   human_reviewed: no
-  pytest_ref: null
+  last_tested: null
+  last_result: null
+  pytest_ref: "tests/test_vault/test_watcher_binary_modify.py::test_hash_differs_updates_source_hash"
   status: active
   retired: null
