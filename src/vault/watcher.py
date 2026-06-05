@@ -363,6 +363,10 @@ class _VaultEventHandler(FileSystemEventHandler):
         if path.suffix.lower() != ".md":
             if _is_lock_file(path):
                 return
+            # Dotfiles (.DS_Store) and IGNORE_DIRS (.obsidian/) have no sibling
+            # and are not vault content — skip before binary modify dispatch.
+            if self._should_skip(path):
+                return
             if self._is_internal(path) and not _is_ai_output(
                 path, self._vault_config
             ):

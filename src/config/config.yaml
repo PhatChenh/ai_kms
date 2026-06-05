@@ -68,7 +68,7 @@ self_learning:
   max_examples: 5
   min_evaluations: 20
 testing:
-  vault_path: /Users/lap14806/ai_kms_test_vault  # isolated vault for manual testing guide runs — never the real vault
+  vault_path: /Users/lap14806/ai_kms_test_vault/actual_test_vault  # isolated vault for manual testing guide runs — never the real vault
 vault:
   archive_dir: Archive
   briefings_dir: Briefings
@@ -76,6 +76,6 @@ vault:
   domain_dir: Domain
   inbox_dir: inbox
   projects_dir: Projects
-  root: /Users/lap14806/ai_kms_test_vault
+  root: /Users/lap14806/ai_kms_test_vault/actual_test_vault
   synthesis_dir: Synthesis
   no_edit_extensions: [".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"]

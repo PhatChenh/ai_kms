@@ -11,10 +11,10 @@ Each check is tagged. Here is what the tags mean.
 
 ### Origin — who created this check?
 
-| Label            | Meaning                                                                                                      | What to do                                                                                                                                    |
-| ---------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `design`         | Created during design phase — captures what the human INTENDED the system to do, before any code was written | Treat as the human's stated requirement. If this conflicts with what the system actually does, the system might have a bug.                   |
-| `implementation` | Created after code was written — captures what the system ACTUALLY does                                      | Treat as ground truth for current behavior. If this conflicts with design intent, the code might be doing something the human didn't ask for. |
+| Label | Meaning | What to do |
+|-------|---------|------------|
+| `design` | Created during design phase — captures what the human INTENDED the system to do, before any code was written | Treat as the human's stated requirement. If this conflicts with what the system actually does, the system might have a bug. |
+| `implementation` | Created after code was written — captures what the system ACTUALLY does | Treat as ground truth for current behavior. If this conflicts with design intent, the code might be doing something the human didn't ask for. |
 
 ### Granularity — what level of detail?
 
@@ -57,7 +57,8 @@ When you see a `conflict` entry in the testing guide:
 ### Where things live
 | What | Path |
 |------|------|
-| Test vault | Set by `vault.root` in `src/config/config.yaml` |
+| Test vault | Set by `testing.vault_path` in `src/config/config.yaml` (the `actual_test_vault/` subdirectory) |
+| Staging area | Parent folder of test vault — staging files live here; tester copies them into vault |
 | Database | `data/kb.db` |
 | Logs | `logs/app.log` |
 
@@ -104,8 +105,6 @@ uv run kms capture inbox/screenshot.png
 **Last tested:** 2026-06-05
 **Last result:** failed - img LLM not yet implemented
 **Current result:** ___
-
-⚠ AI-authored — not yet human-verified.
 
 ---
 
@@ -310,7 +309,7 @@ uv run kms capture Projects/Alpha/test-project-tag.md
 
 ---
 
-### P1-CAP-06 · DOCX file creates sibling .md summary
+### P1-CAP-06 · DOCX file dropped in inbox creates pending-routing marker (no summary yet)
 _Origin: implementation · Granularity: outcome_
 
 **Setup:**
@@ -324,8 +323,11 @@ uv run kms capture inbox/q3-planning-brief.docx
 ```
 
 **Check:**
-- [ ] Sibling .md created with summary: in frontmatter
-- [ ] Original q3-planning-brief.docx moved out of inbox/
+- [ ] q3-planning-brief.docx stays in inbox/ (not moved)
+- [ ] Sibling .md created at inbox/.summaries/q3-planning-brief.docx.md
+- [ ] Sibling frontmatter has type: attachment-summary
+- [ ] Sibling frontmatter has status: pending-routing
+- [ ] Sibling frontmatter has NO summary: field (deferred to Phase 2 Classify)
 
 **Last tested:** never
 **Last result:** none
@@ -350,15 +352,16 @@ In Terminal 1, start the watcher:
 uv run kms watch
 ```
 
-In Terminal 2, copy the fixture to inbox/ and wait ~10 seconds:
+In Terminal 2, copy the staging file to inbox/ and wait ~10 seconds:
 
 ```bash
-cp tests/fixtures/auto-capture-test.md <vault>/inbox/
+cp <staging>/auto-capture-test.md <vault>/inbox/
 ```
 
 **Check:**
 - [ ] auto-capture-test.md gets summary: in frontmatter automatically
 - [ ] No manual kms capture was needed
+- [ ] Only one capture pipeline fires per drop (in-flight guard prevents concurrent pipelines on same path)
 
 **Last tested:** never
 **Last result:** none
@@ -436,11 +439,7 @@ bash docs/system_behavior/setup_test_vault.sh P1-CAP-10
 ```
 
 **Run:**
-```bash
-uv run kms capture inbox/mystery-file.pdf
-```
-
-(no project/domain hint in filename or content)
+`uv run kms capture inbox/mystery-file.pdf` (no project/domain hint in filename or content)
 
 **Check:**
 - [ ] mystery-file.pdf stays in inbox/ (not moved)
@@ -466,11 +465,7 @@ bash docs/system_behavior/setup_test_vault.sh P1-CAP-11
 ```
 
 **Run:**
-```bash
-uv run kms capture inbox/test-url-note.md
-```
-
-(file body has a URL and less than 500 chars of text)
+`uv run kms capture inbox/test-url-note.md` (file body has a URL and less than 500 chars of text)
 
 **Check:**
 - [ ] Open file — summary: reflects content from the URL, not just the sparse body text
@@ -843,11 +838,7 @@ bash docs/system_behavior/setup_test_vault.sh PRE2-DOM-01
 ```
 
 **Run:**
-```bash
-uv run kms capture inbox/test-old-domain-scalar.md
-```
-
-(file has domain: finance in existing frontmatter)
+`uv run kms capture inbox/test-old-domain-scalar.md` (file has domain: finance in existing frontmatter)
 
 **Check:**
 - [ ] Open file — domain: scalar key GONE from frontmatter
@@ -1246,6 +1237,40 @@ uv run kms capture --scan
 **Check:**
 - [ ] Sibling .md files inside .summaries/ NOT re-captured
 - [ ] No rename or identity wipe on existing siblings
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P15-DEV-07 · In-flight guard — modify event during running pipeline does not launch second capture
+_Origin: bugfix · Granularity: mechanism_
+
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P15-DEV-07
+```
+
+**Run:**
+In Terminal 1, start the watcher:
+
+```bash
+uv run kms watch
+```
+
+In Terminal 2, drop file and wait for pipeline to start (but not finish), then touch it:
+
+```bash
+cp tests/fixtures/sample.md <vault>/inbox/ && sleep 5 && touch <vault>/inbox/sample.md
+```
+
+**Check:**
+- [ ] watcher.skip_in_flight debug log appears for the modify event
+- [ ] Only one metadata.captured log line appears
+- [ ] No duplicate audit entries for the same path
 
 **Last tested:** never
 **Last result:** none

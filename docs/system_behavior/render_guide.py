@@ -89,7 +89,8 @@ When you see a `conflict` entry in the testing guide:
 ### Where things live
 | What | Path |
 |------|------|
-| Test vault | Set by `testing.vault_path` in `src/config/config.yaml` |
+| Test vault | Set by `testing.vault_path` in `src/config/config.yaml` (the `actual_test_vault/` subdirectory) |
+| Staging area | Parent folder of test vault — staging files live here; tester copies them into vault |
 | Database | `data/kb.db` |
 | Logs | `logs/app.log` |
 
@@ -177,7 +178,7 @@ def render_conflict(e: dict) -> str:
         "**What to do:** Test the system and observe what actually happens. Then tell the developer which expectation is correct — or if neither is right.",
         "",
     ]
-    if e.get("fixtures"):
+    if e.get("fixtures") or e.get("staging_fixtures"):
         lines += [setup_block(e["id"]), ""]
     lines += [
         "**Run:**",
@@ -203,7 +204,7 @@ def render_active(e: dict) -> str:
         f"_Origin: {e['origin']} · Granularity: {e['granularity']}_",
         "",
     ]
-    if e.get("fixtures"):
+    if e.get("fixtures") or e.get("staging_fixtures"):
         lines += [setup_block(e["id"]), ""]
     lines += [
         "**Run:**",

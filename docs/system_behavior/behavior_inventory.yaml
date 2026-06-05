@@ -189,16 +189,18 @@
   origin: implementation
   granularity: outcome
   trigger: "kms watch + file created"
-  fixtures:
-    - inbox/auto-capture-test.md
+  fixtures: []
+  staging_fixtures:
+    - auto-capture-test.md
   steps:
     - "In Terminal 1, start the watcher:"
     - "`uv run kms watch`"
-    - "In Terminal 2, copy the fixture to inbox/ and wait ~10 seconds:"
-    - "`cp tests/fixtures/auto-capture-test.md <vault>/inbox/`"
+    - "In Terminal 2, copy the staging file to inbox/ and wait ~10 seconds:"
+    - "`cp <staging>/auto-capture-test.md <vault>/inbox/`"
   expected:
     - "auto-capture-test.md gets summary: in frontmatter automatically"
     - "No manual kms capture was needed"
+    - "Only one capture pipeline fires per drop (in-flight guard prevents concurrent pipelines on same path)"
   spec_ref: "roadmap §Phase1 'watcher auto-capture'"
   human_reviewed: no
   last_tested: null
@@ -903,6 +905,32 @@
   last_tested: null
   last_result: null
   pytest_ref: "tests/test_pipelines/test_capture_phase9.py::test_scan_capture_skips_summaries_in_modified_loop"
+  status: active
+  retired: null
+
+- id: P15-DEV-07
+  behavior: "In-flight guard — modify event during running pipeline does not launch second capture"
+  tier: full
+  phase: 1.5
+  origin: bugfix
+  granularity: mechanism
+  trigger: "kms watch + on_modified fires while on_created pipeline still running (gap > debounce window)"
+  fixtures:
+    - inbox/sample.md
+  steps:
+    - "In Terminal 1, start the watcher:"
+    - "`uv run kms watch`"
+    - "In Terminal 2, drop file and wait for pipeline to start (but not finish), then touch it:"
+    - "`cp tests/fixtures/sample.md <vault>/inbox/ && sleep 5 && touch <vault>/inbox/sample.md`"
+  expected:
+    - "watcher.skip_in_flight debug log appears for the modify event"
+    - "Only one metadata.captured log line appears"
+    - "No duplicate audit entries for the same path"
+  spec_ref: "cli/main.py _dispatch() in-flight set"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
   status: active
   retired: null
 
