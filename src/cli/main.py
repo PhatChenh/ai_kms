@@ -150,6 +150,7 @@ def watch() -> None:
     """
     import asyncio
     import hashlib
+    import threading
     from pathlib import Path
 
     import structlog
@@ -189,6 +190,29 @@ def watch() -> None:
                 taxonomy=taxonomy,
             )
 
+        # Tracks paths whose capture pipeline is currently running.
+        # Prevents a second pipeline launch when on_modified fires before
+        # on_created's pipeline writes to DB (the DB-based guards can't help
+        # until the first pipeline completes).
+        _in_flight: set[str] = set()
+        _in_flight_lock = threading.Lock()
+
+        def _dispatch(path: Path) -> None:
+            key = str(to_vault_path(path))
+            with _in_flight_lock:
+                if key in _in_flight:
+                    _wlog.debug("watcher.skip_in_flight", vault_path=key)
+                    return
+                _in_flight.add(key)
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    capture_file(path, context=_make_ctx()), loop
+                )
+                future.add_done_callback(lambda _: _in_flight.discard(key))
+            except Exception:
+                _in_flight.discard(key)
+                raise
+
         def on_create(path: Path) -> None:
             vault_rel = to_vault_path(path)
             # Skip if pipeline just wrote this file — prevents re-capture after AI rename.
@@ -200,9 +224,7 @@ def watch() -> None:
                     return
                 case _:
                     pass
-            asyncio.run_coroutine_threadsafe(
-                capture_file(path, context=_make_ctx()), loop
-            )
+            _dispatch(path)
 
         def on_modify(path: Path) -> None:
             vault_rel = to_vault_path(path)
@@ -219,9 +241,7 @@ def watch() -> None:
                             pass
                 case _:
                     pass
-            asyncio.run_coroutine_threadsafe(
-                capture_file(path, context=_make_ctx()), loop
-            )
+            _dispatch(path)
 
         def on_delete(path: Path) -> None:
             if path.exists():

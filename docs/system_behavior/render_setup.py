@@ -23,6 +23,10 @@ SCRIPT_HEADER = """\
 # Run: bash docs/system_behavior/setup_test_vault.sh [test-id|all|smoke|phase]
 # No args = full reset + all fixtures.
 #
+# Directory layout:
+#   VAULT   = testing.vault_path in config.yaml — kms operates here
+#   STAGING = parent of VAULT — staging files the tester copies/drags into VAULT
+#
 # IMPORTANT: This script operates on the TEST vault, never the real vault.
 # Last generated: {date}
 
@@ -30,6 +34,7 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 VAULT="$(cd "$PROJECT_ROOT" && uv run python -c "import yaml; print(yaml.safe_load(open('src/config/config.yaml'))['testing']['vault_path'])")"
+STAGING="$(dirname "$VAULT")"
 FIXTURES="$PROJECT_ROOT/tests/fixtures"
 DB="$PROJECT_ROOT/data/kb.db"
 
@@ -64,6 +69,8 @@ write_md_with_frontmatter() {{
 clean_vault() {{
     echo "Cleaning test vault at $VAULT ..."
     rm -rf "${{VAULT:?}}"/*
+    find "$STAGING" -maxdepth 1 -type f -delete 2>/dev/null || true
+    mkdir -p "$STAGING"
     mkdir -p "$VAULT/inbox"
     mkdir -p "$VAULT/Projects/Alpha/attachment/.summaries"
     mkdir -p "$VAULT/Domain/Finance"
@@ -93,7 +100,8 @@ run_all() {{
 # ─── Main dispatch ─────────────────────────────────────────────────────────────
 
 echo "=== AI-KMS Test Vault Setup ==="
-echo "Vault: $VAULT"
+echo "Vault:   $VAULT"
+echo "Staging: $STAGING"
 echo ""
 
 case "${{1:-all}}" in
@@ -133,6 +141,54 @@ def md_content(entry: dict, fixture_path: str) -> str:
     return f"{behavior}.\n\nTest fixture for {entry['id']}."
 
 
+def cleanup_lines(fixture_path: str) -> list:
+    """Bash lines to remove a vault fixture + all derived paths + DB records."""
+    ext = Path(fixture_path).suffix.lower()
+    filename = Path(fixture_path).name
+    parts = Path(fixture_path).parts
+    parent = str(Path(fixture_path).parent)
+
+    lines = [f'rm -f "$VAULT/{fixture_path}"']
+
+    is_no_edit = ext in (".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp")
+    is_editable = ext in (".xlsx", ".docx", ".pptx", ".csv", ".html", ".eml", ".msg")
+
+    if is_no_edit or is_editable:
+        in_inbox = len(parts) > 0 and parts[0] == "inbox"
+        in_project = len(parts) > 1 and parts[0] == "Projects"
+        in_domain = len(parts) > 1 and parts[0] == "Domain"
+
+        if is_no_edit and (in_project or in_domain):
+            lines.append(f'rm -f "$VAULT/{parent}/attachment/{filename}"')
+            lines.append(f'rm -f "$VAULT/{parent}/attachment/.summaries/{filename}.md"')
+        elif is_no_edit and in_inbox:
+            lines.append(f'rm -f "$VAULT/inbox/.summaries/{filename}.md"')
+        elif is_editable and (in_project or in_domain):
+            lines.append(f'rm -f "$VAULT/{parent}/.summaries/{filename}.md"')
+        elif is_editable and in_inbox:
+            lines.append(f'rm -f "$VAULT/inbox/.summaries/{filename}.md"')
+
+        lines.append(
+            f"sqlite3 \"$DB\" \"DELETE FROM documents WHERE vault_path LIKE '%{filename}%'\" 2>/dev/null || true"
+        )
+    else:
+        lines.append(
+            f"sqlite3 \"$DB\" \"DELETE FROM documents WHERE vault_path = '{fixture_path}'\" 2>/dev/null || true"
+        )
+
+    return lines
+
+
+def staging_cleanup_lines(filename: str) -> list:
+    """Bash lines to remove a staging file + its vault inbox copy + DB record."""
+    vault_inbox_path = f"inbox/{filename}"
+    return [
+        f'rm -f "$STAGING/{filename}"',
+        f'rm -f "$VAULT/inbox/{filename}"',
+        f"sqlite3 \"$DB\" \"DELETE FROM documents WHERE vault_path = '{vault_inbox_path}'\" 2>/dev/null || true",
+    ]
+
+
 def fixture_bash(entry: dict, fixture_path: str) -> str:
     ext = Path(fixture_path).suffix.lower()
     parent = str(Path(fixture_path).parent)
@@ -160,8 +216,8 @@ def fixture_bash(entry: dict, fixture_path: str) -> str:
             f'if [ -f "$FIXTURES/{sample}" ]; then\n'
             f'    cp "$FIXTURES/{sample}" "$VAULT/{fixture_path}"\n'
             f'else\n'
-            # Minimal 1×1 PNG via raw bytes — no real image content
-            r'    printf "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"'
+            # Minimal 1×1 PNG via ANSI-C quoting — avoids backtick in double-quoted string
+            r"    printf $'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB\x60\x82'"
             + f' > "$VAULT/{fixture_path}"\n'
             f'    echo "⚠ {eid}: Created minimal 1x1 PNG fallback. Replace with a real image for testing."\n'
             f'fi'
@@ -237,20 +293,45 @@ def fixture_bash(entry: dict, fixture_path: str) -> str:
     if ext == ".msg":
         return f'echo "⚠ {eid}: MSG files require Outlook format — place a test .msg file at $VAULT/{fixture_path} manually"'
 
-    # Unknown extension — warn
     return f'echo "⚠ {eid}: Unknown fixture type {ext} for {fixture_path} — create manually"'
+
+
+def fixture_bash_staging(entry: dict, filename: str) -> str:
+    """Bash code to create a staging-area file (placed at $STAGING/<filename>)."""
+    ext = Path(filename).suffix.lower()
+    eid = entry["id"]
+
+    if ext == ".md":
+        content = md_content(entry, filename)
+        escaped = content.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
+        return f'mkdir -p "$STAGING"\nwrite_md "$STAGING/{filename}" \\\n"{escaped}"'
+
+    if ext == ".pdf":
+        return (
+            f'mkdir -p "$STAGING"\n'
+            f'if [ -f "$FIXTURES/sample_text.pdf" ]; then\n'
+            f'    cp "$FIXTURES/sample_text.pdf" "$STAGING/{filename}"\n'
+            f'else\n'
+            f'    echo "⚠ {eid}: No sample PDF at $FIXTURES/sample_text.pdf — place a test PDF at $STAGING/{filename} manually"\n'
+            f'fi'
+        )
+
+    return f'echo "⚠ {eid}: staging fixture type {ext} not auto-generated — create $STAGING/{filename} manually"'
 
 
 def render_setup_fn(entry: dict) -> str:
     eid = entry["id"]
     fn = fn_name(eid)
     fixtures = entry.get("fixtures") or []
+    staging_fixtures = entry.get("staging_fixtures") or []
     behavior = entry["behavior"]
     tier = entry.get("tier", "")
 
     lines = [f"# {tier} | {eid}: {behavior}"]
 
-    if not fixtures:
+    has_any = bool(fixtures or staging_fixtures)
+
+    if not has_any:
         trigger = str(entry.get("trigger", "")).replace('"', '\\"')
         lines.append(f"{fn}() {{")
         lines.append(
@@ -260,8 +341,26 @@ def render_setup_fn(entry: dict) -> str:
         return "\n".join(lines)
 
     body_lines = []
+
+    # Cleanup preamble: remove old files + targeted DB deletes
+    all_cleanup = []
+    for fp in fixtures:
+        all_cleanup.extend(cleanup_lines(fp))
+    for sf in staging_fixtures:
+        all_cleanup.extend(staging_cleanup_lines(sf))
+
+    if all_cleanup:
+        body_lines.append(indent("# ── cleanup ──"))
+        for cl in all_cleanup:
+            body_lines.append(indent(cl))
+
+    # Create fixtures
+    body_lines.append(indent("# ── create ──"))
     for fp in fixtures:
         code = fixture_bash(entry, fp)
+        body_lines.append(indent(code))
+    for sf in staging_fixtures:
+        code = fixture_bash_staging(entry, sf)
         body_lines.append(indent(code))
 
     lines.append(f"{fn}() {{")
@@ -324,7 +423,7 @@ def main() -> None:
     phase_calls = call_lines(phase)
     full_calls = call_lines(full)
 
-    # Case entries
+    # Case entries — individual test IDs use per-function cleanup (no full reset)
     case_lines = []
     for tier_label, tier_list in [("smoke", smoke), ("phase", phase), ("full", full)]:
         if tier_list:
@@ -332,7 +431,7 @@ def main() -> None:
         for e in tier_list:
             eid = e["id"]
             case_lines.append(
-                f"    {eid})  reset_db; clean_vault; {fn_name(eid)} ;;"
+                f"    {eid})  {fn_name(eid)} ;;"
             )
 
     output_parts = [
