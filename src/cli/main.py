@@ -74,7 +74,7 @@ def capture(file: str | None, scan: bool) -> None:
         capture_result = asyncio.run(capture_file(_path))
         match capture_result:
             case Success(value=outcome):
-                click.echo(f"OK: {outcome}")
+                click.echo(f"OK: captured → {outcome.vault_path}")
             case Failure(error=e):
                 click.echo(f"FAILED: {e}", err=True)
                 raise SystemExit(1)

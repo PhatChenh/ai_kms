@@ -1,3 +1,4 @@
+<!-- ARCH-STORY:PHASE0 -->
 # Component Diagram — Phase 0: Foundations
 Scope: Every module in the foundation layer and how they relate. All other phases
 import from here; this phase imports from nothing above it.
@@ -93,7 +94,7 @@ Box standard: ~20 char wide, ~7 row high. Full descriptions in Diagram Notes.
 | **Result Type** | Every public function returns `Success(value)` or `Failure(error)`. No raw returns. No None. Callers must handle both branches. |
 | **Pipeline Runner** | Runs a list of async stages in sequence. If any stage fails, stops and returns the failure. Never swallows exceptions silently. Catches `Exception` (not `BaseException`) so Ctrl-C still works. |
 | **Audit Facade** | Pipelines call `audit.write(decision)` to record every AI action. Translates an `AIDecision` into a storage row and calls the DB. Callers never touch `storage/audit_log` directly. |
-| **Confidence Router** | Takes an `AIDecision` with a confidence score, returns: AUTO (≥85%) / SUGGEST (60–85%) / CLUELESS (<60%). Thresholds from YAML — never hardcoded in pipeline code. |
+| **Confidence Router** | Takes an `AIDecision` with a confidence score, returns: AUTO (auto-files it) / SUGGEST (asks you to confirm) / CLUELESS (flags for your decision). Thresholds are in YAML config — never hardcoded in pipeline code. |
 | **Tag Validator** | Checks AI-generated tags against the allowed taxonomy in `config/tags.yaml`. Violations logged as `TAG_VIOLATION` audit entries — never silently accepted or dropped. |
 | **Rename Gate** | Given an existing filename and an AI-suggested title, decides: SKIP (keep name) / AUGMENT (add topic suffix) / FULL_RENAME (replace). Rules from config. No AI calls. |
 | **Logging Setup** | Configures structlog. Creates a correlation ID per pipeline run that flows through all log lines and audit entries for that run, allowing one run to be traced end-to-end. |
@@ -187,3 +188,5 @@ Box standard: ~20 char wide, ~7 row high. Full descriptions in Diagram Notes.
   ⚠ Never call storage/audit_log directly from a pipeline.
     Always go through core/audit.write().
 ```
+
+<!-- /ARCH-STORY:PHASE0 -->

@@ -1,9 +1,12 @@
-# Component Diagram — Phase 1: Capture (incl. Phase 1.5 attachment layout)
-Scope: Every module built in Phase 1 and the Phase 1.5 attachment-layout revision.
-Covers how dropped files travel from inbox to vault, and how the watcher and
-reconcile pipeline maintain consistency over time.
+<!-- ARCH-STORY:PHASE1 -->
+# Component Diagram — Phase 1: Capture (incl. sub-phases 1.5, Pre-2, Vault-Restructure)
+Scope: Every module built in Phase 1 and its three sub-phases: Phase 1.5 (attachment
+layout, location tags, reconcile stages 1–4), Phase Pre-2 (DB schema prep, domain
+scalar cleanup), and Vault-Restructure (editable/no-edit split, binary content-change
+detection, move guard). Covers how dropped files travel from inbox to vault, and how
+the watcher and reconcile pipeline maintain consistency over time.
 
-Status: ✅ All components complete. 797 tests pass.
+Status: ✅ All components complete. 956 tests pass (merged 2026-06-04).
 Box standard: ~20 char wide, ~7 row high. Full descriptions in Diagram Notes.
 
 ---
@@ -31,22 +34,30 @@ Box standard: ~20 char wide, ~7 row high. Full descriptions in Diagram Notes.
  │  │ PdfHandler           │  │ extract              │  │                  │  │
  │  │ DocxHandler          │  │ enrich_urls          │  │ 7 stages:        │  │
  │  │ XlsxHandler          │  │ summarize            │  │ sync paths       │  │
- │  │                      │  │ metadata             │  │ orphan binaries  │  │
- │  │ new type = new file  │  │ apply_location_tags  │  │ stale binaries   │  │
- │  │ no existing changes  │  │ store                │  │ orphan siblings  │  │
- │  └──────────┬───────────┘  └──────────┬───────────┘  └──────────────────┘  │
- │             │ used by extract stage   │                                     │
- │             └──────────────┬──────────┘                                     │
+ │  │ PptxHandler          │  │ metadata             │  │ orphan binaries  │  │
+ │  │ CsvHandler           │  │ apply_location_tags  │  │ stale binaries   │  │
+ │  │ HtmlHandler          │  │ store                │  │ orphan siblings  │  │
+ │  │ EmlHandler           │  └──────────┬───────────┘  │ stale tags       │  │
+ │  │ MsgHandler           │             │              │ stale batch refs │  │
+ │  │ Png/JpgHandler*      │             │              │ editable migrate │  │
+ │  │ *no summary yet      │             │              └──────────────────┘  │
+ │  │ new type = new file  │             │                                    │
+ │  │ no existing changes  │             │                                    │
+ │  └──────────┬───────────┘             │                                    │
+ │             │ used by extract stage   │                                    │
+ │             └──────────────┬──────────┘                                    │
  │                            │ all write to                                   │
  │  ┌─────────────────────────▼────────────────────────────────────────────┐   │
  │  │  Vault Layer (Phase 0 — used heavily by Phase 1)                     │   │
  │  │  vault/writer.py   vault/reader.py   vault/paths.py   vault/indexer  │   │
+ │  │  vault/move_guard.py  ← suppresses watcher re-home for pipeline moves│   │
  │  └─────────────────────────┬────────────────────────────────────────────┘   │
  │                            │                                                │
  │  ┌─────────────────────────▼────────────────────────────────────────────┐   │
  │  │ Vault Watcher            vault/watcher.py   ✅ [closed]              │   │
  │  │ continuous mode: watches vault root, debounces events,               │   │
- │  │ calls capture for .md notes, syncs binary↔sibling on move/delete     │   │
+ │  │ routes .md notes to capture, syncs binary↔sibling on move/delete,   │   │
+ │  │ detects binary content changes (SHA-256), coalesces multi-hop moves  │   │
  │  └──────────────────────────────────────────────────────────────────────┘   │
  │                                                                              │
  └──────────────────────────────────────────────────────────────────────────────┘

@@ -1,3 +1,4 @@
+<!-- ARCH-STORY:OVERALL -->
 # Container Diagram — AI-kms All Phases
 Scope: All functional blocks of the system, their build status, and how they
 connect. Phase 0 is the foundation everything else depends on.
@@ -33,14 +34,15 @@ Box standard: ~20 char wide, ~7 row high. Full descriptions in Diagram Notes bel
   │  └──────────┬───────────┘                                           │      │
   │             │ calls pipelines                                        │      │
   │  ┌──────────▼───────────┐  ┌──────────────────────┐                 │      │
-  │  │ Phase 2              │  │ Phase 3              │                 │      │
+  │  │  │ Phase 2              │  │ Phase 3              │                 │      │
   │  │ Classify + Route     │  │ Search + Retrieval   │                 │      │
-  │  │ 🔄 next up           │  │ ⬜ planned ~15 May   │                 │      │
+  │  │ 🔄 next up           │  │ ⬜ planned            │                 │      │
   │  └──────────┬───────────┘  └──────────┬───────────┘                 │      │
   │             │                          │                             │      │
   │  ┌──────────▼──────────────────────────▼───────────────────────────►│      │
-  │  │ Phase 1                                                           │      │
-  │  │ Capture (+ Reconcile)                                             │      │
+  │  │  │ Phase 1                                                           │      │
+  │  │ Capture + Reconcile                                               │      │
+  │  │ (incl. 1.5, Pre-2, Vault-Restructure)                             │      │
   │  │ ✅ complete                                                        │      │
   │  └──────────┬────────────────────────────────────────────────────────┘      │
   │             │ all phases import from                                         │
@@ -70,7 +72,7 @@ Box standard: ~20 char wide, ~7 row high. Full descriptions in Diagram Notes bel
 | **Phase 4 — MCP Server** | Thin wrapper exposing 3 tools (search, capture, classify) so Claude Desktop can talk to the vault. No logic lives here — tools just call pipelines. |
 | **Phase 2 — Classify + Route** | Reads inbox notes, asks AI which project/domain each belongs to, confidence-gates the decision (auto/suggest/human), moves the note, writes audit entry. Also resolves CLUELESS binary markers left by Phase 1. |
 | **Phase 3 — Search + Retrieval** | Makes vault queryable by meaning. Keyword (FTS5) + semantic (embeddings) + hybrid re-rank. Three-tier dispatcher: hot (summaries) → warm (snippets) → cold (full note). Callers never pick the tier — they provide a query and max cost. |
-| **Phase 1 — Capture** | Watches inbox for dropped files. 6-stage pipeline: extract text → enrich URLs → AI summarize → AI label → apply location tags → write to vault. Handles .md, PDF, DOCX, XLSX, PPTX, CSV, HTML, EML, MSG, images. Includes `kms reconcile` (7 stages) to repair orphaned files + migrate editable binaries. |
+| **Phase 1 — Capture** | Watches inbox for dropped files. 6-stage pipeline: extract text → enrich URLs → AI summarize → AI label → apply location tags → write to vault. Handles .md, PDF, DOCX, XLSX, PPTX, CSV, HTML, EML, MSG (images recognised, not yet summarised). Includes `kms reconcile` (7 stages) to repair orphaned files + migrate editable binaries. Sub-phases 1.5 (attachment layout, location tags, reconcile), Pre-2 (DB schema prep, domain scalar cleanup), and Vault-Restructure (editable/no-edit split, content-change detection, move guard) are all folded into this block. |
 | **Phase 0 — Foundations** | Config, AI providers, audit log, document index, vault read/write. Never modified after it is built. Everything else imports from here. |
 | **Phases 5–7** | Post-M2 features: Promote turns raw notes into structured knowledge. Documentation auto-updates project pages. Self-learning feeds your corrections back into the classify prompt. |
 | **Phases 8–9** | Daily Briefing reads audit_log, produces a morning digest. Weekly Synthesis reads all week's notes, surfaces recurring themes and contradictions. Both write to the vault. |
@@ -84,16 +86,16 @@ Box standard: ~20 char wide, ~7 row high. Full descriptions in Diagram Notes bel
 ## Delivery Milestones
 
 ```
-  Phase 0   Phase 1   Ph 1.5    Pre-2     Phase 2   Phase 3   Phase 4   Phases 5-9
-  ✅ done   ✅ done   ✅ done   ✅ done   🔄 next   ⬜        ⬜         ⬜
-  │         │         │         │         │         │         │          │
-  └─────────┴─────────┴────┬────┘         └─────────┤         │          │
-                           │                        │         │          │
-                      Shipped                  M1: capture+   │     M3: 30 June
-                      (2026-06-03)             classify+search│   "full feature set"
-                      797 tests                end-to-end     │
-                                                         M2: MCP MVP
-                                                         "boss demo"
+  Phase 0   Phase 1   Ph 1.5    Pre-2    Vault-    Phase 2   Phase 3   Phase 4   Phases 5-9
+  ✅ done   ✅ done   ✅ done   ✅ done  Restruct  🔄 next   ⬜        ⬜         ⬜
+  │         │         │         │        ✅ done   │         │         │          │
+  └─────────┴─────────┴─────────┴────────┬─────────┘         │         │          │
+                                         │                   │         │          │
+                                    Shipped             M1: capture+   │     M3: 30 June
+                                    (2026-06-04)        classify+search│   "full feature set"
+                                    956 tests           end-to-end     │
+                                                                  M2: MCP MVP
+                                                                  "boss demo"
 ```
 
 ---
@@ -119,9 +121,9 @@ How a file travels from your desk to a searchable, filed note.
   ┌──────────────────────┐
   │ Phase 2 — Classify   │
   │ AI: which project?   │
-  │ ≥85% → auto-move     │
-  │ 60-85% → suggest     │  ← you review, one click
-  │ <60% → human review  │  ← you decide
+  │ auto-files it        │  ← high confidence
+  │ asks you to confirm  │  ← medium confidence
+  │ flags for you        │  ← low confidence
   └──────────┬───────────┘
              │ note filed in Projects/<A>/ or Domain/<D>/
              ▼
@@ -138,3 +140,5 @@ How a file travels from your desk to a searchable, filed note.
   │ find + discuss it    │    │ morning digest       │
   └──────────────────────┘    └──────────────────────┘
 ```
+
+<!-- /ARCH-STORY:OVERALL -->
