@@ -12,6 +12,7 @@ from pathlib import Path
 from core.result import Failure, Success
 from vault.frontmatter import NoteMetadata
 from vault.registry import (
+    LiveRegistry,
     ProjectEntry,
     ProjectGroup,
     ProjectRegistry,
@@ -279,3 +280,167 @@ class TestFormatForPrompt:
 
         assert "Movies:" in output
         assert "No active projects" in output
+
+
+class TestLiveRegistry:
+    def test_p2_reg_05_add_project(self, vault_config):
+        """LiveRegistry.add_project() adds a project without restart."""
+        (vault_config.root / "Domain" / "Finance").mkdir(parents=True, exist_ok=True)
+        live = LiveRegistry(vault_config)
+
+        # Create a new project and add it
+        _write_claude_md(
+            vault_config.root / "Projects" / "NewProject",
+            tags=["domain/Finance"],
+        )
+        live.add_project("NewProject")
+
+        groups = live.get_groups()
+        assert "Finance" in groups
+        assert "NewProject" in [e.name for e in groups["Finance"].projects]
+
+    def test_live_registry_remove_project(self, vault_config):
+        """LiveRegistry.remove_project() removes a project from all groups."""
+        (vault_config.root / "Domain" / "Finance").mkdir(parents=True, exist_ok=True)
+        _write_claude_md(
+            vault_config.root / "Projects" / "Alpha",
+            tags=["domain/Finance"],
+        )
+        live = LiveRegistry(vault_config)
+
+        # Should exist after startup
+        groups = live.get_groups()
+        assert "Alpha" in [e.name for e in groups["Finance"].projects]
+
+        live.remove_project("Alpha")
+        groups = live.get_groups()
+        assert "Alpha" not in [e.name for e in groups["Finance"].projects]
+
+    def test_p2_reg_06_refresh_domain_changes_group(self, vault_config):
+        """refresh_domain re-reads CLAUDE.md and moves project to new group."""
+        (vault_config.root / "Domain" / "Finance").mkdir(parents=True, exist_ok=True)
+        (vault_config.root / "Domain" / "Movies").mkdir(parents=True, exist_ok=True)
+        _write_claude_md(
+            vault_config.root / "Projects" / "Alpha",
+            tags=["domain/Finance"],
+        )
+        live = LiveRegistry(vault_config)
+
+        # Verify initial group
+        groups = live.get_groups()
+        assert "Alpha" in [e.name for e in groups["Finance"].projects]
+
+        # Rewrite CLAUDE.md with new domain tag
+        _write_claude_md(
+            vault_config.root / "Projects" / "Alpha",
+            tags=["domain/Movies"],
+        )
+        live.refresh_domain("Alpha")
+
+        groups = live.get_groups()
+        assert "Alpha" in [e.name for e in groups["Movies"].projects]
+        assert "Alpha" not in [e.name for e in groups["Finance"].projects]
+
+    def test_live_registry_invalidate_domain(self, vault_config):
+        """invalidate_domain moves all projects to Uncategorized."""
+        (vault_config.root / "Domain" / "Finance").mkdir(parents=True, exist_ok=True)
+        _write_claude_md(
+            vault_config.root / "Projects" / "Alpha",
+            tags=["domain/Finance"],
+        )
+        live = LiveRegistry(vault_config)
+
+        # Alpha starts in Finance
+        groups = live.get_groups()
+        assert "Alpha" in [e.name for e in groups["Finance"].projects]
+
+        live.invalidate_domain("Finance")
+        groups = live.get_groups()
+
+        # Finance domain group should be gone
+        assert "Finance" not in groups
+        # Alpha should move to Uncategorized
+        assert "Uncategorized" in groups
+        alpha = next(
+            (e for e in groups["Uncategorized"].projects if e.name == "Alpha"),
+            None,
+        )
+        assert alpha is not None
+        assert alpha.domain_unknown is True
+
+    def test_live_registry_rename_project(self, vault_config):
+        """rename_project updates project name in the registry."""
+        (vault_config.root / "Domain" / "Finance").mkdir(parents=True, exist_ok=True)
+        _write_claude_md(
+            vault_config.root / "Projects" / "Alpha",
+            tags=["domain/Finance"],
+        )
+        live = LiveRegistry(vault_config)
+
+        live.rename_project("Alpha", "AlphaRenamed")
+        groups = live.get_groups()
+
+        assert "Alpha" not in [e.name for g in groups.values() for e in g.projects]
+        assert "AlphaRenamed" in [e.name for e in groups["Finance"].projects]
+
+    def test_live_registry_thread_safe_concurrent_adds(self, vault_config):
+        """Concurrent add_project calls do not cause data loss or errors."""
+        import threading
+
+        (vault_config.root / "Domain" / "Finance").mkdir(parents=True, exist_ok=True)
+        live = LiveRegistry(vault_config)
+
+        errors: list[Exception] = []
+
+        def add_project_safe(name: str) -> None:
+            try:
+                _write_claude_md(
+                    vault_config.root / "Projects" / name,
+                    tags=["domain/Finance"],
+                )
+                live.add_project(name)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [
+            threading.Thread(target=add_project_safe, args=(f"Proj{i}",))
+            for i in range(10)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, f"Errors during concurrent add: {errors}"
+        groups = live.get_groups()
+        all_names = {e.name for g in groups.values() for e in g.projects}
+        for i in range(10):
+            assert f"Proj{i}" in all_names, f"Proj{i} missing from registry"
+
+    def test_get_groups_returns_copy(self, vault_config):
+        """get_groups() returns a shallow copy; mutations not reflected."""
+        (vault_config.root / "Domain" / "Finance").mkdir(parents=True, exist_ok=True)
+        _write_claude_md(
+            vault_config.root / "Projects" / "Alpha",
+            tags=["domain/Finance"],
+        )
+        live = LiveRegistry(vault_config)
+
+        groups = live.get_groups()
+        # Mutate the returned dict
+        groups["Fake"] = ProjectGroup(domain_name="Fake")
+
+        # Original registry should be unchanged
+        groups2 = live.get_groups()
+        assert "Fake" not in groups2
+
+    def test_startup_with_no_projects_dir_uses_empty_registry(self, vault_config):
+        """If Projects/ doesn't exist at startup, LiveRegistry starts empty."""
+        import shutil
+
+        shutil.rmtree(vault_config.root / "Projects")
+        live = LiveRegistry(vault_config)
+
+        groups = live.get_groups()
+        # Should still work, just no projects
+        assert isinstance(groups, dict)
