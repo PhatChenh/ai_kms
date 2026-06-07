@@ -444,3 +444,218 @@ class TestLiveRegistry:
         groups = live.get_groups()
         # Should still work, just no projects
         assert isinstance(groups, dict)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — VaultWatcher LiveRegistry hookup tests
+# ---------------------------------------------------------------------------
+
+
+class TestWatcherRegistryHookups:
+    """Test that _VaultEventHandler dispatches to LiveRegistry on vault events.
+
+    These use MagicMock for the registry and call handler event methods directly
+    with synthetic watchdog events.  Debounce is set to a tiny value to make the
+    threading.Timer fire quickly.
+    """
+
+    DEBOUNCE = 0.02
+    WAIT = 0.1
+
+    @staticmethod
+    def _make_handler(tmp_path: Path, registry=None, **kwargs):
+
+        from core.config import VaultConfig
+        from vault.watcher import _VaultEventHandler
+
+        root = tmp_path / "vault"
+        root.mkdir(exist_ok=True)
+        vault_cfg = VaultConfig(root=root)
+
+        handler = _VaultEventHandler(
+            root=root,
+            vault_config=vault_cfg,
+            on_create=lambda p: None,
+            on_modify=lambda p: None,
+            on_delete=lambda p: None,
+            on_move=lambda s, d: None,
+            debounce_seconds=kwargs.pop(
+                "debounce", TestWatcherRegistryHookups.DEBOUNCE
+            ),
+            registry=registry,
+            **kwargs,
+        )
+        return handler, root, vault_cfg
+
+    def test_registry_add_project_on_dir_created(self, tmp_path):
+        """DirCreatedEvent on Projects/<New>/ → registry.add_project() called."""
+        import time
+        from unittest.mock import MagicMock
+        from watchdog.events import DirCreatedEvent
+
+        mock_registry = MagicMock()
+        handler, root, _ = self._make_handler(tmp_path, registry=mock_registry)
+        (root / "Projects" / "NewProject").mkdir(parents=True)
+
+        handler.on_created(DirCreatedEvent(str(root / "Projects" / "NewProject")))
+
+        time.sleep(self.WAIT)
+        mock_registry.add_project.assert_called_once_with("NewProject")
+
+    def test_registry_remove_project_on_dir_deleted(self, tmp_path):
+        """DirDeletedEvent on Projects/<A>/ → registry.remove_project() called."""
+        import time
+        from unittest.mock import MagicMock
+        from watchdog.events import DirDeletedEvent
+
+        mock_registry = MagicMock()
+        handler, root, _ = self._make_handler(tmp_path, registry=mock_registry)
+
+        handler.on_deleted(DirDeletedEvent(str(root / "Projects" / "Alpha")))
+
+        time.sleep(self.WAIT)
+        mock_registry.remove_project.assert_called_once_with("Alpha")
+
+    def test_registry_invalidate_domain_on_domain_deleted(self, tmp_path):
+        """DirDeletedEvent on Domain/<D>/ → registry.invalidate_domain() called."""
+        import time
+        from unittest.mock import MagicMock
+        from watchdog.events import DirDeletedEvent
+
+        mock_registry = MagicMock()
+        handler, root, _ = self._make_handler(tmp_path, registry=mock_registry)
+
+        handler.on_deleted(DirDeletedEvent(str(root / "Domain" / "Finance")))
+
+        time.sleep(self.WAIT)
+        mock_registry.invalidate_domain.assert_called_once_with("Finance")
+
+    def test_registry_rename_project_on_dir_moved(self, tmp_path):
+        """DirMovedEvent inside Projects/ → registry.rename_project() called."""
+        import time
+        from unittest.mock import MagicMock
+        from watchdog.events import DirMovedEvent
+
+        mock_registry = MagicMock()
+        handler, root, _ = self._make_handler(tmp_path, registry=mock_registry)
+
+        handler.on_moved(
+            DirMovedEvent(
+                str(root / "Projects" / "Alpha"),
+                str(root / "Projects" / "AlphaRenamed"),
+            )
+        )
+
+        time.sleep(self.WAIT)
+        mock_registry.rename_project.assert_called_once_with("Alpha", "AlphaRenamed")
+
+    def test_registry_remove_on_project_moved_outside(self, tmp_path):
+        """DirMovedEvent from Projects/ to Archive/ → registry.remove_project()."""
+        import time
+        from unittest.mock import MagicMock
+        from watchdog.events import DirMovedEvent
+
+        mock_registry = MagicMock()
+        handler, root, _ = self._make_handler(tmp_path, registry=mock_registry)
+
+        handler.on_moved(
+            DirMovedEvent(
+                str(root / "Projects" / "Alpha"),
+                str(root / "Archive" / "Alpha"),
+            )
+        )
+
+        time.sleep(self.WAIT)
+        mock_registry.remove_project.assert_called_once_with("Alpha")
+
+    def test_registry_invalidate_domain_on_domain_moved(self, tmp_path):
+        """DirMovedEvent from Domain/<D>/ → registry.invalidate_domain() called."""
+        import time
+        from unittest.mock import MagicMock
+        from watchdog.events import DirMovedEvent
+
+        mock_registry = MagicMock()
+        handler, root, _ = self._make_handler(tmp_path, registry=mock_registry)
+
+        handler.on_moved(
+            DirMovedEvent(
+                str(root / "Domain" / "OldDomain"),
+                str(root / "Domain" / "NewName"),
+            )
+        )
+
+        time.sleep(self.WAIT)
+        mock_registry.invalidate_domain.assert_called_once_with("OldDomain")
+
+    def test_registry_refresh_domain_on_claude_md_modified(self, tmp_path):
+        """FileModifiedEvent on Projects/<A>/CLAUDE.md → registry.refresh_domain()."""
+        import time
+        from unittest.mock import MagicMock
+        from watchdog.events import FileModifiedEvent
+
+        mock_registry = MagicMock()
+        handler, root, _ = self._make_handler(tmp_path, registry=mock_registry)
+        (root / "Projects" / "Alpha").mkdir(parents=True)
+
+        handler.on_modified(
+            FileModifiedEvent(str(root / "Projects" / "Alpha" / "CLAUDE.md"))
+        )
+
+        time.sleep(self.WAIT)
+        mock_registry.refresh_domain.assert_called_once_with("Alpha")
+
+    def test_registry_not_called_when_registry_is_none(self, tmp_path):
+        """When registry=None (default), all events fire normally with no errors."""
+        import time
+        from watchdog.events import (
+            DirCreatedEvent,
+            DirDeletedEvent,
+            DirMovedEvent,
+            FileModifiedEvent,
+        )
+
+        from core.config import VaultConfig
+        from vault.watcher import _VaultEventHandler
+
+        root = tmp_path / "vault"
+        root.mkdir(exist_ok=True)
+        vault_cfg = VaultConfig(root=root)
+
+        # No registry kwarg — defaults to None
+        handler = _VaultEventHandler(
+            root=root,
+            vault_config=vault_cfg,
+            on_create=lambda p: None,
+            on_modify=lambda p: None,
+            on_delete=lambda p: None,
+            on_move=lambda s, d: None,
+            debounce_seconds=self.DEBOUNCE,
+        )
+
+        (root / "Projects" / "Alpha").mkdir(parents=True)
+        handler.on_created(DirCreatedEvent(str(root / "Projects" / "Alpha")))
+        handler.on_deleted(DirDeletedEvent(str(root / "Projects" / "Alpha")))
+        handler.on_moved(
+            DirMovedEvent(
+                str(root / "Projects" / "Alpha"),
+                str(root / "Projects" / "Beta"),
+            )
+        )
+        handler.on_modified(FileModifiedEvent(str(root / "inbox" / "note.md")))
+
+        time.sleep(self.WAIT)
+
+    def test_registry_dotfile_project_dir_not_added(self, tmp_path):
+        """Dotfile dirs in Projects/ are not sent to registry.add_project()."""
+        import time
+        from unittest.mock import MagicMock
+        from watchdog.events import DirCreatedEvent
+
+        mock_registry = MagicMock()
+        handler, root, _ = self._make_handler(tmp_path, registry=mock_registry)
+        (root / "Projects" / ".hidden").mkdir(parents=True)
+
+        handler.on_created(DirCreatedEvent(str(root / "Projects" / ".hidden")))
+
+        time.sleep(self.WAIT)
+        mock_registry.add_project.assert_not_called()
