@@ -49,6 +49,7 @@ from vault.writer import move_attachment, move_note, write_note
 
 if TYPE_CHECKING:
     from core.config import VaultConfig
+    from vault.registry import LiveRegistry
 
 _log = logging.getLogger(__name__)
 
@@ -89,11 +90,7 @@ def _sibling_for(binary: Path, vault_config: VaultConfig) -> Path:
     Returns:
         Path to <parent>/<summaries_subdir>/<binary.name>.md
     """
-    return (
-        binary.parent
-        / vault_config.summaries_subdir
-        / f"{binary.name}.md"
-    )
+    return binary.parent / vault_config.summaries_subdir / f"{binary.name}.md"
 
 
 class _VaultEventHandler(FileSystemEventHandler):
@@ -122,6 +119,7 @@ class _VaultEventHandler(FileSystemEventHandler):
         on_folder_stable: Callable[[Path], None] | None = None,
         move_guard: MoveGuard | None = None,
         binary_settle_seconds: float = 5.0,
+        registry: "LiveRegistry | None" = None,
     ) -> None:
         super().__init__()
         self._root = root
@@ -135,6 +133,7 @@ class _VaultEventHandler(FileSystemEventHandler):
         self._on_folder_stable = on_folder_stable
         self._move_guard = move_guard
         self._binary_settle_seconds = binary_settle_seconds
+        self._registry = registry
         # key: str(path) → (active timer, callable, args)
         self._timers: dict[str, tuple[threading.Timer, Callable, tuple]] = {}
         self._lock = threading.Lock()
@@ -200,6 +199,18 @@ class _VaultEventHandler(FileSystemEventHandler):
         if event.is_directory:
             folder_path = Path(str(event.src_path))
             self._register_pending_folder(folder_path)
+            # Registry hookup — Project folder created under Projects/
+            if self._registry is not None:
+                parent = folder_path.parent
+                if (
+                    parent == self._vault_config.projects_path
+                    and not folder_path.name.startswith(".")
+                ):
+                    self._debounce(
+                        f"reg:add:{folder_path}",
+                        self._registry.add_project,
+                        (folder_path.name,),
+                    )
             return
 
         path = Path(str(event.src_path))
@@ -213,12 +224,8 @@ class _VaultEventHandler(FileSystemEventHandler):
 
         if self._should_skip(path):
             return
-        if path.suffix.lower() == ".md" and _is_misplaced(
-            path, self._vault_config
-        ):
-            self._debounce(
-                f"misplaced:{path}", self._handle_misplaced_md, (path,)
-            )
+        if path.suffix.lower() == ".md" and _is_misplaced(path, self._vault_config):
+            self._debounce(f"misplaced:{path}", self._handle_misplaced_md, (path,))
             return
         self._debounce(str(path), self._on_create, (path,))
 
@@ -353,6 +360,19 @@ class _VaultEventHandler(FileSystemEventHandler):
             return
         path = Path(str(event.src_path))
 
+        # Registry hookup — CLAUDE.md modify triggers domain refresh.
+        if self._registry is not None and path.suffix.lower() == ".md":
+            try:
+                parts = path.relative_to(self._vault_config.projects_path).parts
+                if len(parts) == 2 and parts[1] == "CLAUDE.md":
+                    self._debounce(
+                        f"reg:refresh:{parts[0]}",
+                        self._registry.refresh_domain,
+                        (parts[0],),
+                    )
+            except ValueError:
+                pass  # path not under projects_path
+
         # Binary modify detection fires for non-.md files inside the vault
         # that are NOT AI-output (Briefings, Synthesis, Documentation).
         # This covers both attachment/ binaries AND editable files at project
@@ -367,12 +387,8 @@ class _VaultEventHandler(FileSystemEventHandler):
             # and are not vault content — skip before binary modify dispatch.
             if self._should_skip(path):
                 return
-            if self._is_internal(path) and not _is_ai_output(
-                path, self._vault_config
-            ):
-                self._debounce(
-                    f"binmod:{path}", self._handle_binary_modify, (path,)
-                )
+            if self._is_internal(path) and not _is_ai_output(path, self._vault_config):
+                self._debounce(f"binmod:{path}", self._handle_binary_modify, (path,))
             return
 
         if self._should_skip(path):
@@ -381,6 +397,23 @@ class _VaultEventHandler(FileSystemEventHandler):
 
     def on_deleted(self, event: DirDeletedEvent | FileDeletedEvent) -> None:
         if event.is_directory:
+            folder_path = Path(str(event.src_path))
+            # Registry hookup — project / domain folder deleted.
+            if self._registry is not None:
+                projects_path = self._vault_config.projects_path
+                domain_path = self._vault_config.domain_path
+                if folder_path.parent == projects_path:
+                    self._debounce(
+                        f"reg:remove:{folder_path}",
+                        self._registry.remove_project,
+                        (folder_path.name,),
+                    )
+                elif folder_path.parent == domain_path:
+                    self._debounce(
+                        f"reg:inval_domain:{folder_path}",
+                        self._registry.invalidate_domain,
+                        (folder_path.name,),
+                    )
             return
         path = Path(str(event.src_path))
 
@@ -389,9 +422,7 @@ class _VaultEventHandler(FileSystemEventHandler):
         # the headline Brief #3 scenario (user deletes Projects/A/attachment/X.pdf).
         # Mirrors on_moved ordering (see lines below). TD-030 fix.
         if _is_binary(path) and self._is_internal(path):
-            self._debounce(
-                f"bin:{path}", self._handle_binary_delete, (path,)
-            )
+            self._debounce(f"bin:{path}", self._handle_binary_delete, (path,))
 
         if self._should_skip(path):
             return
@@ -399,6 +430,30 @@ class _VaultEventHandler(FileSystemEventHandler):
 
     def on_moved(self, event: DirMovedEvent | FileMovedEvent) -> None:
         if event.is_directory:
+            src = Path(str(event.src_path))
+            dst = Path(str(event.dest_path))
+            # Registry hookup — project / domain folder moved or renamed.
+            if self._registry is not None:
+                projects_path = self._vault_config.projects_path
+                domain_path = self._vault_config.domain_path
+                if src.parent == projects_path and dst.parent == projects_path:
+                    self._debounce(
+                        f"reg:rename:{src}->{dst}",
+                        self._registry.rename_project,
+                        (src.name, dst.name),
+                    )
+                elif src.parent == projects_path:
+                    self._debounce(
+                        f"reg:remove_moved:{src}",
+                        self._registry.remove_project,
+                        (src.name,),
+                    )
+                elif src.parent == domain_path:
+                    self._debounce(
+                        f"reg:inval_domain_moved:{src}",
+                        self._registry.invalidate_domain,
+                        (src.name,),
+                    )
             return
         src = Path(str(event.src_path))
         dst = Path(str(event.dest_path))
@@ -406,9 +461,7 @@ class _VaultEventHandler(FileSystemEventHandler):
         # Binary sync always fires for internal binary moves — even when dst
         # is inside a managed attachment/ dir (we need to orphan the old sibling).
         if _is_binary(src) and self._is_internal(src):
-            self._debounce(
-                f"bin:{dst}", self._handle_binary_move, (src, dst)
-            )
+            self._debounce(f"bin:{dst}", self._handle_binary_move, (src, dst))
 
         if self._should_skip(dst):
             return
@@ -438,9 +491,7 @@ class _VaultEventHandler(FileSystemEventHandler):
             counter += 1
             inbox_dst = self._vault_config.inbox_path / f"{stem}-{counter}{suffix}"
         if inbox_dst.exists():
-            _log.warning(
-                "watcher.misplaced_md_collision_exhausted path=%s", path
-            )
+            _log.warning("watcher.misplaced_md_collision_exhausted path=%s", path)
             return
 
         match move_note(path, inbox_dst, actor="ai"):
@@ -482,6 +533,7 @@ class _VaultEventHandler(FileSystemEventHandler):
     def _handle_binary_delete(self, path: Path) -> None:
         """Remove sibling DB row + audit when a binary file is deleted."""
         import structlog
+
         structlog.contextvars.bind_contextvars(correlation_id=new_correlation_id())
         sibling = _sibling_for(path, self._vault_config)
         sibling_vp = unicodedata.normalize(
@@ -492,17 +544,20 @@ class _VaultEventHandler(FileSystemEventHandler):
                 if rowcount == 0:
                     _log.warning(
                         "watcher.binary_delete_sibling_not_found binary=%s sibling=%s",
-                        path, sibling_vp,
+                        path,
+                        sibling_vp,
                     )
                 else:
                     _log.info(
                         "watcher.binary_delete_sibling_removed binary=%s sibling=%s",
-                        path, sibling_vp,
+                        path,
+                        sibling_vp,
                     )
             case Failure(error=e):
                 _log.warning(
                     "watcher.binary_delete_sibling_failed binary=%s error=%s",
-                    path, e,
+                    path,
+                    e,
                 )
         match audit_write(
             AIDecision(
@@ -520,9 +575,12 @@ class _VaultEventHandler(FileSystemEventHandler):
             case Success():
                 pass
 
-    def _handle_binary_move(self, src: Path, dst: Path, *, _settled: bool = False) -> None:
+    def _handle_binary_move(
+        self, src: Path, dst: Path, *, _settled: bool = False
+    ) -> None:
         """Sync sibling when a binary file is renamed or moved."""
         import structlog
+
         structlog.contextvars.bind_contextvars(correlation_id=new_correlation_id())
         old_sibling = _sibling_for(src, self._vault_config)
         new_sibling = _sibling_for(dst, self._vault_config)
@@ -539,7 +597,9 @@ class _VaultEventHandler(FileSystemEventHandler):
                 case Failure(error=e):
                     _log.warning(
                         "watcher.binary_move_sibling_rename_failed src=%s dst=%s error=%s",
-                        src, dst, e,
+                        src,
+                        dst,
+                        e,
                     )
                     return
                 case Success():
@@ -550,18 +610,22 @@ class _VaultEventHandler(FileSystemEventHandler):
                 case Success(value=note):
                     new_attachment_vp = _vp(dst)
                     note.metadata.attachment_path = new_attachment_vp
-                    match write_note(new_sibling, note.content, note.metadata, actor="ai"):
+                    match write_note(
+                        new_sibling, note.content, note.metadata, actor="ai"
+                    ):
                         case Failure(error=e):
                             _log.warning(
                                 "watcher.binary_move_pointer_update_failed sibling=%s error=%s",
-                                new_sibling, e,
+                                new_sibling,
+                                e,
                             )
                         case Success():
                             pass
                 case Failure(error=e):
                     _log.warning(
                         "watcher.binary_move_read_sibling_failed sibling=%s error=%s",
-                        new_sibling, e,
+                        new_sibling,
+                        e,
                     )
 
             # Step 3: update DB row
@@ -572,12 +636,14 @@ class _VaultEventHandler(FileSystemEventHandler):
                     if rowcount == 0:
                         _log.warning(
                             "watcher.binary_move_sibling_not_in_index old=%s new=%s",
-                            old_sibling_vp, new_sibling_vp,
+                            old_sibling_vp,
+                            new_sibling_vp,
                         )
                 case Failure(error=e):
                     _log.warning(
                         "watcher.binary_move_rename_failed old=%s error=%s",
-                        old_sibling_vp, e,
+                        old_sibling_vp,
+                        e,
                     )
 
             # Step 4: audit
@@ -622,12 +688,14 @@ class _VaultEventHandler(FileSystemEventHandler):
                         if rowcount == 0:
                             _log.warning(
                                 "watcher.binary_move_rehome_unknown_location orphan_not_found binary=%s sibling=%s",
-                                src, old_sibling_vp,
+                                src,
+                                old_sibling_vp,
                             )
                     case Failure(error=e):
                         _log.warning(
                             "watcher.binary_move_rehome_unknown_location_orphan_failed binary=%s error=%s",
-                            src, e,
+                            src,
+                            e,
                         )
                 match audit_write(
                     AIDecision(
@@ -657,7 +725,8 @@ class _VaultEventHandler(FileSystemEventHandler):
                 case Failure(error=e):
                     _log.warning(
                         "watcher.binary_rehome_get_row_failed sibling=%s error=%s",
-                        old_sibling_vp, e,
+                        old_sibling_vp,
+                        e,
                     )
                     # Fall back to orphan path
                     match delete_by_path(old_sibling_vp):
@@ -716,7 +785,8 @@ class _VaultEventHandler(FileSystemEventHandler):
                     if row.updated_by_human:
                         _log.info(
                             "watcher.binary_rehome_human_lock binary=%s sibling=%s",
-                            src, old_sibling_vp,
+                            src,
+                            old_sibling_vp,
                         )
                         return
 
@@ -732,7 +802,9 @@ class _VaultEventHandler(FileSystemEventHandler):
                     case Failure(error=e):
                         _log.warning(
                             "watcher.binary_rehome_move_failed src=%s dst=%s error=%s",
-                            dst, final_binary, e,
+                            dst,
+                            final_binary,
+                            e,
                         )
                         return
                     case Success():
@@ -744,7 +816,9 @@ class _VaultEventHandler(FileSystemEventHandler):
                     case Failure(error=e):
                         _log.warning(
                             "watcher.binary_rehome_move_note_failed src=%s dst=%s error=%s",
-                            old_sibling, new_sibling_path, e,
+                            old_sibling,
+                            new_sibling_path,
+                            e,
                         )
                         return
                     case Success():
@@ -758,18 +832,21 @@ class _VaultEventHandler(FileSystemEventHandler):
                             case Failure(error=e):
                                 _log.warning(
                                     "watcher.binary_rehome_pointer_update_failed sibling=%s error=%s",
-                                    new_sibling_path, e,
+                                    new_sibling_path,
+                                    e,
                                 )
                             case Success():
                                 pass
                     case Failure(error=e):
                         _log.warning(
                             "watcher.binary_rehome_read_sibling_failed sibling=%s error=%s",
-                            new_sibling_path, e,
+                            new_sibling_path,
+                            e,
                         )
             else:
                 # Sibling absent on disk: rebuild from DB row
                 from vault.frontmatter import NoteMetadata
+
                 rebuilt_meta = NoteMetadata(
                     type="attachment-summary",
                     confidence=row.confidence,
@@ -791,7 +868,8 @@ class _VaultEventHandler(FileSystemEventHandler):
                     case Failure(error=e):
                         _log.warning(
                             "watcher.binary_rehome_rebuild_failed sibling=%s error=%s",
-                            new_sibling_path, e,
+                            new_sibling_path,
+                            e,
                         )
                         return
                     case Success():
@@ -802,12 +880,14 @@ class _VaultEventHandler(FileSystemEventHandler):
                 case Success(value=0):
                     _log.warning(
                         "watcher.binary_rehome_db_row_not_found old=%s new=%s",
-                        old_sibling_vp, new_sibling_vp,
+                        old_sibling_vp,
+                        new_sibling_vp,
                     )
                 case Failure(error=e):
                     _log.warning(
                         "watcher.binary_rehome_rename_failed old=%s error=%s",
-                        old_sibling_vp, e,
+                        old_sibling_vp,
+                        e,
                     )
                 case Success():
                     pass
@@ -848,6 +928,7 @@ class _VaultEventHandler(FileSystemEventHandler):
         """
         import hashlib
         import structlog
+
         structlog.contextvars.bind_contextvars(correlation_id=new_correlation_id())
 
         # 1. Compute current hash
@@ -875,7 +956,8 @@ class _VaultEventHandler(FileSystemEventHandler):
                     case Failure(error=e):
                         _log.warning(
                             "watcher.binary_modify_hash_update_failed path=%s error=%s",
-                            path, e,
+                            path,
+                            e,
                         )
                         return
                     case Success():
@@ -899,15 +981,14 @@ class _VaultEventHandler(FileSystemEventHandler):
                     outcome="BINARY_MODIFIED",
                 ):
                     case Failure(error=e):
-                        _log.warning(
-                            "watcher.binary_modify_audit_failed error=%s", e
-                        )
+                        _log.warning("watcher.binary_modify_audit_failed error=%s", e)
                     case Success():
                         pass
             case Failure(error=e):
                 _log.warning(
                     "watcher.binary_modify_read_sibling_failed path=%s error=%s",
-                    sibling, e,
+                    sibling,
+                    e,
                 )
 
 
@@ -938,6 +1019,7 @@ class VaultWatcher:
         folder_max_workers: int = 4,
         on_folder_create: Callable[[Path], None] | None = None,
         move_guard: MoveGuard | None = None,
+        registry: "LiveRegistry | None" = None,
     ) -> None:
         self._move_guard = move_guard if move_guard is not None else MoveGuard()
         self._folder_executor = ThreadPoolExecutor(max_workers=folder_max_workers)
@@ -967,6 +1049,7 @@ class VaultWatcher:
             on_folder_stable=_on_folder_stable,
             move_guard=self._move_guard,
             binary_settle_seconds=binary_settle_seconds,
+            registry=registry,
         )
         self._observer = Observer()
         self._observer.schedule(self._handler, str(root), recursive=True)
