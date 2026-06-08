@@ -1,4 +1,5 @@
 """tests/test_storage/test_documents.py"""
+
 from __future__ import annotations
 
 import sqlite3
@@ -15,6 +16,7 @@ from vault.writer import WriteOutcome
 # ---------------------------------------------------------------------------
 # fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def db(tmp_path: Path) -> Path:
@@ -40,6 +42,7 @@ def _outcome(
 # ---------------------------------------------------------------------------
 # tests
 # ---------------------------------------------------------------------------
+
 
 def test_upsert_inserts_new_row(db):
     """upsert inserts a new row; get_by_path returns matching data."""
@@ -381,3 +384,59 @@ def test_replace_path_preserves_new_columns(db):
     assert row.project == "Alpha"
     assert row.status == "active"
     assert row.key_topics == ["quarterly-review"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — update_batch_id
+# ---------------------------------------------------------------------------
+
+
+def test_update_batch_id_sets_value(db):
+    """update_batch_id sets batch_id on the matching row."""
+    from storage.batches import insert as insert_batch
+    from storage.documents import get_by_path, update_batch_id, upsert
+
+    # Create a batch row first — FK constraint enforced.
+    br = insert_batch(
+        folder_name="test-batch",
+        destination_type=None,
+        destination_name=None,
+        confidence=1.0,
+        status="ROUTING",
+        file_count=1,
+        db_path=db,
+    )
+    assert isinstance(br, Success)
+    batch_id = br.value
+
+    outcome = _outcome("inbox/foo.md", content_hash="hash1")
+    r = upsert(outcome, batch_id=None, db_path=db)
+    assert isinstance(r, Success)
+
+    r2 = update_batch_id("inbox/foo.md", batch_id, db_path=db)
+    assert isinstance(r2, Success)
+    assert r2.value == 1
+
+    row_r = get_by_path("inbox/foo.md", db_path=db)
+    assert isinstance(row_r, Success)
+    assert row_r.value is not None
+    assert row_r.value.batch_id == batch_id
+
+
+def test_update_batch_id_not_found_returns_0(db):
+    """update_batch_id on unknown path returns Success(0)."""
+    from storage.documents import update_batch_id
+
+    r = update_batch_id("nonexistent/path.md", 42, db_path=db)
+    assert isinstance(r, Success)
+    assert r.value == 0
+
+
+def test_update_batch_id_db_error(tmp_path):
+    """update_batch_id on non-existent DB returns Failure."""
+    from storage.documents import update_batch_id
+
+    bad_db = tmp_path / "nonexistent" / "kb.db"
+    r = update_batch_id("inbox/foo.md", 42, db_path=bad_db)
+    assert isinstance(r, Failure)
+    assert r.recoverable is False

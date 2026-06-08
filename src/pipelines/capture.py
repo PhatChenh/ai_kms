@@ -30,6 +30,7 @@ from vault.frontmatter import NoteMetadata
 from vault.paths import (
     _is_misplaced,
     _location_context,
+    is_batch_subfolder,
     resolve_placement,
     to_vault_path,
 )
@@ -938,6 +939,39 @@ async def capture_file(
                 case _:
                     pass  # no source_hash or parse failure → let pipeline run
 
+    # ── Batch-stamp pre-step (TD-040): if parent folder is batch-worthy,
+    # look up or create a batch record and stamp context before pipeline runs.
+    _batch_vault_cfg = context.config.vault
+    if is_batch_subfolder(path.parent, _batch_vault_cfg):
+        import unicodedata as _ud
+
+        _folder_vp = _ud.normalize(
+            "NFC",
+            str(path.parent.relative_to(_batch_vault_cfg.root).as_posix()),
+        )
+        match batches.find_by_folder_path(_folder_vp, db_path=context.db_path):
+            case Success(value=None):
+                _batch_id = _insert_batch(
+                    folder_name=path.parent.name,
+                    destination_type=None,
+                    destination_name=None,
+                    confidence=1.0,
+                    status="ROUTING",
+                    file_count=1,
+                    folder_path=_folder_vp,
+                    ctx=context,
+                )
+                if _batch_id is not None:
+                    context = replace(context, batch_id=_batch_id)
+            case Success(value=_existing_bid):
+                context = replace(context, batch_id=_existing_bid)
+            case Failure(error=_berr):
+                logger.warning(
+                    "capture_file.batch_lookup_failed path=%s error=%s",
+                    path,
+                    _berr,
+                )
+
     return await run_pipeline(
         "capture",
         [extract, enrich_urls, summarize, metadata, apply_location_tags, store],  # type: ignore[list-item]
@@ -993,6 +1027,47 @@ async def scan_capture(
                     pass
             outcomes: list[WriteOutcome] = []
             vault_cfg = CONFIG.main.vault  # type: ignore[attr-defined]
+
+            # ── Subfolder detection pass (TD-041): dispatch unprocessed
+            # batch-worthy subfolders before the per-file loop. ────────
+            import unicodedata as _ud
+
+            _batch_roots: list[Path] = [vault_cfg.inbox_path]
+            if vault_cfg.projects_path.is_dir():
+                for _p in vault_cfg.projects_path.iterdir():
+                    if _p.is_dir():
+                        _batch_roots.append(_p)
+            if vault_cfg.domain_path.is_dir():
+                for _d in vault_cfg.domain_path.iterdir():
+                    if _d.is_dir():
+                        _batch_roots.append(_d)
+            for _root_dir in _batch_roots:
+                for _entry in sorted(_root_dir.iterdir()):
+                    if not _entry.is_dir():
+                        continue
+                    if is_batch_subfolder(_entry, vault_cfg):
+                        _entry_vp = _ud.normalize(
+                            "NFC",
+                            str(_entry.relative_to(vault_cfg.root).as_posix()),
+                        )
+                        match batches.find_by_folder_path(_entry_vp, db_path=_db_path):
+                            case Success(value=None):
+                                _cr = await capture_folder(_entry)
+                                if isinstance(_cr, Success):
+                                    for _wo in _cr.value:
+                                        outcomes.append(_wo)
+                            case Success(value=int()):
+                                logger.debug(
+                                    "scan_capture.subfolder_already_batched folder=%s",
+                                    _entry_vp,
+                                )
+                            case Failure(error=_berr):
+                                logger.warning(
+                                    "scan_capture.subfolder_batch_lookup_failed folder=%s error=%s",
+                                    _entry_vp,
+                                    _berr,
+                                )
+
             for entry in summary.added:
                 path = _root / entry.vault_path
                 # ── Phase 5 (T4): Misplaced-md sweep ──────────────────────────
@@ -1283,6 +1358,7 @@ def _insert_batch(
     status: str,
     file_count: int,
     ctx: PipelineContext,
+    folder_path: str | None = None,
 ) -> int | None:
     """Insert a batches row; return batch_id or None on failure (logged, non-fatal)."""
     match batches.insert(
@@ -1293,6 +1369,7 @@ def _insert_batch(
         status=status,
         file_count=file_count,
         db_path=ctx.db_path,
+        folder_path=folder_path,
     ):
         case Failure(error=e):
             logger.warning(
@@ -1369,7 +1446,14 @@ async def capture_folder(
     # ── Case B: project/domain drop — skip LLM, route by path. ──────────────
     if loc_type in ("project", "domain"):
         batch_id = _insert_batch(
-            folder_path.name, loc_type, loc_name, 1.0, "ROUTING", len(files), ctx
+            folder_path.name,
+            loc_type,
+            loc_name,
+            1.0,
+            "ROUTING",
+            len(files),
+            ctx,
+            folder_path=str(folder_path.relative_to(vault_cfg.root).as_posix()),
         )
         ctx_with_batch = replace(ctx, batch_id=batch_id)
         return await _capture_folder_files(folder_path, files, ctx_with_batch)
@@ -1423,6 +1507,7 @@ async def capture_folder(
                     "ROUTING",
                     len(new_files),
                     ctx,
+                    folder_path=str(new_folder.relative_to(vault_cfg.root).as_posix()),
                 )
                 _audit_folder_classified(
                     folder_path.name,
@@ -1446,6 +1531,7 @@ async def capture_folder(
             "PENDING_REVIEW",
             len(files),
             ctx,
+            folder_path=str(folder_path.relative_to(vault_cfg.root).as_posix()),
         )
         _audit_folder_classified(
             folder_path.name,
@@ -1467,6 +1553,7 @@ async def capture_folder(
         "CLUELESS",
         len(files),
         ctx,
+        folder_path=str(folder_path.relative_to(vault_cfg.root).as_posix()),
     )
     ctx_with_batch = replace(ctx, batch_id=batch_id)
     for f in files:

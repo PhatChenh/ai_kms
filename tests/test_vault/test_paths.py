@@ -555,3 +555,109 @@ class TestIsMisplaced:
         vc = VaultConfig(root=root)
         path = root / "Projects" / "stray.pdf"
         assert _is_misplaced(path, vc) is True
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — is_batch_subfolder predicate
+# ---------------------------------------------------------------------------
+
+
+class TestIsBatchSubfolder:
+    """Tests for is_batch_subfolder() — batch-worthiness predicate."""
+
+    def _vc(self, vault_root: Path) -> "VaultConfig":
+        from core.config import VaultConfig
+        return VaultConfig(root=vault_root)
+
+    def test_project_subfolder_true(self, vault_root: Path):
+        """Projects/<A>/subdir/ is batch-worthy."""
+        from vault.paths import is_batch_subfolder
+
+        vc = self._vc(vault_root)
+        (vault_root / "Projects" / "Alpha").mkdir(exist_ok=True)
+        subdir = vault_root / "Projects" / "Alpha" / "Q2-reports"
+        subdir.mkdir()
+        assert is_batch_subfolder(subdir, vc) is True
+
+    def test_domain_subfolder_true(self, vault_root: Path):
+        """Domain/<D>/subdir/ is batch-worthy."""
+        from vault.paths import is_batch_subfolder
+
+        vc = self._vc(vault_root)
+        (vault_root / "Domain" / "Finance").mkdir(exist_ok=True)
+        subdir = vault_root / "Domain" / "Finance" / "sub"
+        subdir.mkdir()
+        assert is_batch_subfolder(subdir, vc) is True
+
+    def test_inbox_subfolder_true(self, vault_root: Path):
+        """inbox/subdir/ is batch-worthy."""
+        from vault.paths import is_batch_subfolder
+
+        vc = self._vc(vault_root)
+        subdir = vault_root / "inbox" / "Q2-drop"
+        subdir.mkdir()
+        assert is_batch_subfolder(subdir, vc) is True
+
+    def test_project_root_false(self, vault_root: Path):
+        """Projects/<A>/ (root, not nested) is NOT batch-worthy."""
+        from vault.paths import is_batch_subfolder
+
+        vc = self._vc(vault_root)
+        proj = vault_root / "Projects" / "Alpha"
+        proj.mkdir()
+        assert is_batch_subfolder(proj, vc) is False
+
+    def test_domain_root_false(self, vault_root: Path):
+        """Domain/<D>/ (root) is NOT batch-worthy."""
+        from vault.paths import is_batch_subfolder
+
+        vc = self._vc(vault_root)
+        dom = vault_root / "Domain" / "Finance"
+        dom.mkdir()
+        assert is_batch_subfolder(dom, vc) is False
+
+    def test_inbox_root_false(self, vault_root: Path):
+        """inbox/ itself is NOT batch-worthy."""
+        from vault.paths import is_batch_subfolder
+
+        vc = self._vc(vault_root)
+        assert is_batch_subfolder(vault_root / "inbox", vc) is False
+
+    def test_attachment_blocked(self, vault_root: Path):
+        """Projects/<A>/attachment/ is NOT batch-worthy."""
+        from vault.paths import is_batch_subfolder
+
+        vc = self._vc(vault_root)
+        (vault_root / "Projects" / "Alpha").mkdir(exist_ok=True)
+        att = vault_root / "Projects" / "Alpha" / "attachment"
+        att.mkdir()
+        assert is_batch_subfolder(att, vc) is False
+
+    def test_summaries_blocked(self, vault_root: Path):
+        """Projects/<A>/.summaries/ is NOT batch-worthy."""
+        from vault.paths import is_batch_subfolder
+
+        vc = self._vc(vault_root)
+        (vault_root / "Projects" / "Alpha").mkdir(exist_ok=True)
+        sdir = vault_root / "Projects" / "Alpha" / ".summaries"
+        sdir.mkdir()
+        assert is_batch_subfolder(sdir, vc) is False
+
+    def test_archive_blocked(self, vault_root: Path):
+        """Domain/<D>/Archive/ is NOT batch-worthy."""
+        from vault.paths import is_batch_subfolder
+
+        vc = self._vc(vault_root)
+        (vault_root / "Domain" / "Finance").mkdir(exist_ok=True)
+        arch = vault_root / "Domain" / "Finance" / "Archive"
+        arch.mkdir()
+        assert is_batch_subfolder(arch, vc) is False
+
+    def test_outside_vault_false(self, tmp_path: Path, vault_root: Path):
+        """Path outside vault returns False."""
+        from vault.paths import is_batch_subfolder
+
+        vc = self._vc(vault_root)
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        assert is_batch_subfolder(outside, vc) is False
