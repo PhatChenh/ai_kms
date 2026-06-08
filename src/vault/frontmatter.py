@@ -39,6 +39,10 @@ _KNOWN_KEYS: frozenset[str] = frozenset(
         "attachment_path",
         "status",
         "source_hash",
+        "suggested_project",
+        "suggested_primary_domain",
+        "classify_confidence",
+        "classify_reasoning",
     }
 )
 
@@ -66,9 +70,25 @@ class NoteMetadata(BaseModel):
     attachment_path: str | None = None
     status: str | None = None
     source_hash: str | None = None
+    suggested_project: str | None = None
+    suggested_primary_domain: str | None = None
+    classify_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    classify_reasoning: str | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("type", "project", "summary", "source", "source_file", "attachment_path", "status", mode="before")
+    @field_validator(
+        "type",
+        "project",
+        "summary",
+        "source",
+        "source_file",
+        "attachment_path",
+        "status",
+        "suggested_project",
+        "suggested_primary_domain",
+        "classify_reasoning",
+        mode="before",
+    )
     @classmethod
     def _coerce_bool_to_str(cls, v: Any) -> Any:
         """PyYAML 1.1 maps yes/no/on/off/true/false to bool. Coerce back to str."""
@@ -149,7 +169,9 @@ def dumps(metadata: NoteMetadata, body: str) -> str:
         pass
 
     def _list_representer(dumper: yaml.Dumper, data: list) -> yaml.Node:
-        return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=False)
+        return dumper.represent_sequence(
+            "tag:yaml.org,2002:seq", data, flow_style=False
+        )
 
     _BlockDumper.add_representer(list, _list_representer)
 

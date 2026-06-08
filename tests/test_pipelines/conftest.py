@@ -22,8 +22,16 @@ def vault_root(tmp_path: Path) -> Path:
     """Empty vault skeleton at tmp_path/vault."""
     root = tmp_path / "vault"
     root.mkdir()
-    for d in ["inbox", "Projects", "Domain", "Documentation",
-              "Briefings", "Synthesis", "Archive", "attachment"]:
+    for d in [
+        "inbox",
+        "Projects",
+        "Domain",
+        "Documentation",
+        "Briefings",
+        "Synthesis",
+        "Archive",
+        "attachment",
+    ]:
         (root / d).mkdir()
     return root
 
@@ -32,6 +40,7 @@ def vault_root(tmp_path: Path) -> Path:
 def db_path(tmp_path: Path) -> Path:
     """Initialised SQLite DB at tmp_path/test.db."""
     from storage.db import init_db
+
     path = tmp_path / "test.db"
     result = init_db(path)
     assert isinstance(result, Success), f"DB init failed: {result}"
@@ -58,10 +67,32 @@ def pipeline_ctx(vault_root: Path, db_path: Path, monkeypatch):  # type: ignore[
     )
 
     import core.config as cfg_module
+
     fake_full = MagicMock()
     fake_full.main = config
-    fake_full.thresholds = Thresholds()  # real thresholds so routing in capture_folder works
+    fake_full.thresholds = (
+        Thresholds()
+    )  # real thresholds so routing in capture_folder works
     monkeypatch.setattr(cfg_module, "_CONFIG", fake_full)
+
+    # Patch classify() so existing capture-pipeline tests that pass through
+    # classify_step don't crash on get_provider("classify", config) when the
+    # config mock doesn't have a valid classify provider set up.
+    from core.result import Success as _Success
+    from pipelines.classify import ClassifyResult
+
+    async def _stub_classify(*args, **kwargs):
+        return _Success(
+            ClassifyResult(
+                project=None,
+                domains=[],
+                primary_domain=None,
+                confidence=0.0,
+                reasoning="Stubbed classify in test — no real AI call.",
+            )
+        )
+
+    monkeypatch.setattr("pipelines.capture.classify", _stub_classify)
 
     cid = "test-correlation-id"
     clear_contextvars()

@@ -1,6 +1,6 @@
 """pipelines/capture.py
 
-6-stage async capture pipeline: extract → enrich_urls → summarize → metadata → apply_location_tags → store.
+7-stage async capture pipeline: extract → enrich_urls → summarize → metadata → apply_location_tags → classify → store.
 Entry point: capture_file(path, context=None) -> Result[WriteOutcome]
 """
 
@@ -26,12 +26,19 @@ from handlers.registry import HandlerRegistry
 from handlers.url_fetcher import detect_urls, fetch_url_content
 from llm.prompt_loader import PROMPTS
 from llm.provider import get_provider
+from pipelines.classify import (
+    ClassifyResult,
+    build_folder_subject,
+    build_subject,
+    classify,
+)
 from vault.frontmatter import NoteMetadata
 from vault.paths import (
     _is_misplaced,
     _location_context,
     is_batch_subfolder,
     resolve_placement,
+    to_folder_path,
     to_vault_path,
 )
 from vault.reader import read_note
@@ -75,6 +82,8 @@ class MetadataResult:
     ai_tags: list[str]
     decision: AIDecision
     ai_project: str | None = None
+    target_type: str | None = None
+    target_name: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -336,6 +345,402 @@ async def apply_location_tags(
     return Success(mr)
 
 
+# ---------------------------------------------------------------------------
+# Stage 5.5: Classify (P2-CIC Phase 5)
+# ---------------------------------------------------------------------------
+
+
+def _write_classify_candidate(
+    path: Path,
+    suggested_project: str | None,
+    suggested_primary_domain: str | None,
+    classify_confidence: float,
+    classify_reasoning: str,
+) -> None:
+    """Write SUGGEST/CLUELESS candidate fields to a note's frontmatter.
+
+    Reads existing note to preserve all fields, then writes back with candidate
+    fields added.  Best-effort — failures are logged and silently discarded.
+    """
+    match read_note(path):
+        case Success(note):
+            existing = note.metadata
+            body = note.content
+        case Failure():
+            return
+
+    candidate_meta = NoteMetadata(
+        type=existing.type,
+        tags=existing.tags,
+        project=existing.project,
+        confidence=existing.confidence,
+        summary=existing.summary,
+        source=existing.source,
+        source_file=existing.source_file,
+        attachment_path=existing.attachment_path,
+        status="needs-review",
+        source_hash=existing.source_hash,
+        suggested_project=suggested_project,
+        suggested_primary_domain=suggested_primary_domain,
+        classify_confidence=classify_confidence,
+        classify_reasoning=classify_reasoning,
+        extra=existing.extra,
+    )
+
+    match write_note(path, body, candidate_meta, actor="ai"):
+        case Failure(error=e):
+            logger.warning(
+                "classify_step.candidate_write_failed", path=str(path), error=e
+            )
+        case Success():
+            pass
+
+
+def _write_classify_audit(
+    ctx: PipelineContext,
+    action: str,
+    confidence: float,
+    reasoning: str,
+    source_id: str,
+    outcome: str,
+) -> None:
+    """Write one classify audit row (best-effort)."""
+    decision = AIDecision(
+        action=action,
+        confidence=confidence,
+        reasoning=reasoning,
+        source_ids=[source_id],
+    )
+    match audit.write(
+        decision,
+        pipeline="capture",
+        stage="classify",
+        outcome=outcome,
+        db_path=ctx.db_path,
+    ):
+        case Failure(error=e):
+            logger.warning("classify_step.audit_failed", error=e)
+        case Success():
+            pass
+
+
+def _classify_auto_md_move(
+    mr: MetadataResult,
+    cr: ClassifyResult,
+    ctx: PipelineContext,
+    source_id: str,
+) -> Result[MetadataResult]:
+    """Phase 6: AUTO move handoff for loose inbox .md files.
+
+    Moves the file to Projects/<A>/ or Domain/<D>/, updates the documents row,
+    and returns an updated MetadataResult whose raw.source_path points to the
+    new location so store() does an in-place write at the destination.
+
+    If move_note fails (e.g. human lock), falls back to SUGGEST-style candidate
+    fields and returns the original mr unchanged — file stays in inbox.
+    """
+    src = mr.raw.source_path
+    vault_cfg = ctx.config.vault
+
+    # Determine target directory.
+    if cr.project:
+        target_dir = vault_cfg.projects_path / cr.project
+    else:
+        target_dir = vault_cfg.domain_path / (cr.primary_domain or "")
+
+    # Ensure target directory exists.
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    # Pick a non-colliding destination filename.
+    dst = _find_rename_dst(target_dir, src.stem)
+    if dst is None:
+        logger.warning(
+            "classify_step.auto_move_collision",
+            src=str(src),
+            target_dir=str(target_dir),
+            reason="all 10 rename slots taken",
+        )
+        # Fall back to SUGGEST — candidate fields, file stays in inbox.
+        _write_classify_candidate(
+            src,
+            cr.project,
+            cr.primary_domain,
+            cr.confidence,
+            cr.reasoning + " (AUTO move skipped: destination collision)",
+        )
+        return Success(mr)
+
+    # Register destination with move guard so watcher doesn't re-home.
+    _g = get_active()
+    if _g is not None:
+        _g.register(dst)
+
+    # Move the note.
+    old_vault_path = to_vault_path(src)
+    match move_note(src, dst, actor="ai"):
+        case Failure(recoverable=False) as f:
+            # Human lock — file stays in inbox, SUGGEST-style fallback
+            logger.warning(
+                "classify_step.auto_move_human_locked",
+                src=str(src),
+                dst=str(dst),
+                error=f.error,
+            )
+            _write_classify_candidate(
+                src,
+                cr.project,
+                cr.primary_domain,
+                cr.confidence,
+                cr.reasoning + f" (AUTO move blocked: {f.error})",
+            )
+            return Success(mr)
+        case Failure(error=err):
+            # Other error — log, CLUELESS-style fallback
+            logger.error(
+                "classify_step.auto_move_failed",
+                src=str(src),
+                dst=str(dst),
+                error=err,
+            )
+            _write_classify_candidate(
+                src,
+                None,
+                None,
+                cr.confidence,
+                cr.reasoning + f" (AUTO move failed: {err})",
+            )
+            return Success(mr)
+        case Success(value=outcome):
+            pass
+
+    # Update documents row — batch_id=NULL per P2-CIC-07 / R3.
+    match documents.replace_path(
+        old_vault_path, outcome, db_path=ctx.db_path, batch_id=None
+    ):
+        case Failure(error=err):
+            # DB failed — try to roll back the move.
+            logger.error(
+                "classify_step.auto_move_replace_path_failed",
+                src=str(src),
+                dst=str(dst),
+                error=err,
+            )
+            match move_note(dst, src, actor="ai"):
+                case Failure(error=rollback_err):
+                    logger.error(
+                        "classify_step.auto_move_rollback_failed",
+                        src=str(src),
+                        dst=str(dst),
+                        original_error=err,
+                        rollback_error=rollback_err,
+                    )
+                case Success():
+                    pass
+            # Fall back to SUGGEST — candidate fields, file back in inbox.
+            _write_classify_candidate(
+                src,
+                cr.project,
+                cr.primary_domain,
+                cr.confidence,
+                cr.reasoning + f" (AUTO move failed: DB error)",
+            )
+            return Success(mr)
+        case Success():
+            pass
+
+    logger.info(
+        "classify_step.auto_move_complete",
+        old_path=str(src),
+        new_path=str(dst),
+        target=cr.project or cr.primary_domain,
+    )
+
+    # Update MetadataResult so store() operates on the new location.
+    new_raw = replace(mr.raw, source_path=dst)
+    return Success(replace(mr, raw=new_raw))
+
+
+async def classify_step(
+    mr: MetadataResult, ctx: PipelineContext
+) -> Result[MetadataResult]:
+    """Stage 5.5: classify loose inbox notes via AI and route by confidence.
+
+    SUPPRESS / LOCATED files pass through unchanged.  Inbox files are sent to
+    the classify() engine; the confidence gate then routes to one of:
+
+      AUTO     — stamp ai_project + domain tags on MetadataResult
+                 (Phase 6 handles the actual file move)
+      SUGGEST  — write candidate fields to frontmatter, file stays in inbox
+      CLUELESS — write candidate fields with null values, file stays in inbox
+
+    Retry: up to 3 attempts with 1 s base exponential backoff.
+    Unrecoverable failures skip retry and fall through to CLUELESS.
+    """
+    import asyncio
+
+    # SUPPRESS passthrough (P2-CIC-06)
+    if ctx.skip_classify:
+        return Success(mr)
+
+    # LOCATED passthrough (P2-CIC-04)
+    loc_type, _ = _location_context(mr.raw.source_path, ctx.config.vault)
+    if loc_type in ("project", "domain"):
+        return Success(mr)
+
+    vault_cfg = ctx.config.vault
+
+    # --- Build subject ---
+    title = mr.ai_title or mr.raw.source_path.stem
+    tags = list(mr.ai_tags)
+    if mr.ai_domain:
+        domain_tag = f"domain/{mr.ai_domain}"
+        if domain_tag not in tags:
+            tags.append(domain_tag)
+    subject = build_subject(title, mr.summary or None, tags)
+
+    # --- Build destinations ---
+    from vault.registry import ProjectRegistry, build_registry, format_for_prompt
+
+    if ctx.registry is not None:
+        groups = ctx.registry.get_groups()
+        dest_registry = ProjectRegistry(groups=groups)
+    else:
+        match build_registry(vault_cfg):
+            case Success(reg):
+                dest_registry = reg
+            case Failure():
+                dest_registry = ProjectRegistry()
+    destinations = format_for_prompt(dest_registry)
+
+    # --- Retry loop ---
+    cr: ClassifyResult | None = None
+    max_attempts = 3
+    base_delay = 1.0
+
+    for attempt in range(1, max_attempts + 1):
+        result = await classify(subject, destinations, ctx.config)
+        match result:
+            case Success(value=classify_result):
+                cr = classify_result
+                break
+            case Failure(recoverable=False):
+                break  # Unrecoverable — no retry (OQ-CIC-B)
+            case Failure(recoverable=True) if attempt < max_attempts:
+                await asyncio.sleep(base_delay * (2 ** (attempt - 1)))
+            case Failure(recoverable=True):
+                break  # All retries exhausted
+
+    source_id = to_vault_path(mr.raw.source_path)
+
+    # --- All retries exhausted or unrecoverable -> CLUELESS ---
+    if cr is None:
+        _write_classify_candidate(
+            mr.raw.source_path,
+            None,
+            None,
+            0.0,
+            "Classification failed after 3 retry attempts.",
+        )
+        _write_classify_audit(
+            ctx,
+            "classify:clueless",
+            0.0,
+            "Classification failed after 3 retry attempts.",
+            source_id,
+            "CLUELESS",
+        )
+        return Success(mr)
+
+    # --- OQ-CIC-4: no project AND no primary domain -> forced CLUELESS ---
+    if cr.project is None and cr.primary_domain is None:
+        reasoning = cr.reasoning + " (no project or domain identified)"
+        _write_classify_candidate(
+            mr.raw.source_path, None, None, cr.confidence, reasoning
+        )
+        _write_classify_audit(
+            ctx, "classify:clueless", cr.confidence, reasoning, source_id, "CLUELESS"
+        )
+        return Success(mr)
+
+    # --- Confidence-gated routing ---
+    from core.config import CONFIG as _CONFIG
+    from core.config import RouteDecision
+
+    decision = _CONFIG.thresholds.for_pipeline("classify").route(cr.confidence)
+
+    if decision == RouteDecision.AUTO:
+        # AUTO — stamp MetadataResult (P2-CIC-01)
+        new_tags = list(mr.ai_tags)
+        for domain in cr.domains:
+            tag = f"domain/{domain}"
+            if tag not in new_tags:
+                new_tags.append(tag)
+
+        updated_mr = replace(
+            mr,
+            ai_project=cr.project,
+            ai_domain=cr.primary_domain or mr.ai_domain,
+            ai_tags=new_tags,
+        )
+
+        action = (
+            f"classify:{'project' if cr.project else 'domain'}/"
+            f"{cr.project or cr.primary_domain}"
+        )
+        _write_classify_audit(
+            ctx, action, cr.confidence, cr.reasoning, source_id, "AUTO"
+        )
+
+        # Phase 6: AUTO move handoff
+        if mr.raw.is_md:
+            return _classify_auto_md_move(updated_mr, cr, ctx, source_id)
+        else:
+            # Binary: set target_type/target_name so store() → _store_nonmd routes it.
+            _target_type = "project" if cr.project else "domain"
+            _target_name = cr.project or cr.primary_domain
+            return Success(
+                replace(
+                    updated_mr,
+                    target_type=_target_type,
+                    target_name=_target_name,
+                )
+            )
+
+    elif decision == RouteDecision.SUGGEST:
+        # SUGGEST — write candidate fields, file stays (P2-CIC-02)
+        _write_classify_candidate(
+            mr.raw.source_path,
+            cr.project,
+            cr.primary_domain,
+            cr.confidence,
+            cr.reasoning,
+        )
+        action = f"classify:suggest/{cr.project or cr.primary_domain}"
+        _write_classify_audit(
+            ctx, action, cr.confidence, cr.reasoning, source_id, "SUGGEST"
+        )
+        return Success(mr)
+
+    else:
+        # CLUELESS — write candidate fields with AI values (P2-CIC-03)
+        _write_classify_candidate(
+            mr.raw.source_path,
+            cr.project,
+            cr.primary_domain,
+            cr.confidence,
+            cr.reasoning,
+        )
+        _write_classify_audit(
+            ctx,
+            "classify:clueless",
+            cr.confidence,
+            cr.reasoning,
+            source_id,
+            "CLUELESS",
+        )
+        return Success(mr)
+
+
 def _audit_rename_gate(
     decision: RenameDecision, src: Path, ctx: PipelineContext
 ) -> None:
@@ -455,7 +860,13 @@ async def store(mr: MetadataResult, ctx: PipelineContext) -> Result[WriteOutcome
     if mr.raw.is_md:
         return await _store_md(mr, note_meta, ctx)
     else:
-        return await _store_nonmd(mr, note_meta, ctx)
+        return await _store_nonmd(
+            mr,
+            note_meta,
+            ctx,
+            target_type=mr.target_type,
+            target_name=mr.target_name,
+        )
 
 
 async def _store_md(
@@ -560,14 +971,19 @@ async def _store_md(
 
 
 async def _store_nonmd(
-    mr: MetadataResult, note_meta: NoteMetadata, ctx: PipelineContext
+    mr: MetadataResult,
+    note_meta: NoteMetadata,
+    ctx: PipelineContext,
+    target_type: str | None = None,
+    target_name: str | None = None,
 ) -> Result[WriteOutcome]:
     """Handle non-md files: resolve destination (LOCATED or CLUELESS), write sibling, move binary.
 
     LOCATED: source path reveals project or domain → sibling written first, binary moved second
              (DECISION-025 sibling-first ordering).
-    CLUELESS: no path context → binary parked in inbox, pending-routing marker written for
-              Phase 2 Classify (DECISION-027).
+    CLUELESS: no path context → binary stays in inbox, real-summary sibling written with
+              needs-review status and null suggested_* fields (Phase 7 / C7 replaces old
+              pending-routing placeholder).
     """
 
     src = mr.raw.source_path
@@ -575,17 +991,16 @@ async def _store_nonmd(
     vault_cfg = ctx.config.vault
 
     # ── Inline destination resolution (DECISION-026: pure path math, no AI) ─
-    target_type: str | None = None
-    target_name: str | None = None
-
-    if vault_cfg.projects_path in src.parents:
-        rel = src.relative_to(vault_cfg.projects_path)
-        if len(rel.parts) >= 2:
-            target_type, target_name = "project", rel.parts[0]
-    elif vault_cfg.domain_path in src.parents:
-        rel = src.relative_to(vault_cfg.domain_path)
-        if len(rel.parts) >= 2:
-            target_type, target_name = "domain", rel.parts[0]
+    if target_type is None:
+        # Derive from source path only when the caller doesn't supply a target.
+        if vault_cfg.projects_path in src.parents:
+            rel = src.relative_to(vault_cfg.projects_path)
+            if len(rel.parts) >= 2:
+                target_type, target_name = "project", rel.parts[0]
+        elif vault_cfg.domain_path in src.parents:
+            rel = src.relative_to(vault_cfg.domain_path)
+            if len(rel.parts) >= 2:
+                target_type, target_name = "domain", rel.parts[0]
 
     if target_type is not None:
         # LOCATED path: rename gate + rich sibling body + binary move
@@ -720,8 +1135,10 @@ async def _store_nonmd(
                 return Success(sibling_outcome)
 
     else:
-        # CLUELESS path: no project/domain context (DECISION-027)
-        # Binary parked in inbox; pending-routing marker written for Phase 2 Classify.
+        # CLUELESS path: no project/domain context.
+        # classify_step has already run and determined CLUELESS; now write a
+        # real-summary marker with needs-review status (replaces old pending-routing
+        # placeholder — Phase 7 / C7).
         if vault_cfg.inbox_path in src.parents:
             final_src = src  # already in inbox — stays
         else:
@@ -740,24 +1157,49 @@ async def _store_nonmd(
                 case Success():
                     final_src = inbox_dst
 
-        # Write pending-routing marker at inbox/.summaries/<filename>.md
+        # Handle missing binary (e.g., deleted after extraction — TD-026).
+        if not final_src.exists():
+            _source_hash = None
+            rich_body = (
+                f"## {mr.ai_title or final_src.stem}\n\n"
+                f"{mr.summary}\n\n"
+                f"_Warning: binary file not found at capture time._\n"
+            )
+        else:
+            # Generate rich summary body (same prompt as LOCATED path).
+            provider = get_provider("capture", ctx.config)
+            system, user = PROMPTS["summarize_attachment"].render(
+                file_type=suffix.lower(),
+                short_summary=mr.summary,
+                text=mr.raw.text,
+            )
+            match await provider.complete(system, user):
+                case Failure() as f:
+                    return f
+                case Success(value=resp):
+                    rich_body = resp.content.strip()
+
+            # Compute source_hash for idempotent re-entry guard.
+            _source_hash = hashlib.sha256(final_src.read_bytes()).hexdigest()
+
+        # Write needs-review marker at inbox/.summaries/<filename>.md
         summaries_dir = vault_cfg.inbox_path / vault_cfg.summaries_subdir
         summaries_dir.mkdir(parents=True, exist_ok=True)
         marker_path = summaries_dir / f"{final_src.name}.md"
         attachment_rel = to_vault_path(final_src)
         marker_meta = NoteMetadata(
             type="attachment-summary",
-            status="pending-routing",
+            status="needs-review",
             attachment_path=attachment_rel,
+            summary=mr.summary,
+            source_hash=_source_hash,
             tags=["type/attachment-summary"],
+            suggested_project=None,
+            suggested_primary_domain=None,
+            classify_confidence=0.0,
+            classify_reasoning="No project/domain context — manual review required.",
         )
-        marker_body = (
-            f"_Pending classification — binary at:_ `{attachment_rel}`\n\n"
-            "This marker was created by the capture pipeline without project/domain "
-            "context. Phase 2 (Classify) will replace this body with a full summary "
-            "and route the binary into a project or domain attachment folder.\n"
-        )
-        match write_note(marker_path, marker_body, marker_meta, actor="ai"):
+        match write_note(marker_path, rich_body, marker_meta, actor="ai"):
             case Failure() as f:
                 return f
             case Success(value=marker_outcome):
@@ -767,7 +1209,7 @@ async def _store_nonmd(
         clueless_decision = AIDecision(
             action="capture:store",
             confidence=1.0,
-            reasoning="No project/domain context — parked for Phase 2 Classify",
+            reasoning="No project/domain context — needs manual review",
             source_ids=[to_vault_path(src)],
         )
         match audit.write(
@@ -857,20 +1299,6 @@ async def capture_file(
             },
         )
 
-    # Early-exit guard for CLUELESS binaries already parked in inbox (DECISION-027).
-    # If inbox/.summaries/<filename>.md has status=pending-routing, skip re-processing.
-    if path.suffix.lower() != ".md":
-        vault_cfg = context.config.vault
-        marker = vault_cfg.inbox_path / vault_cfg.summaries_subdir / f"{path.name}.md"
-        if marker.exists():
-            match read_note(marker):
-                case Success(value=note) if note.metadata.status == "pending-routing":
-                    return Failure(
-                        error="pending-routing — binary already indexed; awaiting Phase 2 classify",
-                        recoverable=True,
-                        context={"path": str(path), "marker": str(marker)},
-                    )
-
     # Idempotent-capture guard: skip if file content is unchanged since last capture.
     # For .md files: compare body hash (same method as write_note) against DB content_hash.
     # For binary files: compare file-level hash against source_hash stored in sibling frontmatter.
@@ -943,12 +1371,7 @@ async def capture_file(
     # look up or create a batch record and stamp context before pipeline runs.
     _batch_vault_cfg = context.config.vault
     if is_batch_subfolder(path.parent, _batch_vault_cfg):
-        import unicodedata as _ud
-
-        _folder_vp = _ud.normalize(
-            "NFC",
-            str(path.parent.relative_to(_batch_vault_cfg.root).as_posix()),
-        )
+        _folder_vp = to_folder_path(path.parent, _batch_vault_cfg.root)
         match batches.find_by_folder_path(_folder_vp, db_path=context.db_path):
             case Success(value=None):
                 _batch_id = _insert_batch(
@@ -974,7 +1397,15 @@ async def capture_file(
 
     return await run_pipeline(
         "capture",
-        [extract, enrich_urls, summarize, metadata, apply_location_tags, store],  # type: ignore[list-item]
+        [
+            extract,
+            enrich_urls,
+            summarize,
+            metadata,
+            apply_location_tags,
+            classify_step,
+            store,
+        ],  # type: ignore[list-item]
         path,
         context=context,
     )
@@ -1030,7 +1461,6 @@ async def scan_capture(
 
             # ── Subfolder detection pass (TD-041): dispatch unprocessed
             # batch-worthy subfolders before the per-file loop. ────────
-            import unicodedata as _ud
 
             _batch_roots: list[Path] = [vault_cfg.inbox_path]
             if vault_cfg.projects_path.is_dir():
@@ -1046,10 +1476,7 @@ async def scan_capture(
                     if not _entry.is_dir():
                         continue
                     if is_batch_subfolder(_entry, vault_cfg):
-                        _entry_vp = _ud.normalize(
-                            "NFC",
-                            str(_entry.relative_to(vault_cfg.root).as_posix()),
-                        )
+                        _entry_vp = to_folder_path(_entry, vault_cfg.root)
                         match batches.find_by_folder_path(_entry_vp, db_path=_db_path):
                             case Success(value=None):
                                 _cr = await capture_folder(_entry)
@@ -1223,7 +1650,7 @@ def _build_vault_context(vault_cfg) -> str:
     are already mapped to which domains.  Falls back to a flat folder listing
     on registry build failure.
 
-    Used to ground the classify_folder LLM prompt.
+    Used to build valid_destinations for the classify() prompt.
     """
     import logging
 
@@ -1273,33 +1700,6 @@ def _collect_folder_files(folder_path: Path, vault_cfg: VaultConfig) -> list[Pat
     return files
 
 
-def _parse_classify_json(content: str) -> tuple[str | None, str | None, float]:
-    """Parse a classify_folder LLM response.
-
-    Returns (target_type, target_name, confidence). On any parse/validation
-    failure returns (None, None, 0.0) so the caller routes as CLUELESS.
-    """
-    cleaned = _FENCE_RE.sub("", content).strip()
-    try:
-        parsed = json.loads(cleaned)
-    except (json.JSONDecodeError, TypeError):
-        logger.warning(
-            "classify_folder.json_parse_failed", content_preview=content[:200]
-        )
-        return (None, None, 0.0)
-
-    target_type = parsed.get("target_type")
-    target_name = parsed.get("target_name")
-    confidence = parsed.get("confidence", 0.0)
-    if target_type not in ("domain", "project") or not isinstance(target_name, str):
-        return (None, None, 0.0)
-    try:
-        confidence = float(confidence)
-    except (TypeError, ValueError):
-        confidence = 0.0
-    return (target_type, target_name, confidence)
-
-
 def _folder_destination(target_type: str, target_name: str, vault_cfg) -> Path:
     """Resolve the destination *folder path* for a routed drop."""
     base = (
@@ -1317,12 +1717,17 @@ async def _capture_folder_files(
 
     Failures (including FILE_LOST) are counted but never abort the loop. Returns
     Success of the successful WriteOutcomes.
+
+    Sets skip_classify=True on the per-file context — files captured under this
+    helper are already LOCATED (project/domain path) or AUTO-moved, so per-file
+    classify is unnecessary (C7 / P2-CIC-06).
     """
+    ctx_suppress = replace(ctx, skip_classify=True)
     outcomes: list[WriteOutcome] = []
     failures = 0
     for f in files:
         try:
-            result = await capture_file(f, ctx)
+            result = await capture_file(f, ctx_suppress)
         except Exception as exc:  # defensive: a file capture must not kill the batch
             failures += 1
             logger.warning("capture_folder.file_exception", path=str(f), error=str(exc))
@@ -1453,29 +1858,45 @@ async def capture_folder(
             "ROUTING",
             len(files),
             ctx,
-            folder_path=str(folder_path.relative_to(vault_cfg.root).as_posix()),
+            folder_path=to_folder_path(folder_path, vault_cfg.root),
         )
         ctx_with_batch = replace(ctx, batch_id=batch_id)
         return await _capture_folder_files(folder_path, files, ctx_with_batch)
 
-    # ── Case A: inbox (or unknown) drop — classify via LLM. ─────────────────
+    # ── Case A: inbox (or unknown) drop — classify via unified engine. ──────
     file_manifest = "\n".join(f.name for f in files)
-    vault_context = _build_vault_context(vault_cfg)
-    system, user = PROMPTS["classify_folder"].render(
-        folder_name=folder_path.name,
-        file_manifest=file_manifest,
-        vault_context=vault_context,
-    )
+    subject = build_folder_subject(folder_path.name, file_manifest)
+    valid_destinations = _build_vault_context(vault_cfg)
 
-    # LLM failure → treat as CLUELESS (confidence 0.0), never abort.
-    match await get_provider("capture", ctx.config).complete(system, user):
+    # classify() handles its own provider dispatch, JSON parsing, and validation.
+    # Failure → treat as CLUELESS (confidence 0.0), never abort.
+    match await classify(subject, valid_destinations, ctx.config):
         case Failure(error=e):
             logger.warning(
-                "capture_folder.llm_failed", folder=str(folder_path), error=e
+                "capture_folder.classify_failed",
+                folder=str(folder_path),
+                error=e,
             )
             target_type, target_name, confidence = None, None, 0.0
-        case Success(value=resp):
-            target_type, target_name, confidence = _parse_classify_json(resp.content)
+        case Success(value=cr):
+            # Derive target_type/target_name from ClassifyResult.
+            if cr.project:
+                target_type, target_name = "project", cr.project
+            elif cr.primary_domain:
+                target_type, target_name = "domain", cr.primary_domain
+            elif cr.domains:
+                target_type, target_name = "domain", cr.domains[0]
+            else:
+                target_type, target_name = None, None
+            confidence = cr.confidence
+            logger.info(
+                "capture_folder.classified",
+                folder=folder_path.name,
+                target_type=target_type,
+                target_name=target_name,
+                confidence=confidence,
+                reasoning=cr.reasoning,
+            )
 
     from core.config import CONFIG as _CONFIG  # lazy — thresholds not on MainConfig
 
@@ -1507,7 +1928,7 @@ async def capture_folder(
                     "ROUTING",
                     len(new_files),
                     ctx,
-                    folder_path=str(new_folder.relative_to(vault_cfg.root).as_posix()),
+                    folder_path=to_folder_path(new_folder, vault_cfg.root),
                 )
                 _audit_folder_classified(
                     folder_path.name,
@@ -1531,7 +1952,7 @@ async def capture_folder(
             "PENDING_REVIEW",
             len(files),
             ctx,
-            folder_path=str(folder_path.relative_to(vault_cfg.root).as_posix()),
+            folder_path=to_folder_path(folder_path, vault_cfg.root),
         )
         _audit_folder_classified(
             folder_path.name,
@@ -1545,6 +1966,8 @@ async def capture_folder(
 
     # CLUELESS (or AUTO without a valid target): write per-file CLUELESS markers
     # through the existing capture pipeline, then record a CLUELESS batch.
+    # Per-file classify is suppressed — folder-level classify already ran and
+    # returned CLUELESS; re-running per-file is redundant (C7 / P2-CIC-06).
     batch_id = _insert_batch(
         folder_path.name,
         target_type,
@@ -1553,11 +1976,11 @@ async def capture_folder(
         "CLUELESS",
         len(files),
         ctx,
-        folder_path=str(folder_path.relative_to(vault_cfg.root).as_posix()),
+        folder_path=to_folder_path(folder_path, vault_cfg.root),
     )
-    ctx_with_batch = replace(ctx, batch_id=batch_id)
+    ctx_suppress = replace(ctx, batch_id=batch_id, skip_classify=True)
     for f in files:
-        match await capture_file(f, ctx_with_batch):
+        match await capture_file(f, ctx_suppress):
             case Failure(error=e):
                 logger.info("capture_folder.clueless_file_failed", path=str(f), error=e)
             case Success():

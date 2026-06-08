@@ -68,7 +68,7 @@ self_learning:
   min_evaluations: 20
 env: test   # dev | prod = use vault.root | test = use testing.vault_path below
 testing:
-  vault_path: /Users/phatchenh/ai_kms_test_vault/actual_test_vault  # isolated vault for manual testing guide runs — never the real vault
+  vault_path: /tmp/ai_kms_test_vault  # isolated vault for manual testing guide runs — never the real vault
 vault:
   archive_dir: Archive
   briefings_dir: Briefings
