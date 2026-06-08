@@ -560,7 +560,11 @@ async def _store_md(
 
 
 async def _store_nonmd(
-    mr: MetadataResult, note_meta: NoteMetadata, ctx: PipelineContext
+    mr: MetadataResult,
+    note_meta: NoteMetadata,
+    ctx: PipelineContext,
+    target_type: str | None = None,
+    target_name: str | None = None,
 ) -> Result[WriteOutcome]:
     """Handle non-md files: resolve destination (LOCATED or CLUELESS), write sibling, move binary.
 
@@ -568,6 +572,10 @@ async def _store_nonmd(
              (DECISION-025 sibling-first ordering).
     CLUELESS: no path context → binary parked in inbox, pending-routing marker written for
               Phase 2 Classify (DECISION-027).
+
+    target_type / target_name, when provided, override the inline path-derived
+    destination.  This lets Phase 2 Classify tell the filer "put this in
+    Projects/Alpha" without having to guess from the source path.
     """
 
     src = mr.raw.source_path
@@ -575,17 +583,16 @@ async def _store_nonmd(
     vault_cfg = ctx.config.vault
 
     # ── Inline destination resolution (DECISION-026: pure path math, no AI) ─
-    target_type: str | None = None
-    target_name: str | None = None
-
-    if vault_cfg.projects_path in src.parents:
-        rel = src.relative_to(vault_cfg.projects_path)
-        if len(rel.parts) >= 2:
-            target_type, target_name = "project", rel.parts[0]
-    elif vault_cfg.domain_path in src.parents:
-        rel = src.relative_to(vault_cfg.domain_path)
-        if len(rel.parts) >= 2:
-            target_type, target_name = "domain", rel.parts[0]
+    if target_type is None:
+        # Derive from source path only when the caller doesn't supply a target.
+        if vault_cfg.projects_path in src.parents:
+            rel = src.relative_to(vault_cfg.projects_path)
+            if len(rel.parts) >= 2:
+                target_type, target_name = "project", rel.parts[0]
+        elif vault_cfg.domain_path in src.parents:
+            rel = src.relative_to(vault_cfg.domain_path)
+            if len(rel.parts) >= 2:
+                target_type, target_name = "domain", rel.parts[0]
 
     if target_type is not None:
         # LOCATED path: rename gate + rich sibling body + binary move
