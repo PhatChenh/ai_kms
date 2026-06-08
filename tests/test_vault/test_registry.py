@@ -659,3 +659,39 @@ class TestWatcherRegistryHookups:
 
         time.sleep(self.WAIT)
         mock_registry.add_project.assert_not_called()
+
+
+class TestVaultContextIntegration:
+    """Verify _build_vault_context uses format_for_prompt from registry."""
+
+    def test_build_vault_context_uses_registry(self, vault_config):
+        """_build_vault_context returns registry-formatted output."""
+        from pipelines.capture import _build_vault_context
+
+        (vault_config.root / "Domain" / "Finance").mkdir(parents=True, exist_ok=True)
+        _write_claude_md(
+            vault_config.root / "Projects" / "Alpha",
+            tags=["domain/Finance"],
+        )
+
+        output = _build_vault_context(vault_config)
+
+        # Should use format_for_prompt format (not raw folder listing)
+        assert "Finance:" in output
+        assert "Alpha" in output
+        # Should show project under its domain
+        assert "  - Alpha" in output
+
+    def test_build_vault_context_fallback_on_missing_projects(self, vault_config):
+        """_build_vault_context falls back to flat listing if registry fails."""
+        import shutil
+        from pipelines.capture import _build_vault_context
+
+        shutil.rmtree(vault_config.root / "Projects")
+
+        output = _build_vault_context(vault_config)
+
+        # Should NOT crash — fallback to flat listing
+        assert isinstance(output, str)
+        assert "Domains:" in output
+        assert "Projects:" in output

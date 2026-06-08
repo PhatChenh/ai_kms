@@ -27,10 +27,21 @@ from handlers.url_fetcher import detect_urls, fetch_url_content
 from llm.prompt_loader import PROMPTS
 from llm.provider import get_provider
 from vault.frontmatter import NoteMetadata
-from vault.paths import _is_misplaced, _location_context, resolve_placement, to_vault_path
+from vault.paths import (
+    _is_misplaced,
+    _location_context,
+    resolve_placement,
+    to_vault_path,
+)
 from vault.reader import read_note
 from vault.move_guard import get_active
-from vault.writer import WriteOutcome, move_attachment, move_folder, move_note, write_note
+from vault.writer import (
+    WriteOutcome,
+    move_attachment,
+    move_folder,
+    move_note,
+    write_note,
+)
 import core.audit as audit
 from core.logging_setup import new_correlation_id
 from core.rename_gate import RenameDecision, decide_rename
@@ -167,8 +178,12 @@ async def enrich_urls(raw: RawContent, ctx: PipelineContext) -> Result[RawConten
     if not fetched:
         return Success(raw)
 
-    augmented = raw.text + "\n\n---\n[Referenced URL Content]\n\n" + "\n\n".join(fetched)
-    return Success(RawContent(text=augmented, source_path=raw.source_path, is_md=raw.is_md))
+    augmented = (
+        raw.text + "\n\n---\n[Referenced URL Content]\n\n" + "\n\n".join(fetched)
+    )
+    return Success(
+        RawContent(text=augmented, source_path=raw.source_path, is_md=raw.is_md)
+    )
 
 
 async def summarize(raw: RawContent, ctx: PipelineContext) -> Result[SummarizeResult]:
@@ -210,10 +225,10 @@ async def metadata(sr: SummarizeResult, ctx: PipelineContext) -> Result[Metadata
                 ai_tags, violations = validate_tags(ai_tags, ctx.taxonomy)
 
             ai_type = next(
-                (t[len("type/"):] for t in ai_tags if t.startswith("type/")), None
+                (t[len("type/") :] for t in ai_tags if t.startswith("type/")), None
             )
             ai_domain = next(
-                (t[len("domain/"):] for t in ai_tags if t.startswith("domain/")), None
+                (t[len("domain/") :] for t in ai_tags if t.startswith("domain/")), None
             )
 
             source_id = to_vault_path(sr.raw.source_path)
@@ -259,7 +274,9 @@ async def metadata(sr: SummarizeResult, ctx: PipelineContext) -> Result[Metadata
                     db_path=ctx.db_path,
                 ):
                     case Failure():
-                        logger.warning("tag_violation.audit_failed", violations=violations)
+                        logger.warning(
+                            "tag_violation.audit_failed", violations=violations
+                        )
                     case Success():
                         pass
 
@@ -276,7 +293,9 @@ async def metadata(sr: SummarizeResult, ctx: PipelineContext) -> Result[Metadata
             )
 
 
-async def apply_location_tags(mr: MetadataResult, ctx: PipelineContext) -> Result[MetadataResult]:
+async def apply_location_tags(
+    mr: MetadataResult, ctx: PipelineContext
+) -> Result[MetadataResult]:
     """Stage 5: derive domain/project tags from file location and set them on the note.
 
     Inspects the source path against the vault layout:
@@ -294,9 +313,7 @@ async def apply_location_tags(mr: MetadataResult, ctx: PipelineContext) -> Resul
 
     if location_type == "domain" and location_name is not None:
         valid_domains = (
-            ctx.taxonomy.valid_domains
-            if ctx.taxonomy is not None
-            else frozenset()
+            ctx.taxonomy.valid_domains if ctx.taxonomy is not None else frozenset()
         )
         if location_name not in valid_domains:
             logger.warning(
@@ -376,7 +393,9 @@ def _audit_file_lost(path: Path, stage: str, ctx: PipelineContext) -> None:
         db_path=ctx.db_path,
     ):
         case Failure(error=e):
-            logger.warning("file_lost.audit_failed", path=str(path), stage=stage, error=e)
+            logger.warning(
+                "file_lost.audit_failed", path=str(path), stage=stage, error=e
+            )
         case Success():
             pass
 
@@ -578,7 +597,10 @@ async def _store_nonmd(
                 context={"path": str(src)},
             )
         decision = decide_rename(
-            src, mr.ai_title, is_existing_doc=False, config=ctx.config.capture.rename_gate
+            src,
+            mr.ai_title,
+            is_existing_doc=False,
+            config=ctx.config.capture.rename_gate,
         )
         _audit_rename_gate(decision, src, ctx)
         sanitized_stem = decision.final_stem or src.stem
@@ -595,7 +617,9 @@ async def _store_nonmd(
             counter = 0
             while attachment_dst.exists() and counter < 99:
                 counter += 1
-                attachment_dst = placement.final_dir / f"{sanitized_stem}-{counter}{suffix}"
+                attachment_dst = (
+                    placement.final_dir / f"{sanitized_stem}-{counter}{suffix}"
+                )
             if attachment_dst.exists():
                 return Failure(
                     error="attachment collision: all 100 slots taken",
@@ -686,7 +710,9 @@ async def _store_nonmd(
                 pass
 
         # Step 7: Upsert documents row for sibling
-        match documents.upsert(sibling_outcome, db_path=ctx.db_path, batch_id=ctx.batch_id):
+        match documents.upsert(
+            sibling_outcome, db_path=ctx.db_path, batch_id=ctx.batch_id
+        ):
             case Failure() as f:
                 return f
             case Success():
@@ -755,7 +781,9 @@ async def _store_nonmd(
             case Success():
                 pass
 
-        match documents.upsert(marker_outcome, db_path=ctx.db_path, batch_id=ctx.batch_id):
+        match documents.upsert(
+            marker_outcome, db_path=ctx.db_path, batch_id=ctx.batch_id
+        ):
             case Failure() as f:
                 return f
             case Success():
@@ -821,7 +849,11 @@ async def capture_file(
         return Failure(
             error=f"file too recent (age={age:.1f}s < cooldown={cooldown}s); retry later",
             recoverable=True,
-            context={"path": str(path), "age_seconds": age, "cooldown_seconds": cooldown},
+            context={
+                "path": str(path),
+                "age_seconds": age,
+                "cooldown_seconds": cooldown,
+            },
         )
 
     # Early-exit guard for CLUELESS binaries already parked in inbox (DECISION-027).
@@ -847,7 +879,9 @@ async def capture_file(
                 # read_note already computes sha256(body.rstrip("\n").encode()) —
                 # same method as write_note, so directly compare against DB content_hash.
                 _current_hash = _existing_note.content_hash
-                _db_result = documents.get_by_path(to_vault_path(path), db_path=context.db_path)
+                _db_result = documents.get_by_path(
+                    to_vault_path(path), db_path=context.db_path
+                )
                 if (
                     _db_result.is_success()
                     and _db_result.value is not None
@@ -867,9 +901,7 @@ async def capture_file(
     else:
         _vault_cfg = context.config.vault
         _sibling_path = (
-            _vault_cfg.inbox_path
-            / _vault_cfg.summaries_subdir
-            / f"{path.name}.md"
+            _vault_cfg.inbox_path / _vault_cfg.summaries_subdir / f"{path.name}.md"
         )
         # Also check LOCATED sibling (may be in project/domain summaries dir).
         # Try to find sibling by looking in known summaries locations.
@@ -976,14 +1008,13 @@ async def scan_capture(
                             vault_cfg.inbox_path / f"{path.stem}-{counter}{path.suffix}"
                         )
                     # Clean up stale DB row before moving
-                    documents.delete_by_path(
-                        to_vault_path(path), db_path=_db_path
-                    )
+                    documents.delete_by_path(to_vault_path(path), db_path=_db_path)
                     match move_note(path, inbox_dst, actor="ai"):
                         case Failure(error=e):
                             logger.warning(
                                 "scan_capture.misplaced_sweep_failed path=%s error=%s",
-                                path, e,
+                                path,
+                                e,
                             )
                             continue  # skip capture_file for this file
                         case Success():
@@ -1060,16 +1091,22 @@ async def scan_capture(
                     case Success(value=v):
                         outcomes.append(v)
                     case Failure(error=e, recoverable=True):
-                        logger.info("scan_capture.skip_modified", path=str(path), reason=e)
+                        logger.info(
+                            "scan_capture.skip_modified", path=str(path), reason=e
+                        )
                     case Failure() as f:
                         logger.warning(
-                            "scan_capture.failed_modified", path=str(path), error=f.error
+                            "scan_capture.failed_modified",
+                            path=str(path),
+                            error=f.error,
                         )
 
             # Moved notes: update vault_path in-place, preserving integer id (DECISION-001).
             # ON DELETE CASCADE keeps audit_log and corrections FKs valid without extra code.
             for old_vault_path, new_entry in summary.moved:
-                match documents.rename(old_vault_path, new_entry.vault_path, db_path=_db_path):
+                match documents.rename(
+                    old_vault_path, new_entry.vault_path, db_path=_db_path
+                ):
                     case Failure() as f:
                         logger.warning(
                             "scan_capture.rename_failed",
@@ -1089,7 +1126,9 @@ async def scan_capture(
                 match documents.delete_by_path(vault_path, db_path=_db_path):
                     case Failure() as f:
                         logger.warning(
-                            "scan_capture.delete_failed", vault_path=vault_path, error=f.error
+                            "scan_capture.delete_failed",
+                            vault_path=vault_path,
+                            error=f.error,
                         )
                     case Success():
                         pass
@@ -1103,19 +1142,32 @@ async def scan_capture(
 
 
 def _build_vault_context(vault_cfg) -> str:
-    """Return a human-readable listing of existing domain + project folders.
+    """Return a human-readable listing of domains and their projects.
 
-    Used to ground the classify_folder LLM prompt. Missing Domain/ or Projects/
-    directories degrade gracefully to an empty list.
+    Uses the Project Registry (build_registry) so the LLM sees which projects
+    are already mapped to which domains.  Falls back to a flat folder listing
+    on registry build failure.
+
+    Used to ground the classify_folder LLM prompt.
     """
+    import logging
 
+    from vault.registry import build_registry, format_for_prompt
+
+    _log = logging.getLogger(__name__)
+
+    match build_registry(vault_cfg):
+        case Success(reg):
+            return format_for_prompt(reg)
+        case Failure(error=e):
+            _log.warning("capture.vault_context_registry_failed error=%s", e)
+
+    # Fallback — flat listing of folder names (pre-registry behavior).
     def _names(path: Path) -> list[str]:
         if not path.is_dir():
             return []
         return sorted(
-            p.name
-            for p in path.iterdir()
-            if p.is_dir() and not p.name.startswith(".")
+            p.name for p in path.iterdir() if p.is_dir() and not p.name.startswith(".")
         )
 
     domains = ", ".join(_names(vault_cfg.domain_path)) or "(none)"
@@ -1156,7 +1208,9 @@ def _parse_classify_json(content: str) -> tuple[str | None, str | None, float]:
     try:
         parsed = json.loads(cleaned)
     except (json.JSONDecodeError, TypeError):
-        logger.warning("classify_folder.json_parse_failed", content_preview=content[:200])
+        logger.warning(
+            "classify_folder.json_parse_failed", content_preview=content[:200]
+        )
         return (None, None, 0.0)
 
     target_type = parsed.get("target_type")
@@ -1173,7 +1227,9 @@ def _parse_classify_json(content: str) -> tuple[str | None, str | None, float]:
 
 def _folder_destination(target_type: str, target_name: str, vault_cfg) -> Path:
     """Resolve the destination *folder path* for a routed drop."""
-    base = vault_cfg.projects_path if target_type == "project" else vault_cfg.domain_path
+    base = (
+        vault_cfg.projects_path if target_type == "project" else vault_cfg.domain_path
+    )
     return base / target_name
 
 
@@ -1239,15 +1295,21 @@ def _insert_batch(
         db_path=ctx.db_path,
     ):
         case Failure(error=e):
-            logger.warning("capture_folder.batch_insert_failed", folder=folder_name, error=e)
+            logger.warning(
+                "capture_folder.batch_insert_failed", folder=folder_name, error=e
+            )
             return None
         case Success(value=batch_id):
             return batch_id
 
 
 def _audit_folder_classified(
-    folder_name: str, target_type: str | None, target_name: str | None,
-    confidence: float, outcome: str, ctx: PipelineContext,
+    folder_name: str,
+    target_type: str | None,
+    target_name: str | None,
+    confidence: float,
+    outcome: str,
+    ctx: PipelineContext,
 ) -> None:
     """Write one FOLDER_CLASSIFIED audit row (best-effort)."""
     decision = AIDecision(
@@ -1324,12 +1386,15 @@ async def capture_folder(
     # LLM failure → treat as CLUELESS (confidence 0.0), never abort.
     match await get_provider("capture", ctx.config).complete(system, user):
         case Failure(error=e):
-            logger.warning("capture_folder.llm_failed", folder=str(folder_path), error=e)
+            logger.warning(
+                "capture_folder.llm_failed", folder=str(folder_path), error=e
+            )
             target_type, target_name, confidence = None, None, 0.0
         case Success(value=resp):
             target_type, target_name, confidence = _parse_classify_json(resp.content)
 
     from core.config import CONFIG as _CONFIG  # lazy — thresholds not on MainConfig
+
     decision = _CONFIG.thresholds.for_pipeline("classify").route(confidence)
 
     if decision is RouteDecision.AUTO and target_type and target_name:
@@ -1351,32 +1416,57 @@ async def capture_folder(
             case Success(value=new_folder):
                 new_files = _collect_folder_files(new_folder, vault_cfg)
                 batch_id = _insert_batch(
-                    folder_path.name, target_type, target_name, confidence,
-                    "ROUTING", len(new_files), ctx,
+                    folder_path.name,
+                    target_type,
+                    target_name,
+                    confidence,
+                    "ROUTING",
+                    len(new_files),
+                    ctx,
                 )
                 _audit_folder_classified(
-                    folder_path.name, target_type, target_name, confidence,
-                    "FOLDER_CLASSIFIED", ctx,
+                    folder_path.name,
+                    target_type,
+                    target_name,
+                    confidence,
+                    "FOLDER_CLASSIFIED",
+                    ctx,
                 )
                 ctx_with_batch = replace(ctx, batch_id=batch_id)
-                return await _capture_folder_files(new_folder, new_files, ctx_with_batch)
+                return await _capture_folder_files(
+                    new_folder, new_files, ctx_with_batch
+                )
 
     if decision is RouteDecision.SUGGEST:
         _insert_batch(
-            folder_path.name, target_type, target_name, confidence,
-            "PENDING_REVIEW", len(files), ctx,
+            folder_path.name,
+            target_type,
+            target_name,
+            confidence,
+            "PENDING_REVIEW",
+            len(files),
+            ctx,
         )
         _audit_folder_classified(
-            folder_path.name, target_type, target_name, confidence,
-            "FOLDER_CLASSIFIED", ctx,
+            folder_path.name,
+            target_type,
+            target_name,
+            confidence,
+            "FOLDER_CLASSIFIED",
+            ctx,
         )
         return Success([])
 
     # CLUELESS (or AUTO without a valid target): write per-file CLUELESS markers
     # through the existing capture pipeline, then record a CLUELESS batch.
     batch_id = _insert_batch(
-        folder_path.name, target_type, target_name, confidence,
-        "CLUELESS", len(files), ctx,
+        folder_path.name,
+        target_type,
+        target_name,
+        confidence,
+        "CLUELESS",
+        len(files),
+        ctx,
     )
     ctx_with_batch = replace(ctx, batch_id=batch_id)
     for f in files:
