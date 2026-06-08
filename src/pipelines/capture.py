@@ -32,6 +32,7 @@ from vault.paths import (
     _location_context,
     is_batch_subfolder,
     resolve_placement,
+    to_folder_path,
     to_vault_path,
 )
 from vault.reader import read_note
@@ -950,12 +951,7 @@ async def capture_file(
     # look up or create a batch record and stamp context before pipeline runs.
     _batch_vault_cfg = context.config.vault
     if is_batch_subfolder(path.parent, _batch_vault_cfg):
-        import unicodedata as _ud
-
-        _folder_vp = _ud.normalize(
-            "NFC",
-            str(path.parent.relative_to(_batch_vault_cfg.root).as_posix()),
-        )
+        _folder_vp = to_folder_path(path.parent, _batch_vault_cfg.root)
         match batches.find_by_folder_path(_folder_vp, db_path=context.db_path):
             case Success(value=None):
                 _batch_id = _insert_batch(
@@ -1037,7 +1033,6 @@ async def scan_capture(
 
             # ── Subfolder detection pass (TD-041): dispatch unprocessed
             # batch-worthy subfolders before the per-file loop. ────────
-            import unicodedata as _ud
 
             _batch_roots: list[Path] = [vault_cfg.inbox_path]
             if vault_cfg.projects_path.is_dir():
@@ -1053,10 +1048,7 @@ async def scan_capture(
                     if not _entry.is_dir():
                         continue
                     if is_batch_subfolder(_entry, vault_cfg):
-                        _entry_vp = _ud.normalize(
-                            "NFC",
-                            str(_entry.relative_to(vault_cfg.root).as_posix()),
-                        )
+                        _entry_vp = to_folder_path(_entry, vault_cfg.root)
                         match batches.find_by_folder_path(_entry_vp, db_path=_db_path):
                             case Success(value=None):
                                 _cr = await capture_folder(_entry)
@@ -1460,7 +1452,7 @@ async def capture_folder(
             "ROUTING",
             len(files),
             ctx,
-            folder_path=str(folder_path.relative_to(vault_cfg.root).as_posix()),
+            folder_path=to_folder_path(folder_path, vault_cfg.root),
         )
         ctx_with_batch = replace(ctx, batch_id=batch_id)
         return await _capture_folder_files(folder_path, files, ctx_with_batch)
@@ -1514,7 +1506,7 @@ async def capture_folder(
                     "ROUTING",
                     len(new_files),
                     ctx,
-                    folder_path=str(new_folder.relative_to(vault_cfg.root).as_posix()),
+                    folder_path=to_folder_path(new_folder, vault_cfg.root),
                 )
                 _audit_folder_classified(
                     folder_path.name,
@@ -1538,7 +1530,7 @@ async def capture_folder(
             "PENDING_REVIEW",
             len(files),
             ctx,
-            folder_path=str(folder_path.relative_to(vault_cfg.root).as_posix()),
+            folder_path=to_folder_path(folder_path, vault_cfg.root),
         )
         _audit_folder_classified(
             folder_path.name,
@@ -1560,7 +1552,7 @@ async def capture_folder(
         "CLUELESS",
         len(files),
         ctx,
-        folder_path=str(folder_path.relative_to(vault_cfg.root).as_posix()),
+        folder_path=to_folder_path(folder_path, vault_cfg.root),
     )
     ctx_with_batch = replace(ctx, batch_id=batch_id)
     for f in files:
