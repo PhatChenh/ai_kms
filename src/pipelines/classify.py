@@ -79,7 +79,7 @@ def _destination_names(valid_destinations: str) -> set[str]:
     # COUPLING: project names and domain names are pooled into one set, so a
     # project name used as a primary_domain (or vice versa) still validates.
     # Closing that cross-type gap needs the structured ProjectRegistry, not the
-    # formatted string — tracked separately. This fix only closes the substring
+    # formatted string — tracked as TD-051. This fix only closes the substring
     # hole (the reported defect).
     """
     names: set[str] = set()

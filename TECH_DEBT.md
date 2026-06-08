@@ -2,6 +2,26 @@
 
 ## Active
 
+### TD-050 · Watcher test debounce-timer leak across tests
+**Status:** OPEN
+**Phase:** Phase 2+ (test infra)
+**Risk if triggered early:** Flaky CI — `tests/test_vault/test_watcher_rehome.py::test_no_edit_pdf_cross_folder_rehome` intermittently fails `assert len(move_note_calls) == 1` with `2` when the full suite runs. The extra `move_note` comes from a *different* test's (`test_on_created_misplaced_md…`) leaked `threading.Timer` debounce that fires during this test's `time.sleep(0.05)` and lands on the module-level `vault.watcher.move_note` (now monkeypatched to this test's fake). Passes in isolation. Not caused by P2-CIC.
+**What:** Watcher tests schedule real `threading.Timer` debounce callbacks (`_VaultEventHandler._debounce`) that are not cancelled in teardown. A late-firing timer from one test mutates another test's monkeypatched module-level functions. Fix needs: (1) identify the producing test(s), (2) cancel pending timers in teardown — e.g. an autouse fixture in `tests/test_vault/conftest.py` that tracks/cancels handler timers, or a `handler.stop()`/`shutdown` that joins outstanding timers.
+**Why deferred:** Threading-sensitive, cross-file; not a small safe change. Pre-existing before P2-CIC review.
+**Source:** P2-CIC implementation review 2026-06-08 (reviewer Minor + main-thread investigation).
+
+---
+
+### TD-051 · classify() destination validation pools project + domain names (cross-type leak)
+**Status:** OPEN
+**Phase:** Phase 2+ (after Project Registry lands)
+**Risk if triggered early:** Low. `classify()` validates `project` and `primary_domain` against one pooled exact-name set parsed from the `format_for_prompt` string (`_destination_names`). The substring hole is closed, but a project name used as a `primary_domain` (or vice versa) still validates, since both live in the same set. A mislabeled AI response could route to a wrong-kind destination (e.g. create `Projects/<a-domain-name>/`).
+**What:** Split validation into project-name vs domain-name sets. Cleanest via the structured `ProjectRegistry` (`get_groups()` → group names = domains, entry names = projects) rather than re-parsing the prompt string. Blocked by test churn: `VALID_DESTINATIONS` fixtures in `tests/test_pipelines/test_classify.py` use a non-real `Projects:/Domains:` header shape (real `format_for_prompt` headers are domain names, items are project names), so splitting breaks ~6 tests until fixtures are rewritten to the real shape.
+**Why deferred:** Needs a small signature/fixture rework; the reported substring defect is already fixed. Marked with `# COUPLING:` at `src/pipelines/classify.py::_destination_names`.
+**Source:** P2-CIC implementation review 2026-06-08 (finding #2 residual).
+
+---
+
 ### TD-039 · Windows support for binary content-change detection + atomic-save handling
 **Status:** OPEN
 **Phase:** Vault-restructure (post-Mac-ship)
