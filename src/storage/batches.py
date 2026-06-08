@@ -23,6 +23,8 @@ def insert(
     confidence: float,
     status: str,
     file_count: int,
+    folder_path: str
+    | None = None,  # Required for single-file batch lookup — pass folder_path=vault_relative(subfolder)
     db_path: Path | None = None,
 ) -> Result[int]:
     """Insert a new batches row. Returns Success(batch_id) or Failure.
@@ -34,6 +36,8 @@ def insert(
         confidence:       Routing confidence score (0.0–1.0).
         status:           Initial status, e.g. "ROUTING".
         file_count:       Number of files in the folder.
+        folder_path:      Vault-relative path of the folder. Sets batches.folder_path
+                          for single-file batch lookup via find_by_folder_path().
         db_path:          Override DB path; defaults to CONFIG.main.database.path.
 
     Returns:
@@ -46,10 +50,18 @@ def insert(
                 """
                 INSERT INTO batches
                     (folder_name, destination_type, destination_name,
-                     confidence, status, file_count, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+                     confidence, status, file_count, folder_path, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
                 """,
-                (folder_name, destination_type, destination_name, confidence, status, file_count),
+                (
+                    folder_name,
+                    destination_type,
+                    destination_name,
+                    confidence,
+                    status,
+                    file_count,
+                    folder_path,
+                ),
             )
             batch_id: int = cur.lastrowid  # type: ignore[assignment]
         return Success(batch_id)
@@ -89,4 +101,33 @@ def update_status(
             error=str(exc),
             recoverable=False,
             context={"batch_id": batch_id, "op": "update_status"},
+        )
+
+
+def find_by_folder_path(
+    folder_path: str,
+    db_path: Path | None = None,
+) -> Result[int | None]:
+    """Look up the most recent batch for folder_path.
+
+    Returns Success(int) if found, Success(None) if no batch exists,
+    Failure on sqlite3.Error. Uses get_connection() (constraint C-04).
+    """
+    try:
+        with get_connection(db_path, readonly=True) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.execute(
+                "SELECT batch_id FROM batches WHERE folder_path = ?"
+                " ORDER BY created_at DESC, batch_id DESC LIMIT 1",
+                (folder_path,),
+            )
+            row = cur.fetchone()
+        if row is None:
+            return Success(None)
+        return Success(row["batch_id"])
+    except sqlite3.Error as exc:
+        return Failure(
+            error=str(exc),
+            recoverable=False,
+            context={"folder_path": folder_path, "op": "find_by_folder_path"},
         )
