@@ -10,6 +10,43 @@ from llm.prompt_loader import PROMPTS
 from llm.provider import get_provider
 
 
+# ---------------------------------------------------------------------------
+# Subject Builder — normalize a note into one classify input block
+# ---------------------------------------------------------------------------
+
+_MAX_SUBJECT_LENGTH = 3000
+
+
+def build_subject(
+    title: str,
+    summary: str | None,
+    tags: list[str],
+) -> str:
+    """Build a single text block from title, summary, and tags for the AI classify prompt.
+
+    Args:
+        title: Note title (required — every note has at least a filename).
+        summary: Note summary text; None or empty → omitted.
+        tags: List of tag strings; empty → omitted.
+
+    Returns:
+        Formatted string ready for insertion into the classify prompt template.
+        Truncated to _MAX_SUBJECT_LENGTH chars to protect the prompt token budget.
+    """
+    parts: list[str] = [f"Title: {title}"]
+
+    if summary:
+        parts.append(f"Summary: {summary}")
+
+    if tags:
+        parts.append(f"Tags: {', '.join(tags)}")
+
+    subject = "\n".join(parts)
+    if len(subject) > _MAX_SUBJECT_LENGTH:
+        subject = subject[:_MAX_SUBJECT_LENGTH]
+    return subject
+
+
 @dataclass(frozen=True)
 class ClassifyResult:
     """Result from the classify() pure function.

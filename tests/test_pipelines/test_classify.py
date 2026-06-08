@@ -7,7 +7,7 @@ import pytest
 
 from core.result import Failure, Success
 from llm.provider import LLMResponse
-from pipelines.classify import ClassifyResult, classify
+from pipelines.classify import ClassifyResult, build_subject, classify
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +86,71 @@ VALID_JSON = (
     '{"target_type": "project", "target_name": "Alpha", '
     '"confidence": 0.9, "reasoning": "Meeting notes."}'
 )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 (CIC) tests — build_subject() pure function
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSubject:
+    """P2-CIC Phase 2 — build_subject normalises a note into one classify input block."""
+
+    def test_all_fields(self):
+        """Title, summary, and tags all present — all appear in output."""
+        result = build_subject(
+            title="Report Q3",
+            summary="Quarterly financials for Q3 2025.",
+            tags=["finance", "domain/treasury"],
+        )
+        assert "Report Q3" in result
+        assert "Quarterly financials for Q3 2025." in result
+        assert "finance" in result
+        assert "domain/treasury" in result
+
+    def test_empty_tags(self):
+        """tags=[] — output contains no tags line or graceful placeholder."""
+        result = build_subject(
+            title="Report Q3",
+            summary="Quarterly financials.",
+            tags=[],
+        )
+        assert "Report Q3" in result
+        # No stray "Tags:" with nothing after it
+        assert "Tags: \n" not in result
+
+    def test_empty_summary(self):
+        """summary=\"\" — output omits summary line."""
+        result = build_subject(
+            title="Report Q3",
+            summary="",
+            tags=["finance"],
+        )
+        assert "Report Q3" in result
+        # summary empty → no Summary: line
+        lines = result.split("\n")
+        summary_lines = [ln for ln in lines if ln.startswith("Summary:")]
+        assert len(summary_lines) == 0
+
+    def test_none_summary(self):
+        """summary=None → no crash, no \"None\" literal in output."""
+        result = build_subject(
+            title="Report Q3",
+            summary=None,
+            tags=["finance"],
+        )
+        assert "Report Q3" in result
+        assert "None" not in result
+
+    def test_truncation(self):
+        """Long summary (5000+ chars) truncated to avoid blowing prompt budget."""
+        long_summary = "x" * 6000
+        result = build_subject(
+            title="Report Q3",
+            summary=long_summary,
+            tags=["finance"],
+        )
+        assert len(result) < 4000  # substantially shorter than 6000
 
 
 # ---------------------------------------------------------------------------
