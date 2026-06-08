@@ -36,10 +36,16 @@ def _make_old_file(path: Path, content: str = "Some content.") -> Path:
     return path
 
 
-def _classify_response(target_type: str, target_name: str, confidence: float) -> Success:
+def _classify_response(
+    target_type: str, target_name: str, confidence: float
+) -> Success:
     """A Success(LLMResponse) carrying a classify_folder JSON verdict."""
     payload = json.dumps(
-        {"target_type": target_type, "target_name": target_name, "confidence": confidence}
+        {
+            "target_type": target_type,
+            "target_name": target_name,
+            "confidence": confidence,
+        }
     )
     return Success(LLMResponse(content=payload, model="test", usage={}))
 
@@ -51,7 +57,9 @@ def folder_ctx(pipeline_ctx):
     pipeline_ctx.config is a MagicMock, so config.thresholds must be set to a real
     Thresholds for capture_folder's routing band to behave deterministically.
     """
-    pipeline_ctx.config.thresholds = Thresholds()  # global band: auto=0.85, suggest=0.60
+    pipeline_ctx.config.thresholds = (
+        Thresholds()
+    )  # global band: auto=0.85, suggest=0.60
     return pipeline_ctx
 
 
@@ -60,7 +68,9 @@ def _batches_rows(db_path: Path) -> list[dict]:
     from storage.db import get_connection
 
     with get_connection(db_path) as conn:
-        conn.row_factory = lambda c, r: {d[0]: r[i] for i, d in enumerate(c.description)}
+        conn.row_factory = lambda c, r: {
+            d[0]: r[i] for i, d in enumerate(c.description)
+        }
         return list(conn.execute("SELECT * FROM batches"))
 
 
@@ -69,7 +79,9 @@ def _documents_rows(db_path: Path) -> list[dict]:
     from storage.db import get_connection
 
     with get_connection(db_path) as conn:
-        conn.row_factory = lambda c, r: {d[0]: r[i] for i, d in enumerate(c.description)}
+        conn.row_factory = lambda c, r: {
+            d[0]: r[i] for i, d in enumerate(c.description)
+        }
         return list(conn.execute("SELECT * FROM documents"))
 
 
@@ -89,9 +101,7 @@ async def test_inbox_auto_confidence_moves_folder_and_captures_files(
     _make_old_file(folder / "b.md", "# B\n\nbody b")
 
     provider = _UnifiedProvider("project", "Alpha", 0.95)
-    monkeypatch.setattr(
-        "pipelines.capture.get_provider", lambda task, config: provider
-    )
+    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: provider)
 
     result = await capture_folder(folder, context=folder_ctx)
 
@@ -147,7 +157,9 @@ async def test_empty_folder_returns_empty_success(folder_ctx, vault_root, monkey
 
 
 @pytest.mark.asyncio
-async def test_inbox_suggest_confidence_no_folder_move(folder_ctx, vault_root, monkeypatch):
+async def test_inbox_suggest_confidence_no_folder_move(
+    folder_ctx, vault_root, monkeypatch
+):
     from pipelines.capture import capture_folder
 
     folder = vault_root / "inbox" / "maybe-drop"
@@ -210,7 +222,9 @@ async def test_project_drop_skips_llm(folder_ctx, vault_root, monkeypatch):
 
     capture_only = AsyncMock()
     capture_only.complete.return_value = Success(
-        LLMResponse(content=json.dumps({"title": "T", "tags": ["test"]}), model="t", usage={})
+        LLMResponse(
+            content=json.dumps({"title": "T", "tags": ["test"]}), model="t", usage={}
+        )
     )
     monkeypatch.setattr(
         "pipelines.capture.get_provider", lambda task, config: capture_only
@@ -256,7 +270,9 @@ async def test_partial_failure_marks_batch_partial(folder_ctx, vault_root, monke
 
     provider = AsyncMock()
     provider.complete.return_value = Success(
-        LLMResponse(content=json.dumps({"title": "T", "tags": ["test"]}), model="t", usage={})
+        LLMResponse(
+            content=json.dumps({"title": "T", "tags": ["test"]}), model="t", usage={}
+        )
     )
     monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: provider)
 
@@ -301,7 +317,9 @@ async def test_project_drop_writes_batch_id_on_document_rows(
 
     provider = AsyncMock()
     provider.complete.return_value = Success(
-        LLMResponse(content=json.dumps({"title": "T", "tags": ["test"]}), model="t", usage={})
+        LLMResponse(
+            content=json.dumps({"title": "T", "tags": ["test"]}), model="t", usage={}
+        )
     )
     monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: provider)
 
@@ -330,7 +348,9 @@ async def test_single_file_capture_leaves_batch_id_null(
 
     provider = AsyncMock()
     provider.complete.return_value = Success(
-        LLMResponse(content=json.dumps({"title": "T", "tags": ["test"]}), model="t", usage={})
+        LLMResponse(
+            content=json.dumps({"title": "T", "tags": ["test"]}), model="t", usage={}
+        )
     )
     monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: provider)
 
@@ -368,3 +388,126 @@ class _UnifiedProvider:
                 usage={},
             )
         )
+
+
+# ===========================================================================
+# TD-049 NFC Fix — folder_path NFC normalization
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_folder_path_nfc_normalized_on_insert(
+    folder_ctx, vault_root, monkeypatch
+):
+    """capture_folder writes NFC-normalized folder_path even when folder has NFD name.
+
+    macOS filesystem normalizes to NFD; without NFC normalization the batch
+    folder_path would mismatch the NFC-normalized lookup in capture_file,
+    creating duplicate batch rows (TD-049).
+    """
+    import unicodedata
+
+    from pipelines.capture import capture_folder
+
+    # "Phật" — NFD form has 6 codepoints (NFC has 5)
+    nfc_name = "Phật"
+    nfd_name = unicodedata.normalize("NFD", nfc_name)
+    assert nfc_name != nfd_name, "NFD must differ from NFC for this test to be valid"
+
+    # Create folder with NFD name in Projects/Alpha/ so we hit the Case B
+    # path (no LLM, confidence 1.0) — simplest code path with _insert_batch.
+    (vault_root / "Projects" / "Alpha").mkdir(parents=True, exist_ok=True)
+    folder = vault_root / "Projects" / "Alpha" / nfd_name
+    _make_old_file(folder / "a.md", "# A\n\nbody a")
+
+    provider = AsyncMock()
+    provider.complete.return_value = Success(
+        LLMResponse(
+            content=json.dumps({"title": "T", "tags": ["test"]}), model="t", usage={}
+        )
+    )
+    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: provider)
+
+    result = await capture_folder(folder, context=folder_ctx)
+    assert isinstance(result, Success)
+
+    rows = _batches_rows(folder_ctx.db_path)
+    assert len(rows) == 1
+    assert rows[0]["destination_type"] == "project"
+    assert rows[0]["destination_name"] == "Alpha"
+
+    # The folder_path column must be NFC-normalized
+    actual = rows[0]["folder_path"]
+    expected_nfc = f"Projects/Alpha/{nfc_name}"
+    assert actual == expected_nfc, (
+        f"folder_path must be NFC-normalized.\n"
+        f"  Expected: {expected_nfc!r} (len={len(expected_nfc)})\n"
+        f"  Got:      {actual!r} (len={len(actual)})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_folder_path_nfc_matches_batch_lookup(
+    folder_ctx, vault_root, monkeypatch
+):
+    """capture_file batch-stamp lookup finds the batch created by capture_folder.
+
+    End-to-end proof of TD-049 fix: when capture_folder inserts with NFC
+    folder_path and capture_file later looks up the same folder with NFC,
+    they match — no duplicate batch rows are created.
+    """
+    import unicodedata
+
+    from pipelines.capture import capture_file, capture_folder
+
+    nfc_name = "Phật"
+    nfd_name = unicodedata.normalize("NFD", nfc_name)
+    assert nfc_name != nfd_name, "NFD must differ from NFC for this test to be valid"
+
+    # Create folder with NFD name in Projects/Alpha/ (Case B — no LLM).
+    (vault_root / "Projects" / "Alpha").mkdir(parents=True, exist_ok=True)
+    folder = vault_root / "Projects" / "Alpha" / nfd_name
+    _make_old_file(folder / "first.md", "# First\n\nbody")
+
+    provider = AsyncMock()
+    provider.complete.return_value = Success(
+        LLMResponse(
+            content=json.dumps({"title": "T", "tags": ["test"]}), model="t", usage={}
+        )
+    )
+    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: provider)
+
+    # Step 1: capture_folder inserts batch with NFC folder_path (the fix).
+    result = await capture_folder(folder, context=folder_ctx)
+    assert isinstance(result, Success)
+
+    batch_rows_before = _batches_rows(folder_ctx.db_path)
+    assert len(batch_rows_before) == 1
+    batch_id = batch_rows_before[0]["batch_id"]
+
+    # Step 2: place a second file and run capture_file.
+    # capture_file's batch-stamp pre-step normalizes to NFC for lookup,
+    # so it should find the existing batch (no duplicate).
+    second_file = _make_old_file(folder / "second.md", "# Second\n\nbody")
+
+    # Provider already returns valid capture JSON from step 1's mock.
+    result2 = await capture_file(second_file, folder_ctx)
+    assert isinstance(result2, Success)
+
+    # Verify: still exactly ONE batch row (no duplicate).
+    batch_rows_after = _batches_rows(folder_ctx.db_path)
+    assert len(batch_rows_after) == 1, (
+        f"Expected exactly 1 batch row after capture_file lookup, "
+        f"got {len(batch_rows_after)}. TD-049 NFC mismatch may have "
+        f"created a duplicate."
+    )
+    assert batch_rows_after[0]["batch_id"] == batch_id
+
+    # Verify: the second file's documents row got the existing batch_id.
+    doc_rows = _documents_rows(folder_ctx.db_path)
+    second_doc = [r for r in doc_rows if r["vault_path"].endswith("second.md")]
+    assert len(second_doc) == 1
+    assert second_doc[0]["batch_id"] == batch_id, (
+        f"capture_file must stamp batch_id={batch_id} from existing batch, "
+        f"got batch_id={second_doc[0]['batch_id']}"
+    )

@@ -397,6 +397,24 @@ def to_vault_path(absolute: Path) -> str:
     return unicodedata.normalize("NFC", rel)
 
 
+def to_folder_path(path: Path, root: Path) -> str:
+    """Return NFC-normalized POSIX path of *path* relative to *root*.
+
+    Takes an explicit *root* (not CONFIG) so the helper is testable without
+    patching the CONFIG singleton.  Use this for batch folder_path columns
+    where the value must match the NFC-normalized lookup in ``capture_file``
+    and ``scan_capture`` (TD-049).
+
+    Args:
+        path: Absolute path to a folder inside the vault.
+        root: Absolute path to the vault root.
+
+    Returns:
+        POSIX-style path relative to *root*, NFC-normalized.
+    """
+    return unicodedata.normalize("NFC", str(path.relative_to(root).as_posix()))
+
+
 def project_dir(name: str) -> Path:
     """Return Projects/<name>/ and ensure it exists."""
     from core.config import CONFIG

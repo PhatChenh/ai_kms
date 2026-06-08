@@ -90,17 +90,20 @@ class TestToVaultPath:
 
     def test_returns_posix_relative_path(self, vault_root: Path):
         from vault.paths import to_vault_path
+
         result = to_vault_path(vault_root / "inbox" / "note.md")
         assert result == "inbox/note.md"
 
     def test_nested_path_includes_full_relative_segments(self, vault_root: Path):
         from vault.paths import to_vault_path
+
         result = to_vault_path(vault_root / "Projects" / "foo" / "bar.md")
         assert result == "Projects/foo/bar.md"
 
     def test_result_is_nfc_normalised(self, vault_root: Path):
         import unicodedata
         from vault.paths import to_vault_path
+
         # NFD Vietnamese name (decomposed) — macOS stores filenames this way
         nfd_name = unicodedata.normalize("NFD", "nôi-dung.md")
         result = to_vault_path(vault_root / "inbox" / nfd_name)
@@ -108,6 +111,7 @@ class TestToVaultPath:
 
     def test_result_uses_forward_slashes(self, vault_root: Path):
         from vault.paths import to_vault_path
+
         result = to_vault_path(vault_root / "Projects" / "x.md")
         assert "\\" not in result
 
@@ -122,7 +126,9 @@ class TestLoadValidDomains:
         result = load_valid_domains(vault_root)
         assert result == frozenset(["finance", "strategy"])
 
-    def test_returns_empty_frozenset_when_domain_folder_absent(self, tmp_path: Path) -> None:
+    def test_returns_empty_frozenset_when_domain_folder_absent(
+        self, tmp_path: Path
+    ) -> None:
         vault_root = tmp_path / "vault"
         vault_root.mkdir()
         result = load_valid_domains(vault_root)
@@ -162,7 +168,9 @@ class TestAttachmentHelpers:
 
     def test_project_summaries_returns_correct_path(self, vault_root: Path):
         result = project_summaries("Strategy")
-        assert result == vault_root / "Projects" / "Strategy" / "attachment" / ".summaries"
+        assert (
+            result == vault_root / "Projects" / "Strategy" / "attachment" / ".summaries"
+        )
         assert result.is_dir()
 
     def test_domain_attachment_returns_correct_path(self, vault_root: Path):
@@ -175,12 +183,15 @@ class TestAttachmentHelpers:
         assert result == vault_root / "Domain" / "Finance" / "attachment" / ".summaries"
         assert result.is_dir()
 
-    def test_project_attachment_respects_config_override(self, tmp_path: Path, monkeypatch):
+    def test_project_attachment_respects_config_override(
+        self, tmp_path: Path, monkeypatch
+    ):
         root = tmp_path / "vault"
         root.mkdir()
         from core.config import VaultConfig
         import core.config as cfg_module
         from unittest.mock import MagicMock
+
         vc = VaultConfig(root=root, attachment_dir="files")
         fake_config = MagicMock()
         fake_config.main.vault = vc
@@ -190,12 +201,15 @@ class TestAttachmentHelpers:
         assert result == root / "Projects" / "Strategy" / "files"
         assert result.is_dir()
 
-    def test_project_summaries_respects_config_override(self, tmp_path: Path, monkeypatch):
+    def test_project_summaries_respects_config_override(
+        self, tmp_path: Path, monkeypatch
+    ):
         root = tmp_path / "vault"
         root.mkdir()
         from core.config import VaultConfig
         import core.config as cfg_module
         from unittest.mock import MagicMock
+
         vc = VaultConfig(root=root, attachment_dir="files", summaries_subdir=".sums")
         fake_config = MagicMock()
         fake_config.main.vault = vc
@@ -205,12 +219,15 @@ class TestAttachmentHelpers:
         assert result == root / "Projects" / "Strategy" / "files" / ".sums"
         assert result.is_dir()
 
-    def test_domain_attachment_respects_config_override(self, tmp_path: Path, monkeypatch):
+    def test_domain_attachment_respects_config_override(
+        self, tmp_path: Path, monkeypatch
+    ):
         root = tmp_path / "vault"
         root.mkdir()
         from core.config import VaultConfig
         import core.config as cfg_module
         from unittest.mock import MagicMock
+
         vc = VaultConfig(root=root, attachment_dir="files")
         fake_config = MagicMock()
         fake_config.main.vault = vc
@@ -220,12 +237,15 @@ class TestAttachmentHelpers:
         assert result == root / "Domain" / "Finance" / "files"
         assert result.is_dir()
 
-    def test_domain_summaries_respects_config_override(self, tmp_path: Path, monkeypatch):
+    def test_domain_summaries_respects_config_override(
+        self, tmp_path: Path, monkeypatch
+    ):
         root = tmp_path / "vault"
         root.mkdir()
         from core.config import VaultConfig
         import core.config as cfg_module
         from unittest.mock import MagicMock
+
         vc = VaultConfig(root=root, attachment_dir="files", summaries_subdir=".sums")
         fake_config = MagicMock()
         fake_config.main.vault = vc
@@ -269,7 +289,9 @@ class TestIsInManagedAttachment:
         pdf = root / "inbox" / "report.pdf"
         assert _is_in_managed_attachment(pdf, vc) is False
 
-    def test_returns_false_for_nested_but_not_under_projects_or_domain(self, tmp_path: Path):
+    def test_returns_false_for_nested_but_not_under_projects_or_domain(
+        self, tmp_path: Path
+    ):
         from core.config import VaultConfig
 
         root = tmp_path / "vault"
@@ -567,6 +589,7 @@ class TestIsBatchSubfolder:
 
     def _vc(self, vault_root: Path) -> "VaultConfig":
         from core.config import VaultConfig
+
         return VaultConfig(root=vault_root)
 
     def test_project_subfolder_true(self, vault_root: Path):
@@ -661,3 +684,52 @@ class TestIsBatchSubfolder:
         outside = tmp_path / "outside"
         outside.mkdir()
         assert is_batch_subfolder(outside, vc) is False
+
+
+# ---------------------------------------------------------------------------
+# TD-049 NFC Fix — to_folder_path helper
+# ---------------------------------------------------------------------------
+
+
+class TestToFolderPath:
+    """Unit tests for to_folder_path(path, root) — NFC-normalized relative path."""
+
+    def test_nfd_path_normalized_to_nfc(self, tmp_path: Path):
+        """Given a decomposed (NFD) path, returns NFC-normalized string."""
+        import unicodedata
+
+        from vault.paths import to_folder_path
+
+        root = tmp_path / "vault"
+        root.mkdir()
+        # "Phật" in NFC vs NFD — the NFD form "Phật" has 6 codepoints
+        nfc_name = "Phật"
+        nfd_name = unicodedata.normalize("NFD", nfc_name)
+        assert nfc_name != nfd_name, (
+            "NFD must differ from NFC for this test to be valid"
+        )
+
+        folder = root / "inbox" / nfd_name
+        result = to_folder_path(folder, root)
+        expected = "inbox/" + nfc_name
+        assert result == expected, f"Expected {expected!r}, got {result!r}"
+
+    def test_already_nfc_path_unchanged(self, tmp_path: Path):
+        """Given an already-NFC path, returns the same string."""
+        from vault.paths import to_folder_path
+
+        root = tmp_path / "vault"
+        root.mkdir()
+        folder = root / "Projects" / "Alpha" / "Q2"
+        result = to_folder_path(folder, root)
+        assert result == "Projects/Alpha/Q2"
+
+    def test_ascii_path_unchanged(self, tmp_path: Path):
+        """ASCII paths are unchanged (normalization is a no-op)."""
+        from vault.paths import to_folder_path
+
+        root = tmp_path / "vault"
+        root.mkdir()
+        folder = root / "inbox" / "my-reports" / "sub"
+        result = to_folder_path(folder, root)
+        assert result == "inbox/my-reports/sub"
