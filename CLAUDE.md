@@ -36,10 +36,9 @@ _Architecture and design:_
 _Skill output folders (where skills read/write — numbered by pipeline stage):_
 - `docs/0_draft/` — raw input drafts (pipeline input)
 - `docs/1_design/` — output of `/codebase-design-analysis`; input to `/writing-detailed-specs`
-- `docs/2_usability_test/` — success criteria from `/codebase-design-analysis`
-- `docs/3_specs/` — output of `/writing-detailed-specs`; input to `/research` and `/plan-from-specs`
-- `docs/4_research/` — output of `/research`; consumed by `/plan-from-specs`
-- `docs/5_plans/` — output of `/plan-from-specs`; executed by `/tdd-implement`
+- `docs/2_specs/` — output of `/writing-detailed-specs`; input to `/research` and `/plan-from-specs`
+- `docs/3_research/` — output of `/research`; consumed by `/plan-from-specs`
+- `docs/4_plans/` — output of `/plan-from-specs`; executed by `/tdd-implement`
 - `docs/discussions/` — output of `/capture_discussion_v2`; historical design rationale
 - `/build-pipeline` orchestrates `design→spec→research→plan` as isolated subagents (lean main session); the four skills above still run standalone.
 ---
@@ -73,10 +72,9 @@ _Skill output folders (where skills read/write — numbered by pipeline stage):_
 ├── docs/
 │   ├── 0_draft/              ← raw input drafts (pipeline input)
 │   ├── 1_design/             ← output of /codebase-design-analysis
-│   ├── 2_usability_test/    ← success criteria from /codebase-design-analysis
-│   ├── 3_specs/              ← output of /writing-detailed-specs
-│   ├── 4_research/          ← output of /research
-│   ├── 5_plans/              ← output of /plan-from-specs
+│   ├── 2_specs/              ← output of /writing-detailed-specs
+│   ├── 3_research/          ← output of /research
+│   ├── 4_plans/              ← output of /plan-from-specs
 │   ├── discussions/           ← output of /capture_discussion_v2
 │   ├── _archive/              ← completed phase artifacts (mirrors numbered structure)
 │   ├── architecture/
@@ -331,7 +329,7 @@ The following rules are enforced by hooks in `.claude/settings.json` — Claude 
 
 ## Build progress
 
-**Overall:** Phase 1 of 8 complete + Brief #2/#3 done + Phase 1.5 Pay-Debt complete + Phase Pre-2 complete + Vault-Restructure complete (2026-06-04, 956 tests). TD-042 deprecated-key strip complete (2026-06-07, 959 tests). TD-040/TD-041 Batch-ID Fix plan complete (2026-06-07) — ready for TDD. Next: Phase 2 — Classify pipeline.
+**Overall:** Phase 1 of 8 complete + Brief #2/#3 done + Phase 1.5 Pay-Debt complete + Phase Pre-2 complete + Vault-Restructure complete (2026-06-04, 956 tests). TD-042 deprecated-key strip complete (2026-06-07, 959 tests). P2-CL classify() pure function implemented (2026-06-08, commits b2d33fa + a28b33c on `main`). **P2-CIC Classify Inline in Capture — all 9 phases COMPLETE (2026-06-08, 1080 tests, merged to main).** ~70 tests added. Next: TD-040/TD-041 Batch-ID Fix and Project Registry implementation. M1 milestone (Capture + Classify + Search end-to-end) now fully achievable.
 
 (Phase 0 + Phase 1 checklists closed — see STATE.md for full history.)
 
@@ -406,7 +404,12 @@ from core.config import CONFIG
 - **Any code writing into `.summaries/` MUST set `type=attachment-summary` in frontmatter.** Missing → reconcile Stage 4 skips it silently. Phase 2 Classify must preserve it. See ADR-0008.
 
 ### Phase 2 specific
-- **CLUELESS marker body is a one-line placeholder string, not `""`.** `pipelines/capture.py::_store_nonmd` CLUELESS path writes `_Pending classification — binary at: <vp>_` + handoff note. Phase 2 Classify overwrites the body when resolving the marker.
+- **CLUELESS binary marker now gets real summary + `status: needs-review`.** P2-CIC Phase 7 replaced the old `_Pending classification — binary at: <vp>_` placeholder with a real AI-summarized body, `source_hash` for idempotent re-entry, and `status: needs-review`. The old `pending-routing` concept is fully retired. `_store_nonmd` CLUELESS branch now calls `summarize_attachment` to produce the sibling body.
+
+### Phase 2 — classify pipeline gotchas
+- **`core/pipeline.py` cannot import from `vault.`** — `tests/test_core/test_pipeline_phase1.py::test_pipeline_has_no_heavy_imports` greps source for `vault.` and fails on any match. PipelineContext fields typed with vault types must use `Any` instead of the actual type, even under `TYPE_CHECKING`. The test checks raw source text, not runtime imports.
+- **Deepseek-v4-pro parent session breaks Agent/Workflow subagent dispatch.** Error: `API Error: 400 thinking options type cannot be disabled when reasoning_effort is set`. Subagents never start (0 tokens, 0 tool uses). Workaround: switch parent model to sonnet/opus/haiku, or implement directly inline.
+- **Parallel subagent dispatch can absorb uncommitted changes.** If two subagents work on same repo simultaneously, one's `git commit -a` can pick up the other's uncommitted changes. Always commit each subagent's work immediately, or use worktree isolation per subagent.
 
 
 ### Hook-enforced — no longer needed here

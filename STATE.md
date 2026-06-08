@@ -1,9 +1,9 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-06-07 (Project Registry — plan written; TD-042 deprecated-key strip complete; 959 tests pass)_
+_Last updated: 2026-06-08 (P2-CIC Classify Inline in Capture — all 9 phases implemented, 1080 tests, merged to main)_
 
 ## Current Position
-**Phase**: Vault-Restructure ✅ **Complete** — Planning phase for TD-040 + TD-041 (Batch-ID Fix) complete as of 2026-06-07. Next: `/tdd-implement` against `docs/5_plans/td040-td041-batch-id-fix.md`.
+**Phase**: Phase 2 — Classify pipeline **COMPLETE**. P2-CIC (Classify Inline in Single-File Capture) implemented 2026-06-08 — all 9 phases, ~70 tests, 1080 total passing. Merged to `main`. Next: `/tdd-implement` against TD-040/TD-041 (Batch-ID Fix) and Project Registry. M1 milestone (~15 May target) now fully achievable — Capture + Classify + Search end-to-end.
 
 **Phase 0 Final Checklist** _(CLOSED)_:
 - [x] core/exceptions.py
@@ -177,3 +177,37 @@ Triggered by `/superpowers:requesting-code-review`. Applied subset of review fin
 - TD-034 retired by this plan (project-to-domain registry now exists)
 
 **Next roadmap work**: Phase 2 — Classify pipeline (after TD-040/TD-041 and Project Registry implementation).
+
+**[P2-CL — classify() pure function — ✅ COMPLETE 2026-06-08]** _(implemented on `main`: commits b2d33fa + a28b33c)_:
+- [x] Phase 1 — `ClassifyResult` dataclass in `src/pipelines/classify.py`
+- [x] Phase 2 — `classify()` async function in `src/pipelines/classify.py`
+
+**Plan:** `docs/4_plans/phase2/classify.md`
+**Note:** P2-CIC (below) will RESHAPE `classify()` — subject-shaped input + derive-from-tags output. The existing signature/shape is the pre-reshape baseline.
+
+**[P2-CIC — Classify Inline in Single-File Capture — ✅ COMPLETE 2026-06-08]** _(merged to main, 1080 tests)_:
+- [x] Phase 1 — Foundation: candidate frontmatter fields + PipelineContext extensions (C2, C3)
+- [x] Phase 2 — Subject Builder (C1)
+- [x] Phase 3 — Classify Engine reshape: subject-shaped input, derive-from-tags output (C6)
+- [x] Phase 4 — Filer refactors: `_store_nonmd` optional params + `.md` cross-folder move prep (A6 fix)
+- [x] Phase 5 — Classify Step: new pipeline stage (C4, convergence point)
+- [x] Phase 6 — AUTO move handoff: route derived destination through existing filer (C5)
+- [x] Phase 7 — Idempotent re-entry: retire pending-routing, guard re-classify (C7)
+- [x] Phase 8 — TD-049 NFC fix: normalize folder_path on both batch paths (C8)
+- [x] Phase 9 — [P2] Folder migration: unified prompt for folder classify (C9)
+
+**Plan:** `docs/4_plans/phase2/classify-inline-capture.md`
+**Spec:** `docs/2_specs/phase2/classify-inline-capture.md`
+**Research:** `docs/3_research/phase2/classify-inline-capture.md`
+**Design:** `docs/1_design/phase2/classify-inline-capture.md`
+**Key decisions locked:**
+- Inline (Option A): classify stage in `capture_file` after `apply_location_tags`, before `store`
+- Routing = derived from tags+project (not free AI pick): project → `Projects/<p>/`; domain → `Domain/<d>/`; neither → CLUELESS
+- classify() reshaped: drops `target_type/target_name`; gains `project` + `domains` + `primary_domain`
+- Gate outcomes: AUTO (move), SUGGEST/CLUELESS (record candidate in frontmatter, leave in inbox)
+- SUPPRESS: folder-invoked `capture_file` skips classify via `skip_classify` on PipelineContext
+- Prompt unification (Option U2): one flat prompt, phased (P1 single-file, P2 folder migration)
+- `_store_nonmd` refactored with optional `target_type`/`target_name` params (A6, confirmed by research)
+- `.md` AUTO cross-folder move via `move_note` before store (not through `_store_md` internal rename)
+- TD-048: 3 retries with exponential backoff, fall back to CLUELESS on exhaustion
+- TD-049: NFC-normalize `folder_path` on both write and read paths

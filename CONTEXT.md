@@ -60,6 +60,22 @@ _Avoid_: "project list", "destination table"
 A project folder or domain folder that an inbox note may be filed into by the Classify pipeline. Specifically: any `Projects/<A>/` or `Domain/<D>/` entry in the Project Registry. Excludes `Domain/<D>/Archive/` entries and `inbox/` itself.
 _Avoid_: "routing target", "output folder"
 
+**inline classify:**
+The new destination-classify step that runs INSIDE the single-file capture pipeline (not as a separate post-capture pipeline) for a note or binary that has no folder location — i.e. a loose inbox drop. Reuses the existing `classify()` pure function as its engine. Under the derive-from-tags routing model the step ASSIGNS the note's project field and designates a primary domain (consistent with the domain tags the metadata stage already produced); the destination folder is then derived, not freely picked. A file already inside a project/domain folder skips this step entirely (location wins). Distinct from folder classify, which already runs for whole-folder drops.
+_Avoid_: "auto-classify", "classify pipeline" (the engine is a pure function; this is a capture stage)
+
+**primary domain:**
+When a loose note has no project but more than one domain tag, the single "home" domain the AI designates as the move target. The note still carries ALL its domain tags; only the move (the folder it lands in) uses the primary. With exactly one domain tag, that domain is the primary by default.
+_Avoid_: "main tag", "default domain"
+
+**derived routing (derive-from-tags):**
+The rule that turns a note's assigned tags + project into a destination folder, instead of the AI naming a folder directly. Fixed precedence: project field present → move to `Projects/<project>/`; no project, has domain(s) → move to `Domain/<primary>/`; neither → CLUELESS (stays in inbox). Because the folder is computed from the stamped tags/project, the frontmatter and the on-disk location can never disagree (structural consistency).
+_Avoid_: "free target pick", "AI picks the folder" (the previous, superseded model)
+
+**classify outcome record:**
+What the capture pipeline writes to a note's frontmatter when inline classify produces a SUGGEST or CLUELESS result. It captures the AI's candidate destination, confidence, and one-sentence reasoning so a later phase can surface it for human confirmation. The file stays in the inbox; nothing is moved. Recorded via a frontmatter field set (e.g. `status: needs-review` plus suggested-destination / reasoning) — the human confirm action itself is out of scope for this feature.
+_Avoid_: "pending-routing marker" (that older binary-only concept retires; this record applies to notes and binaries and carries the AI candidate, not just a placeholder)
+
 **Uncategorized (registry group):**
 A catch-all group in the Project Registry output containing active projects whose `CLAUDE.md` has no domain tag, an unrecognised domain tag, or a stale domain tag (domain folder was deleted/renamed). Classify can still route to these projects; the AI prompt explains the gap and instructs semantic inference. Reconcile resolves the underlying CLAUDE.md issue.
 _Avoid_: "unknown domain", "unassigned project"
