@@ -134,3 +134,20 @@ def test_schema_version_rejects_second_row(db_path: Path) -> None:
         conn.execute("INSERT INTO schema_version (id, version) VALUES (2, 0)")
         conn.commit()
     conn.close()
+
+
+def test_migration_006_adds_folder_path_to_batches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Migration 006 adds folder_path TEXT column to batches table."""
+    db_path = tmp_path / "kb.db"
+    result = init_db(db_path)
+    assert isinstance(result, Success)
+
+    conn = sqlite3.connect(str(db_path))
+    columns = {
+        row[1]: row[2]
+        for row in conn.execute("PRAGMA table_info(batches)")
+    }
+    conn.close()
+
+    assert "folder_path" in columns, f"folder_path column missing; columns={list(columns.keys())}"
+    # Nullable — no NOT NULL constraint, just verify TEXT-like type.
