@@ -51,34 +51,31 @@ def build_subject(
 class ClassifyResult:
     """Result from the classify() pure function.
 
-    target_type and target_name together identify the vault folder
-    the AI chose for the note.  Validation happens in classify(),
+    Carries the AI's project assignment, domain tags, primary domain,
+    confidence, and reasoning.  Validation happens in classify(),
     not here — this dataclass accepts any values.
     """
 
-    target_type: str  # "project" or "domain"
-    target_name: str  # exact folder name the AI chose
+    project: str | None  # exact project name from destinations, or None
+    domains: list[str]  # domain tags applicable to the note
+    primary_domain: str | None  # single most relevant domain, or None
     confidence: float  # 0.0 – 1.0
     reasoning: str  # one-sentence explanation from the AI
 
 
 async def classify(
-    title: str,
-    summary: str,
-    tags: str,
+    subject: str,
     valid_destinations: str,
     config: MainConfig,
 ) -> Result[ClassifyResult]:
-    """Ask the AI which vault folder a note belongs in.
+    """Ask the AI which project and domains a note belongs to.
 
     Pure function — no file writes, no audit log calls, no global config.
     The calling pipeline handles destinations formatting, audit logging,
     confidence routing, and retry.
 
     Args:
-        title: Note title.
-        summary: Note summary text.
-        tags: Serialised tags string (caller converts list[str] before calling).
+        subject: Pre-built subject text block (use build_subject() to create).
         valid_destinations: Formatted destination list (caller calls
             format_for_prompt() before calling).
         config: Validated MainConfig, passed explicitly for testability.
@@ -91,16 +88,14 @@ async def classify(
     # Step 1: Render the prompt template
     try:
         system, user = PROMPTS["classify"].render(
-            title=title,
-            summary=summary,
-            tags=tags,
+            subject=subject,
             valid_destinations=valid_destinations,
         )
     except Exception as exc:
         return Failure(
             error=f"classify render error: {exc}",
             recoverable=False,
-            context={"stage": "classify", "title": title},
+            context={"stage": "classify"},
         )
 
     # Step 2: Get AI provider
@@ -114,7 +109,7 @@ async def classify(
         return Failure(
             error=response.error,
             recoverable=True,
-            context={"stage": "classify", "title": title},
+            context={"stage": "classify"},
         )
 
     # Step 5: Parse JSON
@@ -126,25 +121,58 @@ async def classify(
             recoverable=True,
             context={
                 "stage": "classify",
-                "title": title,
                 "raw": response.value.content[:200],
             },
         )
 
-    # Step 6: Validate target_type
-    if data.get("target_type") not in {"project", "domain"}:
+    # Step 6: Validate required fields (domains, confidence, reasoning)
+    required_fields = {"domains", "confidence", "reasoning"}
+    missing = required_fields - set(data.keys())
+    if missing:
         return Failure(
-            error=f"classify invalid target_type: {data.get('target_type')!r}",
+            error=f"classify missing required fields: {sorted(missing)}",
             recoverable=True,
-            context={"target_type": data.get("target_type"), "title": title},
+            context={"stage": "classify", "data_keys": sorted(data.keys())},
         )
 
-    # Step 7: Return success
+    # Step 7: Extract fields
+    project = data.get("project")
+    domains = data.get("domains")
+    primary_domain = data.get("primary_domain")
+    confidence = float(data["confidence"])
+    reasoning = data["reasoning"]
+
+    # Step 8: Validate project (when set) is in valid_destinations
+    if project is not None and project not in valid_destinations:
+        return Failure(
+            error=f"classify project {project!r} not in valid destinations",
+            recoverable=True,
+            context={"stage": "classify", "project": project},
+        )
+
+    # Step 9: Validate primary_domain (when set) is in valid_destinations
+    if primary_domain is not None and primary_domain not in valid_destinations:
+        return Failure(
+            error=f"classify primary_domain {primary_domain!r} not in valid destinations",
+            recoverable=True,
+            context={"stage": "classify", "primary_domain": primary_domain},
+        )
+
+    # Step 10: Validate domains is a list
+    if not isinstance(domains, list):
+        return Failure(
+            error=f"classify domains must be a list, got {type(domains).__name__}",
+            recoverable=True,
+            context={"stage": "classify", "domains_type": type(domains).__name__},
+        )
+
+    # Step 11: Return success
     return Success(
         ClassifyResult(
-            target_type=data["target_type"],
-            target_name=data["target_name"],
-            confidence=float(data["confidence"]),
-            reasoning=data["reasoning"],
+            project=project,
+            domains=domains,
+            primary_domain=primary_domain,
+            confidence=confidence,
+            reasoning=reasoning,
         )
     )
