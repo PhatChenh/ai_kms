@@ -65,6 +65,35 @@ def build_folder_subject(folder_name: str, file_manifest: str) -> str:
     return subject
 
 
+def _destination_names(valid_destinations: str) -> set[str]:
+    """Parse the format_for_prompt() block into an exact set of valid names.
+
+    The block has group-header lines like ``Finance:`` and item lines like
+    ``  - Alpha``.  Both forms are valid destinations.  The ``Uncategorized``
+    group header and the ``No active projects`` placeholder are NOT real
+    destinations and are excluded.
+
+    Used for exact-membership validation so a value that is merely a *substring*
+    of a real destination (e.g. ``"Alph"`` vs ``"Alpha"``) is rejected.
+
+    # COUPLING: project names and domain names are pooled into one set, so a
+    # project name used as a primary_domain (or vice versa) still validates.
+    # Closing that cross-type gap needs the structured ProjectRegistry, not the
+    # formatted string — tracked separately. This fix only closes the substring
+    # hole (the reported defect).
+    """
+    names: set[str] = set()
+    for line in valid_destinations.splitlines():
+        token = line.strip()
+        if token.startswith("- "):
+            token = token[2:].strip()
+        elif token.endswith(":"):
+            token = token[:-1].strip()
+        if token and token not in ("No active projects", "Uncategorized"):
+            names.add(token)
+    return names
+
+
 @dataclass(frozen=True)
 class ClassifyResult:
     """Result from the classify() pure function.
@@ -160,16 +189,20 @@ async def classify(
     confidence = float(data["confidence"])
     reasoning = data["reasoning"]
 
-    # Step 8: Validate project (when set) is in valid_destinations
-    if project is not None and project not in valid_destinations:
+    # Exact-membership set parsed from the destinations block (not a substring
+    # `in` test — "Alph" must not pass for a real destination "Alpha").
+    valid_names = _destination_names(valid_destinations)
+
+    # Step 8: Validate project (when set) is an exact valid destination
+    if project is not None and project not in valid_names:
         return Failure(
             error=f"classify project {project!r} not in valid destinations",
             recoverable=True,
             context={"stage": "classify", "project": project},
         )
 
-    # Step 9: Validate primary_domain (when set) is in valid_destinations
-    if primary_domain is not None and primary_domain not in valid_destinations:
+    # Step 9: Validate primary_domain (when set) is an exact valid destination
+    if primary_domain is not None and primary_domain not in valid_names:
         return Failure(
             error=f"classify primary_domain {primary_domain!r} not in valid destinations",
             recoverable=True,
