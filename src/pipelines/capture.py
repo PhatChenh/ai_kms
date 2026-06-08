@@ -1,6 +1,6 @@
 """pipelines/capture.py
 
-6-stage async capture pipeline: extract → enrich_urls → summarize → metadata → apply_location_tags → store.
+7-stage async capture pipeline: extract → enrich_urls → summarize → metadata → apply_location_tags → classify → store.
 Entry point: capture_file(path, context=None) -> Result[WriteOutcome]
 """
 
@@ -26,6 +26,12 @@ from handlers.registry import HandlerRegistry
 from handlers.url_fetcher import detect_urls, fetch_url_content
 from llm.prompt_loader import PROMPTS
 from llm.provider import get_provider
+from pipelines.classify import (
+    ClassifyResult,
+    build_folder_subject,
+    build_subject,
+    classify,
+)
 from vault.frontmatter import NoteMetadata
 from vault.paths import (
     _is_misplaced,
@@ -335,6 +341,252 @@ async def apply_location_tags(
 
     # inbox or unknown — no change
     return Success(mr)
+
+
+# ---------------------------------------------------------------------------
+# Stage 5.5: Classify (P2-CIC Phase 5)
+# ---------------------------------------------------------------------------
+
+
+def _write_classify_candidate(
+    path: Path,
+    suggested_project: str | None,
+    suggested_primary_domain: str | None,
+    classify_confidence: float,
+    classify_reasoning: str,
+) -> None:
+    """Write SUGGEST/CLUELESS candidate fields to a note's frontmatter.
+
+    Reads existing note to preserve all fields, then writes back with candidate
+    fields added.  Best-effort — failures are logged and silently discarded.
+    """
+    match read_note(path):
+        case Success(note):
+            existing = note.metadata
+            body = note.content
+        case Failure():
+            return
+
+    candidate_meta = NoteMetadata(
+        type=existing.type,
+        tags=existing.tags,
+        project=existing.project,
+        confidence=existing.confidence,
+        summary=existing.summary,
+        source=existing.source,
+        source_file=existing.source_file,
+        attachment_path=existing.attachment_path,
+        status="needs-review",
+        source_hash=existing.source_hash,
+        suggested_project=suggested_project,
+        suggested_primary_domain=suggested_primary_domain,
+        classify_confidence=classify_confidence,
+        classify_reasoning=classify_reasoning,
+        extra=existing.extra,
+    )
+
+    match write_note(path, body, candidate_meta, actor="ai"):
+        case Failure(error=e):
+            logger.warning(
+                "classify_step.candidate_write_failed", path=str(path), error=e
+            )
+        case Success():
+            pass
+
+
+def _write_classify_audit(
+    ctx: PipelineContext,
+    action: str,
+    confidence: float,
+    reasoning: str,
+    source_id: str,
+    outcome: str,
+) -> None:
+    """Write one classify audit row (best-effort)."""
+    decision = AIDecision(
+        action=action,
+        confidence=confidence,
+        reasoning=reasoning,
+        source_ids=[source_id],
+    )
+    match audit.write(
+        decision,
+        pipeline="capture",
+        stage="classify",
+        outcome=outcome,
+        db_path=ctx.db_path,
+    ):
+        case Failure(error=e):
+            logger.warning("classify_step.audit_failed", error=e)
+        case Success():
+            pass
+
+
+async def classify_step(
+    mr: MetadataResult, ctx: PipelineContext
+) -> Result[MetadataResult]:
+    """Stage 5.5: classify loose inbox notes via AI and route by confidence.
+
+    SUPPRESS / LOCATED files pass through unchanged.  Inbox files are sent to
+    the classify() engine; the confidence gate then routes to one of:
+
+      AUTO     — stamp ai_project + domain tags on MetadataResult
+                 (Phase 6 handles the actual file move)
+      SUGGEST  — write candidate fields to frontmatter, file stays in inbox
+      CLUELESS — write candidate fields with null values, file stays in inbox
+
+    Retry: up to 3 attempts with 1 s base exponential backoff.
+    Unrecoverable failures skip retry and fall through to CLUELESS.
+    """
+    import asyncio
+
+    # SUPPRESS passthrough (P2-CIC-06)
+    if ctx.skip_classify:
+        return Success(mr)
+
+    # LOCATED passthrough (P2-CIC-04)
+    loc_type, _ = _location_context(mr.raw.source_path, ctx.config.vault)
+    if loc_type in ("project", "domain"):
+        return Success(mr)
+
+    vault_cfg = ctx.config.vault
+
+    # --- Build subject ---
+    title = mr.ai_title or mr.raw.source_path.stem
+    tags = list(mr.ai_tags)
+    if mr.ai_domain:
+        domain_tag = f"domain/{mr.ai_domain}"
+        if domain_tag not in tags:
+            tags.append(domain_tag)
+    subject = build_subject(title, mr.summary or None, tags)
+
+    # --- Build destinations ---
+    from vault.registry import ProjectRegistry, build_registry, format_for_prompt
+
+    if ctx.registry is not None:
+        groups = ctx.registry.get_groups()
+        dest_registry = ProjectRegistry(groups=groups)
+    else:
+        match build_registry(vault_cfg):
+            case Success(reg):
+                dest_registry = reg
+            case Failure():
+                dest_registry = ProjectRegistry()
+    destinations = format_for_prompt(dest_registry)
+
+    # --- Retry loop ---
+    cr: ClassifyResult | None = None
+    max_attempts = 3
+    base_delay = 1.0
+
+    for attempt in range(1, max_attempts + 1):
+        result = await classify(subject, destinations, ctx.config)
+        match result:
+            case Success(value=classify_result):
+                cr = classify_result
+                break
+            case Failure(recoverable=False):
+                break  # Unrecoverable — no retry (OQ-CIC-B)
+            case Failure(recoverable=True) if attempt < max_attempts:
+                await asyncio.sleep(base_delay * (2 ** (attempt - 1)))
+            case Failure(recoverable=True):
+                break  # All retries exhausted
+
+    source_id = to_vault_path(mr.raw.source_path)
+
+    # --- All retries exhausted or unrecoverable -> CLUELESS ---
+    if cr is None:
+        _write_classify_candidate(
+            mr.raw.source_path,
+            None,
+            None,
+            0.0,
+            "Classification failed after 3 retry attempts.",
+        )
+        _write_classify_audit(
+            ctx,
+            "classify:clueless",
+            0.0,
+            "Classification failed after 3 retry attempts.",
+            source_id,
+            "CLUELESS",
+        )
+        return Success(mr)
+
+    # --- OQ-CIC-4: no project AND no primary domain -> forced CLUELESS ---
+    if cr.project is None and cr.primary_domain is None:
+        reasoning = cr.reasoning + " (no project or domain identified)"
+        _write_classify_candidate(
+            mr.raw.source_path, None, None, cr.confidence, reasoning
+        )
+        _write_classify_audit(
+            ctx, "classify:clueless", cr.confidence, reasoning, source_id, "CLUELESS"
+        )
+        return Success(mr)
+
+    # --- Confidence-gated routing ---
+    from core.config import CONFIG as _CONFIG
+    from core.config import RouteDecision
+
+    decision = _CONFIG.thresholds.for_pipeline("classify").route(cr.confidence)
+
+    if decision == RouteDecision.AUTO:
+        # AUTO — stamp MetadataResult (P2-CIC-01)
+        new_tags = list(mr.ai_tags)
+        for domain in cr.domains:
+            tag = f"domain/{domain}"
+            if tag not in new_tags:
+                new_tags.append(tag)
+
+        updated_mr = replace(
+            mr,
+            ai_project=cr.project,
+            ai_domain=cr.primary_domain or mr.ai_domain,
+            ai_tags=new_tags,
+        )
+
+        action = (
+            f"classify:{'project' if cr.project else 'domain'}/"
+            f"{cr.project or cr.primary_domain}"
+        )
+        _write_classify_audit(
+            ctx, action, cr.confidence, cr.reasoning, source_id, "AUTO"
+        )
+        return Success(updated_mr)
+
+    elif decision == RouteDecision.SUGGEST:
+        # SUGGEST — write candidate fields, file stays (P2-CIC-02)
+        _write_classify_candidate(
+            mr.raw.source_path,
+            cr.project,
+            cr.primary_domain,
+            cr.confidence,
+            cr.reasoning,
+        )
+        action = f"classify:suggest/{cr.project or cr.primary_domain}"
+        _write_classify_audit(
+            ctx, action, cr.confidence, cr.reasoning, source_id, "SUGGEST"
+        )
+        return Success(mr)
+
+    else:
+        # CLUELESS — write candidate fields with AI values (P2-CIC-03)
+        _write_classify_candidate(
+            mr.raw.source_path,
+            cr.project,
+            cr.primary_domain,
+            cr.confidence,
+            cr.reasoning,
+        )
+        _write_classify_audit(
+            ctx,
+            "classify:clueless",
+            cr.confidence,
+            cr.reasoning,
+            source_id,
+            "CLUELESS",
+        )
+        return Success(mr)
 
 
 def _audit_rename_gate(
@@ -977,7 +1229,15 @@ async def capture_file(
 
     return await run_pipeline(
         "capture",
-        [extract, enrich_urls, summarize, metadata, apply_location_tags, store],  # type: ignore[list-item]
+        [
+            extract,
+            enrich_urls,
+            summarize,
+            metadata,
+            apply_location_tags,
+            classify_step,
+            store,
+        ],  # type: ignore[list-item]
         path,
         context=context,
     )
@@ -1222,7 +1482,7 @@ def _build_vault_context(vault_cfg) -> str:
     are already mapped to which domains.  Falls back to a flat folder listing
     on registry build failure.
 
-    Used to ground the classify_folder LLM prompt.
+    Used to build valid_destinations for the classify() prompt.
     """
     import logging
 
@@ -1270,33 +1530,6 @@ def _collect_folder_files(folder_path: Path, vault_cfg: VaultConfig) -> list[Pat
             continue
         files.append(p)
     return files
-
-
-def _parse_classify_json(content: str) -> tuple[str | None, str | None, float]:
-    """Parse a classify_folder LLM response.
-
-    Returns (target_type, target_name, confidence). On any parse/validation
-    failure returns (None, None, 0.0) so the caller routes as CLUELESS.
-    """
-    cleaned = _FENCE_RE.sub("", content).strip()
-    try:
-        parsed = json.loads(cleaned)
-    except (json.JSONDecodeError, TypeError):
-        logger.warning(
-            "classify_folder.json_parse_failed", content_preview=content[:200]
-        )
-        return (None, None, 0.0)
-
-    target_type = parsed.get("target_type")
-    target_name = parsed.get("target_name")
-    confidence = parsed.get("confidence", 0.0)
-    if target_type not in ("domain", "project") or not isinstance(target_name, str):
-        return (None, None, 0.0)
-    try:
-        confidence = float(confidence)
-    except (TypeError, ValueError):
-        confidence = 0.0
-    return (target_type, target_name, confidence)
 
 
 def _folder_destination(target_type: str, target_name: str, vault_cfg) -> Path:
@@ -1457,24 +1690,40 @@ async def capture_folder(
         ctx_with_batch = replace(ctx, batch_id=batch_id)
         return await _capture_folder_files(folder_path, files, ctx_with_batch)
 
-    # ── Case A: inbox (or unknown) drop — classify via LLM. ─────────────────
+    # ── Case A: inbox (or unknown) drop — classify via unified engine. ──────
     file_manifest = "\n".join(f.name for f in files)
-    vault_context = _build_vault_context(vault_cfg)
-    system, user = PROMPTS["classify_folder"].render(
-        folder_name=folder_path.name,
-        file_manifest=file_manifest,
-        vault_context=vault_context,
-    )
+    subject = build_folder_subject(folder_path.name, file_manifest)
+    valid_destinations = _build_vault_context(vault_cfg)
 
-    # LLM failure → treat as CLUELESS (confidence 0.0), never abort.
-    match await get_provider("capture", ctx.config).complete(system, user):
+    # classify() handles its own provider dispatch, JSON parsing, and validation.
+    # Failure → treat as CLUELESS (confidence 0.0), never abort.
+    match await classify(subject, valid_destinations, ctx.config):
         case Failure(error=e):
             logger.warning(
-                "capture_folder.llm_failed", folder=str(folder_path), error=e
+                "capture_folder.classify_failed",
+                folder=str(folder_path),
+                error=e,
             )
             target_type, target_name, confidence = None, None, 0.0
-        case Success(value=resp):
-            target_type, target_name, confidence = _parse_classify_json(resp.content)
+        case Success(value=cr):
+            # Derive target_type/target_name from ClassifyResult.
+            if cr.project:
+                target_type, target_name = "project", cr.project
+            elif cr.primary_domain:
+                target_type, target_name = "domain", cr.primary_domain
+            elif cr.domains:
+                target_type, target_name = "domain", cr.domains[0]
+            else:
+                target_type, target_name = None, None
+            confidence = cr.confidence
+            logger.info(
+                "capture_folder.classified",
+                folder=folder_path.name,
+                target_type=target_type,
+                target_name=target_name,
+                confidence=confidence,
+                reasoning=cr.reasoning,
+            )
 
     from core.config import CONFIG as _CONFIG  # lazy — thresholds not on MainConfig
 
