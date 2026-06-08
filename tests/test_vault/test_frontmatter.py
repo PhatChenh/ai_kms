@@ -1,4 +1,5 @@
 """tests/test_vault/test_frontmatter.py"""
+
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
@@ -12,6 +13,7 @@ from core.result import Failure, Success
 # helpers
 # ---------------------------------------------------------------------------
 
+
 def write_file(tmp_path: Path, name: str, content: str) -> Path:
     p = tmp_path / name
     p.write_text(content, encoding="utf-8")
@@ -21,6 +23,7 @@ def write_file(tmp_path: Path, name: str, content: str) -> Path:
 # ---------------------------------------------------------------------------
 # parse tests
 # ---------------------------------------------------------------------------
+
 
 def test_parse_minimal_note(tmp_path):
     """Unknown key 'title' goes into extra; NoteMetadata fields stay default."""
@@ -93,6 +96,7 @@ def test_parse_missing_file_returns_failure(tmp_path):
 # ---------------------------------------------------------------------------
 # dumps tests
 # ---------------------------------------------------------------------------
+
 
 def test_dumps_round_trips_known_fields(tmp_path):
     """parse(dumps(meta, body)) returns identical metadata for all known fields."""
@@ -197,8 +201,9 @@ def test_attachment_path_field_parsed_not_in_extra(tmp_path):
     from vault.frontmatter import parse
 
     f = write_file(
-        tmp_path, "n.md",
-        "---\nattachment_path: Projects/A/attachment/report.pdf\n---\nbody"
+        tmp_path,
+        "n.md",
+        "---\nattachment_path: Projects/A/attachment/report.pdf\n---\nbody",
     )
     r = parse(f)
     assert isinstance(r, Success)
@@ -234,8 +239,9 @@ def test_unknown_keys_still_go_to_extra_with_attachment_path_known(tmp_path):
     from vault.frontmatter import parse
 
     f = write_file(
-        tmp_path, "n.md",
-        "---\nattachment_path: Projects/A/attachment/f.pdf\nweirdo: 42\n---\nbody"
+        tmp_path,
+        "n.md",
+        "---\nattachment_path: Projects/A/attachment/f.pdf\nweirdo: 42\n---\nbody",
     )
     r = parse(f)
     assert isinstance(r, Success)
@@ -281,10 +287,7 @@ def test_source_hash_field_parsed_not_in_extra(tmp_path):
     from vault.frontmatter import parse
 
     fake_hash = "b" * 64
-    f = write_file(
-        tmp_path, "n.md",
-        f"---\nsource_hash: {fake_hash}\n---\nbody"
-    )
+    f = write_file(tmp_path, "n.md", f"---\nsource_hash: {fake_hash}\n---\nbody")
     r = parse(f)
     assert isinstance(r, Success)
     meta, _ = r.value
@@ -318,6 +321,93 @@ def test_dumps_preserves_non_deprecated_extra_keys():
 # ---------------------------------------------------------------------------
 # Phase 3B — domain scalar field removal (TD-038)
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 Classify: candidate frontmatter fields
+# ---------------------------------------------------------------------------
+
+
+def test_candidate_fields_round_trip(tmp_path):
+    """Parse a note with all 4 candidate fields, verify round-trip preserves them."""
+    from vault.frontmatter import NoteMetadata, dumps, parse
+
+    content = """---
+suggested_project: Alpha
+suggested_primary_domain: Finance
+classify_confidence: 0.85
+classify_reasoning: quarterly report matches Alpha patterns
+---
+body
+"""
+    f = write_file(tmp_path, "candidate.md", content)
+    result = parse(f)
+    assert isinstance(result, Success)
+    meta, body = result.value
+
+    assert meta.suggested_project == "Alpha"
+    assert meta.suggested_primary_domain == "Finance"
+    assert meta.classify_confidence == 0.85
+    assert meta.classify_reasoning == "quarterly report matches Alpha patterns"
+
+    # Round-trip: serialize and re-parse
+    rt = dumps(meta, body)
+    f2 = write_file(tmp_path, "rt.md", rt)
+    result2 = parse(f2)
+    assert isinstance(result2, Success)
+    meta2, _ = result2.value
+
+    assert meta2.suggested_project == "Alpha"
+    assert meta2.suggested_primary_domain == "Finance"
+    assert meta2.classify_confidence == 0.85
+    assert meta2.classify_reasoning == "quarterly report matches Alpha patterns"
+
+
+def test_candidate_fields_default_none(tmp_path):
+    """Parse a note with no candidate fields — all 4 default to None."""
+    from vault.frontmatter import parse
+
+    f = write_file(tmp_path, "plain.md", "---\ntitle: Hello\n---\nbody")
+    result = parse(f)
+    assert isinstance(result, Success)
+    meta, _ = result.value
+
+    assert meta.suggested_project is None
+    assert meta.suggested_primary_domain is None
+    assert meta.classify_confidence is None
+    assert meta.classify_reasoning is None
+
+
+def test_coerce_bool_to_str_on_candidate_strings(tmp_path):
+    """PyYAML 'yes' → bool True must be coerced back to 'yes' for candidate string fields."""
+    from vault.frontmatter import parse
+
+    f = write_file(tmp_path, "boolish.md", "---\nsuggested_project: yes\n---\nbody")
+    result = parse(f)
+    assert isinstance(result, Success)
+    meta, _ = result.value
+    assert meta.suggested_project == "yes"
+    assert isinstance(meta.suggested_project, str)
+
+
+def test_classify_confidence_bounds():
+    """classify_confidence must be 0.0–1.0 (ge/le), reject out-of-range values."""
+    import pytest
+    from vault.frontmatter import NoteMetadata
+
+    # Valid bounds
+    m1 = NoteMetadata(classify_confidence=0.0)
+    assert m1.classify_confidence == 0.0
+    m2 = NoteMetadata(classify_confidence=1.0)
+    assert m2.classify_confidence == 1.0
+
+    # Invalid below 0.0
+    with pytest.raises(Exception):
+        NoteMetadata(classify_confidence=-0.1)
+
+    # Invalid above 1.0
+    with pytest.raises(Exception):
+        NoteMetadata(classify_confidence=1.1)
 
 
 def test_parse_yaml_with_domain_produces_no_domain_attr(tmp_path):
