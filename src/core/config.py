@@ -25,25 +25,30 @@ import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from core.exceptions import ConfigError 
+from core.exceptions import ConfigError
 
 # ---------------------------------------------------------------------------
 # Resolve config dir relative to this file — works regardless of cwd.
 # ---------------------------------------------------------------------------
 _PROJECT_ROOT = Path(__file__).parent.parent
-_REPO_ROOT = _PROJECT_ROOT.parent          # one level above src/ — anchor for relative data paths
+_REPO_ROOT = (
+    _PROJECT_ROOT.parent
+)  # one level above src/ — anchor for relative data paths
 _CONFIG_DIR = _PROJECT_ROOT / "config"
 
 # ---------------------------------------------------------------------------
 # Type aliases — 3.12 `type` statement, runtime-enforced.
 # ---------------------------------------------------------------------------
-type Provider  = Literal["claude", "claude_cli", "ollama", "openai"]
-type Task      = Literal["classify", "synthesis", "documentation", "embeddings", "self_learn", "capture"]
-type LogLevel  = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-type Env       = Literal["dev", "prod"]
+type Provider = Literal["claude", "claude_cli", "ollama", "openai"]
+type Task = Literal[
+    "classify", "synthesis", "documentation", "embeddings", "self_learn", "capture"
+]
+type LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+type Env = Literal["dev", "prod", "test"]
 
 
 # core/config.py
+
 
 class RouteDecision(str, Enum):
     """
@@ -58,13 +63,16 @@ class RouteDecision(str, Enum):
                signal. Never stays silent — the audit trail always records
                the review attempt.
     """
-    AUTO     = "auto"
-    SUGGEST  = "suggest"
+
+    AUTO = "auto"
+    SUGGEST = "suggest"
     CLUELESS = "clueless"
+
 
 # ===========================================================================
 # 1. Sub-models for config/config.yaml
 # ===========================================================================
+
 
 class VaultConfig(BaseModel):
     """
@@ -72,17 +80,18 @@ class VaultConfig(BaseModel):
     Add a new folder here + a matching @property for top-level paths.
     Parametrized sub-paths (per-project, per-domain) live in vault/paths.py.
     """
-    root:             Path
-    inbox_dir:         str = "inbox"
-    projects_dir:      str = "Projects"
-    domain_dir:        str = "Domain"
+
+    root: Path
+    inbox_dir: str = "inbox"
+    projects_dir: str = "Projects"
+    domain_dir: str = "Domain"
     documentation_dir: str = "Documentation"
-    synthesis_dir:     str = "Synthesis"
-    briefings_dir:     str = "Briefings"
-    archive_dir:       str = "Archive"
-    attachment_dir:    str = "attachment"
-    summaries_subdir:    str = ".summaries"
-    no_edit_extensions:  list[str] = Field(
+    synthesis_dir: str = "Synthesis"
+    briefings_dir: str = "Briefings"
+    archive_dir: str = "Archive"
+    attachment_dir: str = "attachment"
+    summaries_subdir: str = ".summaries"
+    no_edit_extensions: list[str] = Field(
         default_factory=lambda: [".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"]
     )
 
@@ -110,17 +119,28 @@ class VaultConfig(BaseModel):
     # ── derived path helpers ──────────────────────────────────────────────
     # Always use these; never build paths by string concatenation elsewhere.
     @property
-    def inbox_path(self)         -> Path: return self.root / self.inbox_dir
+    def inbox_path(self) -> Path:
+        return self.root / self.inbox_dir
+
     @property
-    def projects_path(self)      -> Path: return self.root / self.projects_dir
+    def projects_path(self) -> Path:
+        return self.root / self.projects_dir
+
     @property
-    def domain_path(self)        -> Path: return self.root / self.domain_dir
+    def domain_path(self) -> Path:
+        return self.root / self.domain_dir
+
     @property
-    def documentation_path(self) -> Path: return self.root / self.documentation_dir
+    def documentation_path(self) -> Path:
+        return self.root / self.documentation_dir
+
     @property
-    def synthesis_path(self)     -> Path: return self.root / self.synthesis_dir
+    def synthesis_path(self) -> Path:
+        return self.root / self.synthesis_dir
+
     @property
-    def briefings_path(self)     -> Path: return self.root / self.briefings_dir
+    def briefings_path(self) -> Path:
+        return self.root / self.briefings_dir
 
     @property
     def ai_output_dirs(self) -> tuple[str, ...]:
@@ -129,6 +149,7 @@ class VaultConfig(BaseModel):
     @property
     def ai_output_paths(self) -> tuple[Path, ...]:
         return (self.briefings_path, self.synthesis_path, self.documentation_path)
+
 
 class DatabaseConfig(BaseModel):
     # validate_assignment so the KMS_DB_PATH env override in load_config() is
@@ -154,11 +175,12 @@ class ProvidersConfig(BaseModel):
     Per-task provider selection. Maps each pipeline task to "claude" or "ollama".
     Adding a new task = add a field here + add the task to the Task type alias.
     """
-    classify:   Provider = "claude"
-    synthesis:  Provider = "claude"
+
+    classify: Provider = "claude"
+    synthesis: Provider = "claude"
     embeddings: Provider = "ollama"
     self_learn: Provider = "claude"
-    capture:    Provider = "claude"
+    capture: Provider = "claude"
 
     def for_task(self, task: Task) -> Provider:
         """
@@ -176,66 +198,71 @@ class ClaudeConfig(BaseModel):
     Claude-specific settings.
     Two models: a fast/cheap one for most tasks, a smarter one for synthesis.
     """
-    model:           str = "claude-haiku-4-5-20251001"   # capture, classify, self_learn
-    synthesis_model: str = "claude-sonnet-4-20250514"    # synthesis, documentation
-    embedding_model: str = "voyage-3"                    # via Voyage API (future)
-    max_tokens:      int = 1024
-    timeout:         int = 60   # seconds
+
+    model: str = "claude-haiku-4-5-20251001"  # capture, classify, self_learn
+    synthesis_model: str = "claude-sonnet-4-20250514"  # synthesis, documentation
+    embedding_model: str = "voyage-3"  # via Voyage API (future)
+    max_tokens: int = 1024
+    timeout: int = 60  # seconds
 
 
 class OllamaConfig(BaseModel):
     """Ollama local server settings."""
-    base_url:            str = "http://localhost:11434"
-    chat_model:          str = "llama3"
-    synthesis_model:     str = "llama3"    # override with a larger model e.g. llama3
-    embedding_model:     str = "nomic-embed-text"
-    max_tokens:          int = 1024
-    timeout:             int = 120
-    delay_between_calls: int = 2   # seconds between batch calls
+
+    base_url: str = "http://localhost:11434"
+    chat_model: str = "llama3"
+    synthesis_model: str = "llama3"  # override with a larger model e.g. llama3
+    embedding_model: str = "nomic-embed-text"
+    max_tokens: int = 1024
+    timeout: int = 120
+    delay_between_calls: int = 2  # seconds between batch calls
 
 
 class OpenAICompatConfig(BaseModel):
     """Settings for any OpenAI-compatible endpoint (Fireworks, Together, etc.)."""
-    base_url:        str = "https://api.fireworks.ai/inference/v1"
-    model:           str = "accounts/fireworks/models/gpt-oss-20b"
+
+    base_url: str = "https://api.fireworks.ai/inference/v1"
+    model: str = "accounts/fireworks/models/gpt-oss-20b"
     synthesis_model: str = "accounts/fireworks/models/llama-v3p1-70b-instruct"
     embedding_model: str = "nomic-ai/nomic-embed-text-v1.5"
-    max_tokens:      int = 1024
-    timeout:         int = 60
-    api_key_env:     str = "FIREWORKS_API_KEY"  # name of the env var holding the key
+    max_tokens: int = 1024
+    timeout: int = 60
+    api_key_env: str = "FIREWORKS_API_KEY"  # name of the env var holding the key
 
 
 class ClaudeCliConfig(BaseModel):
     """Claude CLI subprocess provider settings."""
 
-    cli_path:        str = "claude"
-    model:           str = "claude-haiku-4-5-20251001"
+    cli_path: str = "claude"
+    model: str = "claude-haiku-4-5-20251001"
     synthesis_model: str = "claude-sonnet-4-20250514"
-    embedding_model: str = "voyage-3"   # interface parity; not used by CLI
-    max_tokens:      int = 1024         # interface parity; CLI has no --max-tokens flag
-    timeout:         int = 60           # seconds passed to asyncio.wait_for
+    embedding_model: str = "voyage-3"  # interface parity; not used by CLI
+    max_tokens: int = 1024  # interface parity; CLI has no --max-tokens flag
+    timeout: int = 60  # seconds passed to asyncio.wait_for
 
 
 class MCPConfig(BaseModel):
     """MCP server settings (Roadmap 9)."""
-    port:        int  = 3838
-    host:        str  = "0.0.0.0"
+
+    port: int = 3838
+    host: str = "0.0.0.0"
     enable_http: bool = False
 
 
 class SelfLearningConfig(BaseModel):
     """Controls how the self-learning pipeline adjusts prompts (Roadmap 8)."""
-    enabled:                    bool  = True
-    min_evaluations:            int   = 20
-    confidence_threshold:       float = Field(0.8, ge=0.0, le=1.0)
-    include_examples_in_prompt: bool  = True
-    max_examples:               int   = 5
+
+    enabled: bool = True
+    min_evaluations: int = 20
+    confidence_threshold: float = Field(0.8, ge=0.0, le=1.0)
+    include_examples_in_prompt: bool = True
+    max_examples: int = 5
 
 
 class LoggingConfig(BaseModel):
-    level:   LogLevel = "INFO"
-    file:    str      = "logs/app.log"
-    console: bool     = True
+    level: LogLevel = "INFO"
+    file: str = "logs/app.log"
+    console: bool = True
 
 
 class HandlersConfig(BaseModel):
@@ -244,11 +271,12 @@ class HandlersConfig(BaseModel):
     All values are hard caps; exceeding them returns Failure(recoverable=False).
     Adjust in config/config.yaml under `handlers:`.
     """
-    max_file_size_bytes:       int = Field(50 * 1024 * 1024, ge=1)   # 50 MB
-    max_web_fetch_bytes:       int = Field(10 * 1024 * 1024, ge=1)   # 10 MB
+
+    max_file_size_bytes: int = Field(50 * 1024 * 1024, ge=1)  # 50 MB
+    max_web_fetch_bytes: int = Field(10 * 1024 * 1024, ge=1)  # 10 MB
     web_fetch_timeout_seconds: int = Field(30, ge=1)
     dns_resolve_timeout_seconds: int = Field(5, ge=1)
-    max_redirects:             int = Field(5, ge=0)
+    max_redirects: int = Field(5, ge=0)
 
 
 class RenameGateConfig(BaseModel):
@@ -272,25 +300,53 @@ class CaptureConfig(BaseModel):
     folder_max_workers: int = Field(4, ge=1)
 
 
+class TestingConfig(BaseModel):
+    """Isolated vault used for manual testing-guide runs.
+
+    Only consulted when `env: test` in config.yaml. When env is dev/prod this
+    block is ignored and `vault.root` is used as-is.
+    """
+
+    vault_path: Path
+
+
 class MainConfig(BaseModel):
     """
     Composite model for config/config.yaml.
     Every section of the YAML maps to one typed sub-model.
     """
-    vault:            VaultConfig
-    database:         DatabaseConfig      = Field(default_factory=DatabaseConfig)
-    para_context_path: Path | None        = None
-    providers:        ProvidersConfig     = Field(default_factory=ProvidersConfig)
-    claude:           ClaudeConfig        = Field(default_factory=ClaudeConfig)
-    claude_cli:       ClaudeCliConfig     = Field(default_factory=ClaudeCliConfig)
-    ollama:           OllamaConfig        = Field(default_factory=OllamaConfig)
-    openai_compat:    OpenAICompatConfig  = Field(default_factory=OpenAICompatConfig)
-    mcp:              MCPConfig           = Field(default_factory=MCPConfig)
-    self_learning:    SelfLearningConfig  = Field(default_factory=SelfLearningConfig)  # type: ignore[arg-type]
-    logging:          LoggingConfig       = Field(default_factory=LoggingConfig)
-    handlers:         HandlersConfig      = Field(default_factory=HandlersConfig)  # type: ignore[arg-type]
-    capture:          CaptureConfig       = Field(default_factory=CaptureConfig)  # type: ignore[arg-type]
-    env:              Env                 = "dev"
+
+    vault: VaultConfig
+    testing: TestingConfig | None = None
+    database: DatabaseConfig = Field(default_factory=DatabaseConfig)
+    para_context_path: Path | None = None
+    providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
+    claude: ClaudeConfig = Field(default_factory=ClaudeConfig)
+    claude_cli: ClaudeCliConfig = Field(default_factory=ClaudeCliConfig)
+    ollama: OllamaConfig = Field(default_factory=OllamaConfig)
+    openai_compat: OpenAICompatConfig = Field(default_factory=OpenAICompatConfig)
+    mcp: MCPConfig = Field(default_factory=MCPConfig)
+    self_learning: SelfLearningConfig = Field(default_factory=SelfLearningConfig)  # type: ignore[arg-type]
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    handlers: HandlersConfig = Field(default_factory=HandlersConfig)  # type: ignore[arg-type]
+    capture: CaptureConfig = Field(default_factory=CaptureConfig)  # type: ignore[arg-type]
+    env: Env = "dev"
+
+    @model_validator(mode="after")
+    def select_vault_by_env(self) -> Self:
+        """When env=test, redirect vault.root to the isolated testing vault.
+
+        Runs BEFORE validate_vault_root_exists (after-validators fire in
+        definition order) so the existence check below validates the effective
+        root. dev/prod leave vault.root untouched.
+        """
+        if self.env == "test":
+            if self.testing is None:
+                raise ValueError(
+                    "env: test requires a `testing.vault_path` in config.yaml."
+                )
+            self.vault.root = self.testing.vault_path
+        return self
 
     @model_validator(mode="after")
     def validate_vault_root_exists(self) -> Self:
@@ -301,9 +357,7 @@ class MainConfig(BaseModel):
                 f"Fix vault.root in config/config.yaml."
             )
         if not self.vault.root.is_dir():
-            raise ValueError(
-                f"Vault root is not a directory: {self.vault.root}"
-            )
+            raise ValueError(f"Vault root is not a directory: {self.vault.root}")
         return self
 
     @model_validator(mode="after")
@@ -316,6 +370,7 @@ class MainConfig(BaseModel):
 # ===========================================================================
 # 2. Sub-models for config/thresholds.yaml
 # ===========================================================================
+
 
 class ConfidenceBand(BaseModel):
     """
@@ -339,8 +394,9 @@ class ConfidenceBand(BaseModel):
 
     All thresholds live in config/thresholds.yaml — never in code.
     """
-    auto:    float = Field(0.85, ge=0.0, le=1.0)
-    suggest: float = Field(0.60, ge=0.0, le=1.0)   # renamed from `review`
+
+    auto: float = Field(0.85, ge=0.0, le=1.0)
+    suggest: float = Field(0.60, ge=0.0, le=1.0)  # renamed from `review`
 
     @model_validator(mode="after")
     def suggest_below_auto(self) -> Self:
@@ -379,8 +435,9 @@ class ConfidenceBand(BaseModel):
 
 class Thresholds(BaseModel):
     """Schema for config/thresholds.yaml."""
-    global_:   ConfidenceBand               = Field(default_factory=ConfidenceBand, alias="global")  # type: ignore[arg-type]
-    pipelines: dict[str, ConfidenceBand]    = Field(default_factory=dict)
+
+    global_: ConfidenceBand = Field(default_factory=ConfidenceBand, alias="global")  # type: ignore[arg-type]
+    pipelines: dict[str, ConfidenceBand] = Field(default_factory=dict)
 
     model_config = {"populate_by_name": True}
 
@@ -402,21 +459,25 @@ class Thresholds(BaseModel):
 # 3. Sub-models for config/routing.yaml (Phase 2 placeholder)
 # ===========================================================================
 
+
 class PipelineRouting(BaseModel):
     """Per-pipeline LLM overrides. All fields optional — absent = use provider default."""
-    provider:          Provider | None = None
-    model:             str | None      = None
+
+    provider: Provider | None = None
+    model: str | None = None
     fallback_provider: Provider | None = None
 
 
 class Routing(BaseModel):
     """Schema for config/routing.yaml. Phase 2 fills this."""
+
     pipelines: dict[str, PipelineRouting] = Field(default_factory=dict)
 
 
 # ===========================================================================
 # 4. API keys — environment variables only, never YAML
 # ===========================================================================
+
 
 class ApiKeys(BaseSettings):
     """
@@ -428,15 +489,16 @@ class ApiKeys(BaseSettings):
     pydantic-settings raises a clear error at startup if validation fails,
     rather than crashing silently on the first API call.
     """
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
-    anthropic_api_key: str | None  = Field(default=None, alias="ANTHROPIC_API_KEY")
-    openai_api_key:    str | None  = Field(default=None, alias="OPENAI_API_KEY")
-    kms_db_path:       Path | None = Field(default=None, alias="KMS_DB_PATH")
+    anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
+    openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    kms_db_path: Path | None = Field(default=None, alias="KMS_DB_PATH")
 
     @field_validator("anthropic_api_key", "openai_api_key", mode="before")
     @classmethod
@@ -447,6 +509,7 @@ class ApiKeys(BaseSettings):
 # ===========================================================================
 # 5. Composing model + loader
 # ===========================================================================
+
 
 class Config(BaseModel):
     """
@@ -465,10 +528,11 @@ class Config(BaseModel):
         CONFIG.routing.pipelines                  → dict (Phase 2)
         CONFIG.keys.anthropic_api_key             → str | None
     """
-    main:       MainConfig
+
+    main: MainConfig
     thresholds: Thresholds
-    routing:    Routing
-    keys:       ApiKeys
+    routing: Routing
+    keys: ApiKeys
 
 
 def _load_yaml(filename: str) -> dict:
@@ -487,19 +551,19 @@ def _load_yaml(filename: str) -> dict:
 def load_config() -> "Config":
     """
     Load and validate all config files. Called once at module level.
- 
+
     Raises:
         ConfigError — if any YAML file is missing OR any value fails the schema.
                       Wraps FileNotFoundError and Pydantic ValidationError so
                       callers get one typed exception to catch.
     """
     try:
-        raw_main       = _load_yaml("config.yaml")
+        raw_main = _load_yaml("config.yaml")
         raw_thresholds = _load_yaml("thresholds.yaml")
-        raw_routing    = _load_yaml("routing.yaml")
- 
+        raw_routing = _load_yaml("routing.yaml")
+
         from pydantic import ValidationError  # local import avoids circular risk
- 
+
         try:
             keys = ApiKeys()
             cfg = Config(
@@ -520,10 +584,8 @@ def load_config() -> "Config":
                 )
             return cfg
         except ValidationError as exc:
-            raise ConfigError(
-                f"Config validation failed:\n{exc}"
-            ) from exc
- 
+            raise ConfigError(f"Config validation failed:\n{exc}") from exc
+
     except FileNotFoundError as exc:
         raise ConfigError(f"Config file missing: {exc}") from exc
 

@@ -1,7 +1,7 @@
 # AI-KMS Testing Guide
 _For non-technical testers. No coding required for Smoke and Phase checks._
 _Auto-generated from `behavior_inventory.yaml`. Fill in **Current result** fields after testing. All other content is regenerated — do not edit._
-_Last generated: 2026-06-05_
+_Last generated: 2026-06-07_
 
 ---
 
@@ -133,11 +133,9 @@ uv run kms capture inbox/test-md-capture.md
 - [ ] confidence: has a decimal number
 - [ ] Body text below --- unchanged from original
 
-**Last tested:** never
-**Last result:** none
+**Last tested:** 2026-06-07
+**Last result:** passed
 **Current result:** ___
-
-⚠ AI-authored — not yet human-verified.
 
 ---
 
@@ -162,7 +160,7 @@ uv run kms capture Projects/Alpha/sample-report.pdf
 - [ ] Sibling frontmatter has type: attachment-summary
 - [ ] Sibling frontmatter has summary: (non-empty)
 
-**Last tested:** 2026-06-05
+**Last tested:** 2026-06-07
 **Last result:** passed
 **Current result:** ___
 
@@ -187,7 +185,7 @@ uv run kms capture inbox/test-body-preservation.md
 - [ ] Body text below second --- is byte-identical to original
 - [ ] summary: appears only inside frontmatter (between --- markers), never in body
 
-**Last tested:** 2026-06-05
+**Last tested:** 2026-06-07
 **Last result:** passed
 **Current result:** ___
 
@@ -219,7 +217,7 @@ uv run kms capture inbox/test-rename-gate.md
 - [ ] summary: may update but filename unchanged
 - [ ] No duplicate file appears on disk
 
-**Last tested:** 2026-06-05
+**Last tested:** 2026-06-07
 **Last result:** passed
 **Current result:** ___
 
@@ -250,7 +248,7 @@ uv run kms capture --scan
 - [ ] test-scan-uncaptured.md gets summary: in frontmatter
 - [ ] test-md-capture.md summary: unchanged (not re-processed)
 
-**Last tested:** 2026-06-05
+**Last tested:** 2026-06-07
 **Last result:** passed
 **Current result:** ___
 
@@ -273,7 +271,7 @@ uv run kms capture Domain/Finance/test-domain-tag.md
 - [ ] Open file — frontmatter tags: contains domain/Finance
 - [ ] No domain: scalar field in frontmatter (only the tag)
 
-**Last tested:** 2026-06-05
+**Last tested:** 2026-06-07
 **Last result:** passed
 **Current result:** ___
 
@@ -295,7 +293,7 @@ uv run kms capture Projects/Alpha/test-project-tag.md
 **Check:**
 - [ ] Open file — frontmatter has project: Alpha
 
-**Last tested:** 2026-06-05
+**Last tested:** 2026-06-07
 **Last result:** passed
 **Current result:** ___
 
@@ -329,11 +327,9 @@ uv run kms capture inbox/q3-planning-brief.docx
 - [ ] Sibling frontmatter has status: pending-routing
 - [ ] Sibling frontmatter has NO summary: field (deferred to Phase 2 Classify)
 
-**Last tested:** never
-**Last result:** none
+**Last tested:** 2026-06-07
+**Last result:** passed
 **Current result:** ___
-
-⚠ AI-authored — not yet human-verified.
 
 ---
 
@@ -355,7 +351,7 @@ uv run kms watch
 In Terminal 2, copy the staging file to inbox/ and wait ~10 seconds:
 
 ```bash
-cp <staging>/auto-capture-test.md <vault>/inbox/
+cp /Users/phatchenh/ai_kms_test_vault/auto-capture-test.md /Users/phatchenh/ai_kms_test_vault/actual_test_vault/inbox/
 ```
 
 **Check:**
@@ -363,15 +359,13 @@ cp <staging>/auto-capture-test.md <vault>/inbox/
 - [ ] No manual kms capture was needed
 - [ ] Only one capture pipeline fires per drop (in-flight guard prevents concurrent pipelines on same path)
 
-**Last tested:** never
-**Last result:** none
+**Last tested:** 2026-06-07
+**Last result:** passed
 **Current result:** ___
-
-⚠ AI-authored — not yet human-verified.
 
 ---
 
-### P1-CAP-08 · Gibberish-named PDF gets FULL_RENAME to AI-chosen title
+### P1-CAP-08 · Gibberish-named inbox PDF gets pending-routing marker (rename deferred to Phase 2 Classify)
 _Origin: implementation · Granularity: outcome_
 
 **Setup:**
@@ -385,14 +379,15 @@ uv run kms capture inbox/xkjdhfs83.pdf
 ```
 
 **Check:**
-- [ ] Sibling .md has an AI-chosen title (not xkjdhfs83)
-- [ ] Audit log shows rename_gate outcome=FULL_RENAME
+- [ ] xkjdhfs83.pdf stays in inbox/ with original name (no rename during capture)
+- [ ] Sibling .md created at inbox/.summaries/xkjdhfs83.pdf.md
+- [ ] Sibling frontmatter has status: pending-routing
+- [ ] Audit log shows outcome=CLUELESS (rename gate not called for inbox binaries)
+- [ ] Phase 2 Classify will rename and route
 
-**Last tested:** never
-**Last result:** none
+**Last tested:** 2026-06-07
+**Last result:** passed
 **Current result:** ___
-
-⚠ AI-authored — not yet human-verified.
 
 ---
 
@@ -422,11 +417,9 @@ uv run kms capture inbox/test-idempotent.md
 - [ ] content_hash match — no LLM call made
 - [ ] summary: field identical to first capture
 
-**Last tested:** never
-**Last result:** none
+**Last tested:** 2026-06-07
+**Last result:** passed
 **Current result:** ___
-
-⚠ AI-authored — not yet human-verified.
 
 ---
 
@@ -439,7 +432,11 @@ bash docs/system_behavior/setup_test_vault.sh P1-CAP-10
 ```
 
 **Run:**
-`uv run kms capture inbox/mystery-file.pdf` (no project/domain hint in filename or content)
+```bash
+uv run kms capture inbox/mystery-file.pdf
+```
+
+No project/domain hint in filename or content — capture should park and create pending-routing marker.
 
 **Check:**
 - [ ] mystery-file.pdf stays in inbox/ (not moved)
@@ -448,11 +445,9 @@ bash docs/system_behavior/setup_test_vault.sh P1-CAP-10
 - [ ] Marker frontmatter has type: attachment-summary
 - [ ] Marker body contains placeholder text (not a real summary)
 
-**Last tested:** never
-**Last result:** none
+**Last tested:** 2026-06-07
+**Last result:** passed
 **Current result:** ___
-
-⚠ AI-authored — not yet human-verified.
 
 ---
 
@@ -465,16 +460,18 @@ bash docs/system_behavior/setup_test_vault.sh P1-CAP-11
 ```
 
 **Run:**
-`uv run kms capture inbox/test-url-note.md` (file body has a URL and less than 500 chars of text)
+```bash
+uv run kms capture inbox/test-url-note.md
+```
+
+File body must contain a URL and less than 500 chars of text to trigger URL enrichment.
 
 **Check:**
 - [ ] Open file — summary: reflects content from the URL, not just the sparse body text
 
-**Last tested:** never
-**Last result:** none
+**Last tested:** 2026-06-07
+**Last result:** passed
 **Current result:** ___
-
-⚠ AI-authored — not yet human-verified.
 
 ---
 
@@ -501,11 +498,9 @@ uv run kms reconcile
 - [ ] Open file — domain/OldDomain tag removed from frontmatter
 - [ ] Other tags preserved
 
-**Last tested:** never
-**Last result:** none
+**Last tested:** 2026-06-07
+**Last result:** passed
 **Current result:** ___
-
-⚠ AI-authored — not yet human-verified.
 
 ---
 
@@ -528,11 +523,9 @@ uv run kms reconcile
 - [ ] Open file — domain/Engineering tag added to frontmatter
 - [ ] Body text unchanged
 
-**Last tested:** never
-**Last result:** none
+**Last tested:** 2026-06-07
+**Last result:** passed
 **Current result:** ___
-
-⚠ AI-authored — not yet human-verified.
 
 ---
 
@@ -556,11 +549,9 @@ uv run kms reconcile
 - [ ] Sibling frontmatter has summary: (non-empty)
 - [ ] Sibling frontmatter has attachment_path: pointing to orphan-report.pdf
 
-**Last tested:** never
-**Last result:** none
+**Last tested:** 2026-06-07
+**Last result:** passed
 **Current result:** ___
-
-⚠ AI-authored — not yet human-verified.
 
 ---
 
@@ -579,46 +570,82 @@ Place Projects/Alpha/attachment/.summaries/deleted-file.pdf.md on disk (with typ
 uv run kms reconcile
 ```
 
+Verify sibling deleted from disk (should return nothing):
+
+```bash
+ls /Users/phatchenh/ai_kms_test_vault/actual_test_vault/Projects/Alpha/attachment/.summaries/deleted-file.pdf.md 2>&1
+```
+
+Verify DB row removed (expected: 0):
+
+```bash
+sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path='Projects/Alpha/attachment/.summaries/deleted-file.pdf.md'"
+```
+
 **Check:**
 - [ ] Orphan sibling deleted-file.pdf.md deleted from disk
 - [ ] DB row for deleted-file.pdf.md removed from documents table
 
-**Last tested:** never
-**Last result:** none
+**Last tested:** 2026-06-07
+**Last result:** failed
 **Current result:** ___
-
-⚠ AI-authored — not yet human-verified.
 
 ---
 
 ### P15-REC-05 · Reconcile clears stale batch_id when doc moved away from batch destination
 _Origin: implementation · Granularity: mechanism_
 
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P15-REC-05
+```
+
 **Run:**
-Move a document with batch_id set to a folder not matching the batch destination. Run reconcile:
+**Prerequisite:** TD-040 must be resolved — single-file capture must set batch_id.
+
+**Step 1 — capture the file to seed a batch_id:**
+
+```bash
+uv run kms capture /Users/phatchenh/ai_kms_test_vault/actual_test_vault/Projects/Alpha/note-batch-test.md
+```
+
+**Step 2 — verify batch_id is set:**
+
+```bash
+sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE vault_path LIKE '%note-batch-test%'"
+```
+
+Confirm batch_id column shows a non-NULL integer.
+
+**Step 3 — move the file to a different project:**
+
+```bash
+mkdir -p /Users/phatchenh/ai_kms_test_vault/actual_test_vault/Projects/Beta && mv /Users/phatchenh/ai_kms_test_vault/actual_test_vault/Projects/Alpha/note-batch-test.md /Users/phatchenh/ai_kms_test_vault/actual_test_vault/Projects/Beta/note-batch-test.md
+```
+
+**Step 4 — run reconcile:**
 
 ```bash
 uv run kms reconcile
 ```
 
-Then verify the batch_id was cleared:
+**Step 5 — verify batch_id cleared:**
 
 ```bash
-sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE batch_id IS NOT NULL"
+sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE vault_path LIKE '%note-batch-test%'"
 ```
 
 **Check:**
-- [ ] batch_id set to NULL in documents table for the moved document
+- [ ] After Step 2: batch_id is a non-NULL integer for Projects/Alpha/note-batch-test.md
+- [ ] After Step 5: batch_id is NULL for Projects/Beta/note-batch-test.md
 
-**Last tested:** never
-**Last result:** none
+**Last tested:** 2026-06-07
+**Last result:** failed - no single-file capturing with batch_id yet (application gap)
 **Current result:** ___
-
-⚠ AI-authored — not yet human-verified.
 
 ---
 
-### P15-HDL-01 · XLSX file captured with sibling .md
+### P15-HDL-01 · XLSX file dropped in inbox gets pending-routing marker
 _Origin: implementation · Granularity: outcome_
 
 **Setup:**
@@ -632,8 +659,11 @@ uv run kms capture inbox/q2-budget.xlsx
 ```
 
 **Check:**
-- [ ] Sibling .md created with summary: in frontmatter
-- [ ] q2-budget.xlsx moved out of inbox/
+- [ ] q2-budget.xlsx stays in inbox/ (not moved — CLUELESS path)
+- [ ] Marker .md created at inbox/.summaries/q2-budget.xlsx.md
+- [ ] Marker frontmatter has type: attachment-summary
+- [ ] Marker frontmatter has status: pending-routing
+- [ ] Marker frontmatter has NO summary: field (deferred to Phase 2 Classify)
 
 **Last tested:** never
 **Last result:** none
@@ -643,7 +673,7 @@ uv run kms capture inbox/q2-budget.xlsx
 
 ---
 
-### P15-HDL-02 · PPTX file captured with sibling .md
+### P15-HDL-02 · PPTX file dropped in inbox gets pending-routing marker
 _Origin: implementation · Granularity: outcome_
 
 **Setup:**
@@ -657,8 +687,11 @@ uv run kms capture inbox/deck.pptx
 ```
 
 **Check:**
-- [ ] Sibling .md created with summary: in frontmatter
-- [ ] deck.pptx moved out of inbox/
+- [ ] deck.pptx stays in inbox/ (not moved — CLUELESS path)
+- [ ] Marker .md created at inbox/.summaries/deck.pptx.md
+- [ ] Marker frontmatter has type: attachment-summary
+- [ ] Marker frontmatter has status: pending-routing
+- [ ] Marker frontmatter has NO summary: field (deferred to Phase 2 Classify)
 
 **Last tested:** never
 **Last result:** none
@@ -668,7 +701,7 @@ uv run kms capture inbox/deck.pptx
 
 ---
 
-### P15-HDL-03 · CSV file captured with sibling .md
+### P15-HDL-03 · CSV file dropped in inbox gets pending-routing marker
 _Origin: implementation · Granularity: outcome_
 
 **Setup:**
@@ -682,7 +715,11 @@ uv run kms capture inbox/data.csv
 ```
 
 **Check:**
-- [ ] Sibling .md created with summary: in frontmatter
+- [ ] data.csv stays in inbox/ (not moved — CLUELESS path)
+- [ ] Marker .md created at inbox/.summaries/data.csv.md
+- [ ] Marker frontmatter has type: attachment-summary
+- [ ] Marker frontmatter has status: pending-routing
+- [ ] Marker frontmatter has NO summary: field (deferred to Phase 2 Classify)
 
 **Last tested:** never
 **Last result:** none
@@ -692,7 +729,7 @@ uv run kms capture inbox/data.csv
 
 ---
 
-### P15-HDL-04 · HTML file captured with sibling .md
+### P15-HDL-04 · HTML file dropped in inbox gets pending-routing marker
 _Origin: implementation · Granularity: outcome_
 
 **Setup:**
@@ -706,7 +743,11 @@ uv run kms capture inbox/page.html
 ```
 
 **Check:**
-- [ ] Sibling .md created with summary: in frontmatter
+- [ ] page.html stays in inbox/ (not moved — CLUELESS path)
+- [ ] Marker .md created at inbox/.summaries/page.html.md
+- [ ] Marker frontmatter has type: attachment-summary
+- [ ] Marker frontmatter has status: pending-routing
+- [ ] Marker frontmatter has NO summary: field (deferred to Phase 2 Classify)
 
 **Last tested:** never
 **Last result:** none
@@ -716,7 +757,7 @@ uv run kms capture inbox/page.html
 
 ---
 
-### P15-HDL-05 · EML email file captured with sibling .md
+### P15-HDL-05 · EML email file dropped in inbox gets pending-routing marker
 _Origin: implementation · Granularity: outcome_
 
 **Setup:**
@@ -730,8 +771,11 @@ uv run kms capture inbox/message.eml
 ```
 
 **Check:**
-- [ ] Sibling .md created with summary: in frontmatter
-- [ ] Summary mentions from/to/subject from the email
+- [ ] message.eml stays in inbox/ (not moved — CLUELESS path)
+- [ ] Marker .md created at inbox/.summaries/message.eml.md
+- [ ] Marker frontmatter has type: attachment-summary
+- [ ] Marker frontmatter has status: pending-routing
+- [ ] Marker frontmatter has NO summary: field (deferred to Phase 2 Classify)
 
 **Last tested:** never
 **Last result:** none
@@ -741,7 +785,7 @@ uv run kms capture inbox/message.eml
 
 ---
 
-### P15-HDL-06 · MSG Outlook file captured with sibling .md
+### P15-HDL-06 · MSG Outlook file dropped in inbox gets pending-routing marker
 _Origin: implementation · Granularity: outcome_
 
 **Setup:**
@@ -755,8 +799,11 @@ uv run kms capture inbox/outlook-msg.msg
 ```
 
 **Check:**
-- [ ] Sibling .md created with summary: in frontmatter
-- [ ] Summary mentions from/to/subject from the email
+- [ ] outlook-msg.msg stays in inbox/ (not moved — CLUELESS path)
+- [ ] Marker .md created at inbox/.summaries/outlook-msg.msg.md
+- [ ] Marker frontmatter has type: attachment-summary
+- [ ] Marker frontmatter has status: pending-routing
+- [ ] Marker frontmatter has NO summary: field (deferred to Phase 2 Classify)
 
 **Last tested:** never
 **Last result:** none
@@ -781,15 +828,28 @@ Create inbox/new-project-folder/ with inbox/new-project-folder/file1.md and inbo
 uv run kms capture --scan
 ```
 
+Verify batches row created:
+
+```bash
+sqlite3 data/kb.db "SELECT folder_name, destination_type, destination_name, confidence, status FROM batches ORDER BY rowid DESC LIMIT 5"
+```
+
+If status=ROUTING: verify files captured with batch_id:
+
+```bash
+sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE batch_id = (SELECT batch_id FROM batches ORDER BY rowid DESC LIMIT 1)"
+```
+
 **Check:**
-- [ ] Folder moved to `Projects/<name>/` or `Domain/<name>/` (AUTO confidence) OR stays in inbox/ with PENDING_REVIEW/CLUELESS status
-- [ ] Query `sqlite3 data/kb.db "SELECT * FROM batches ORDER BY rowid DESC LIMIT 5"` — row created with destination and confidence
+- [ ] batches row created with folder_name=new-project-folder, confidence > 0, status one of: ROUTING | PENDING_REVIEW | CLUELESS
+- [ ] AUTO (status=ROUTING): folder moved to Projects/`<name>`/ or Domain/`<name>`/; files captured; documents rows present with matching batch_id
+- [ ] SUGGEST (status=PENDING_REVIEW): folder stays in inbox/; no documents rows for its files yet
+- [ ] CLUELESS (status=CLUELESS): folder stays in inbox/; per-file pending-routing markers at inbox/.summaries/; documents rows with batch_id
+- [ ] All files inside the folder (including subfolders of Projects/`<A>`/ or Domain/`<D>`/) captured with a batch_id
 
-**Last tested:** never
-**Last result:** none
+**Last tested:** 2026-06-07
+**Last result:** failed
 **Current result:** ___
-
-⚠ AI-authored — not yet human-verified.
 
 ---
 
@@ -821,15 +881,13 @@ sqlite3 data/kb.db "SELECT vault_path, project, status, key_topics FROM document
 - [ ] key_topics contains a JSON array of topic tags
 - [ ] status column present (may be NULL)
 
-**Last tested:** never
-**Last result:** none
+**Last tested:** 2026-06-07
+**Last result:** passed
 **Current result:** ___
-
-⚠ AI-authored — not yet human-verified.
 
 ---
 
-### PRE2-DOM-01 · Old domain: scalar stripped on re-write (lazy migration)
+### PRE2-DOM-01 · Old domain: scalar stripped by reconcile (lazy migration — Stage 5)
 _Origin: implementation · Granularity: outcome_
 
 **Setup:**
@@ -838,17 +896,23 @@ bash docs/system_behavior/setup_test_vault.sh PRE2-DOM-01
 ```
 
 **Run:**
-`uv run kms capture inbox/test-old-domain-scalar.md` (file has domain: finance in existing frontmatter)
+Run reconcile:
+
+```bash
+uv run kms reconcile
+```
+
+Open `Domain/Finance/test-pre2-dom-01.md` and inspect frontmatter:
 
 **Check:**
-- [ ] Open file — domain: scalar key GONE from frontmatter
-- [ ] domain/Finance in tags: list preserved (if it was present before)
+- [ ] domain: scalar key GONE from frontmatter
+- [ ] domain/Finance still present in tags: list
+- [ ] type/capture still present in tags: list
+- [ ] Body content unchanged
 
-**Last tested:** never
-**Last result:** none
+**Last tested:** 2026-06-07
+**Last result:** failed - all frontmatter changed
 **Current result:** ___
-
-⚠ AI-authored — not yet human-verified.
 
 ---
 
@@ -859,16 +923,21 @@ bash docs/system_behavior/setup_test_vault.sh PRE2-DOM-01
 ### VR-PLACE-01 · No-edit binary (PDF/PNG/JPG) routed to attachment/
 _Origin: implementation · Granularity: outcome_
 
-**Run:**
-Run capture on a no-edit binary such as a PDF or PNG:
-
+**Setup:**
 ```bash
-uv run kms capture inbox/<no-edit-file>.pdf
+bash docs/system_behavior/setup_test_vault.sh VR-PLACE-01
+```
+
+**Run:**
+```bash
+uv run kms capture Projects/Alpha/vr-place-01-test.pdf
 ```
 
 **Check:**
-- [ ] Binary routed to `Projects/<A>/attachment/<file>` (hidden from Obsidian)
-- [ ] Same routing as before vault-restructure
+- [ ] vr-place-01-test.pdf GONE from Projects/Alpha/ (moved to attachment/)
+- [ ] Binary appears at Projects/Alpha/attachment/vr-place-01-test.pdf
+- [ ] Sibling .md at Projects/Alpha/attachment/.summaries/vr-place-01-test.pdf.md
+- [ ] Sibling frontmatter has type: attachment-summary
 
 **Last tested:** never
 **Last result:** none
@@ -881,16 +950,21 @@ uv run kms capture inbox/<no-edit-file>.pdf
 ### VR-PLACE-02 · Editable binary (XLSX/DOCX/PPTX) routed to project/domain root
 _Origin: implementation · Granularity: outcome_
 
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh VR-PLACE-02
+```
+
 **Run:**
-Run capture on an editable binary such as an XLSX, DOCX, or PPTX:
+Run capture on the editable binary:
 
 ```bash
-uv run kms capture inbox/<editable-file>.xlsx
+uv run kms capture Projects/Alpha/vr-place-02-test.xlsx
 ```
 
 **Check:**
-- [ ] Binary routed to `Projects/<A>/<file>.xlsx` (visible in Obsidian, NOT in attachment/)
-- [ ] Sibling .md at `Projects/<A>/.summaries/<file>.xlsx.md`
+- [ ] Binary still at Projects/Alpha/vr-place-02-test.xlsx (NOT moved to attachment/)
+- [ ] Sibling .md written (NOT under attachment/ — editable stays at root)
 
 **Last tested:** never
 **Last result:** none
@@ -903,16 +977,27 @@ uv run kms capture inbox/<editable-file>.xlsx
 ### VR-SKIP-01 · Watcher and scan skip AI-output folders (Briefings/Synthesis/Documentation)
 _Origin: implementation · Granularity: outcome_
 
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh VR-SKIP-01
+```
+
 **Run:**
-Place a .md file in the Briefings/ folder. Then run scan:
+Run scan:
 
 ```bash
 uv run kms capture --scan
 ```
 
+Verify no DB row created for the Briefings/ file:
+
+```bash
+sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path LIKE 'Briefings/%'"
+```
+
 **Check:**
 - [ ] File in Briefings/ NOT captured (skipped)
-- [ ] No DB row created in documents table for the file
+- [ ] No DB row created in documents table for the file (count = 0)
 
 **Last tested:** never
 **Last result:** none
@@ -925,16 +1010,115 @@ uv run kms capture --scan
 ### VR-REHOME-01 · Misplaced binary re-homed to correct placement
 _Origin: implementation · Granularity: outcome_
 
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh VR-REHOME-01
+```
+
 **Run:**
-Place an editable file (e.g. .xlsx) in `Projects/<A>/attachment/` (wrong location). Then run reconcile:
+Run reconcile (stage 7 detects editable binary in attachment/ and moves it to root):
 
 ```bash
 uv run kms reconcile
 ```
 
 **Check:**
-- [ ] File moved from attachment/ to project root (`Projects/<A>/`)
+- [ ] vr-rehome-01-test.xlsx GONE from Projects/Alpha/attachment/
+- [ ] File appears at Projects/Alpha/vr-rehome-01-test.xlsx (project root, visible in Obsidian)
 - [ ] Sibling .md path updated to reflect new location
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### Phase 2
+
+---
+
+### P2-REC-01 · reconcile strips deprecated frontmatter key from a note that already has valid tags and correct project field
+_Origin: design · Granularity: outcome_
+
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P2-REC-01
+```
+
+**Run:**
+Run reconcile:
+
+```bash
+uv run kms reconcile
+```
+
+Open `Projects/Alpha/note.md` and inspect frontmatter.
+
+**Check:**
+- [ ] `domain: finance` key absent from frontmatter
+- [ ] `project: Alpha` unchanged
+- [ ] `tags:` list unchanged (still empty)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P2-REC-02 · reconcile leaves a human-locked note untouched even if it has a deprecated frontmatter key
+_Origin: design · Granularity: outcome_
+
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P2-REC-02
+```
+
+**Run:**
+Run reconcile:
+
+```bash
+uv run kms reconcile
+```
+
+Open `Projects/Alpha/locked.md` and inspect frontmatter.
+
+**Check:**
+- [ ] `domain: finance` still present in frontmatter (not stripped)
+- [ ] `updated_by_human: true` unchanged
+- [ ] No other frontmatter fields modified
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P2-REC-03 · reconcile does not write a note that has no deprecated keys and no other dirty reason
+_Origin: design · Granularity: outcome_
+
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P2-REC-03
+```
+
+**Run:**
+Run reconcile:
+
+```bash
+uv run kms reconcile
+```
+
+Check the note's last-modified timestamp before and after — it should not change.
+
+**Check:**
+- [ ] Note frontmatter unchanged (no unexpected fields added or removed)
+- [ ] File modification time unchanged (reconcile did not rewrite it)
 
 **Last tested:** never
 **Last result:** none
@@ -955,11 +1139,16 @@ uv run kms reconcile
 ### P1-DEV-01 · Audit trail written for every capture decision
 _Origin: implementation · Granularity: mechanism_
 
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P1-DEV-01
+```
+
 **Run:**
-Capture any file:
+Capture the test file:
 
 ```bash
-uv run kms capture inbox/test-md-capture.md
+uv run kms capture inbox/p1-dev-01-test.md
 ```
 
 Then query the audit log:
@@ -987,7 +1176,11 @@ sqlite3 data/kb.db "SELECT * FROM audit_log ORDER BY rowid DESC LIMIT 5"
 _Origin: implementation · Granularity: mechanism_
 
 **Run:**
-Force a capture where LLM returns a tag not in tags.yaml taxonomy (developer test — requires mocking LLM response)
+Force a capture where LLM returns a tag not in tags.yaml taxonomy (developer test — requires mocking LLM response). Then query the audit log:
+
+```bash
+sqlite3 data/kb.db "SELECT stage, outcome, reasoning FROM audit_log WHERE stage='tag_violation' ORDER BY rowid DESC LIMIT 3"
+```
 
 **Check:**
 - [ ] audit_log row with stage=tag_violation, outcome=TAG_VIOLATION
@@ -1010,6 +1203,16 @@ Run capture on a path that does not exist on disk:
 
 ```bash
 uv run kms capture inbox/nonexistent-file.md
+```
+
+Then verify audit log entry and no DB row created:
+
+```bash
+sqlite3 data/kb.db "SELECT stage, outcome FROM audit_log WHERE stage='file_lost' ORDER BY rowid DESC LIMIT 3"
+```
+
+```bash
+sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path='inbox/nonexistent-file.md'"
 ```
 
 **Check:**
@@ -1035,6 +1238,12 @@ Write a new file to inbox/, then immediately run capture (within the cooldown wi
 uv run kms capture inbox/<that-file>.md
 ```
 
+Then verify rejection was logged (look for 'cooldown' or 'too recent' in logs):
+
+```bash
+grep -i 'cooldown\|too_recent\|file_too_recent' logs/app.log | tail -5
+```
+
 **Check:**
 - [ ] Terminal shows Failure(recoverable=True)
 - [ ] No LLM call made
@@ -1051,6 +1260,11 @@ uv run kms capture inbox/<that-file>.md
 ### P1-DEV-05 · Pending-routing guard blocks re-capture of CLUELESS binary
 _Origin: implementation · Granularity: mechanism_
 
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P1-DEV-05
+```
+
 **Run:**
 Run once to create the CLUELESS marker:
 
@@ -1062,6 +1276,12 @@ Then run again without changing anything:
 
 ```bash
 uv run kms capture inbox/mystery-file.pdf
+```
+
+Verify only one marker row exists in DB (count should be 1):
+
+```bash
+sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path LIKE '%mystery-file.pdf%'"
 ```
 
 **Check:**
@@ -1084,17 +1304,38 @@ uv run kms capture inbox/mystery-file.pdf
 ### P15-DEV-01 · Watcher binary-delete sync — sibling cleaned up
 _Origin: implementation · Granularity: mechanism_
 
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P15-DEV-01
+```
+
 **Run:**
+First, capture the binary to establish sibling in DB:
+
+```bash
+uv run kms capture Projects/Alpha/attachment/p15-dev-01-report.pdf
+```
+
 In Terminal 1, start the watcher:
 
 ```bash
 uv run kms watch
 ```
 
-In Terminal 2, delete a binary from `Projects/<A>/attachment/` and wait ~5 seconds:
+In Terminal 2, delete the binary and wait ~5 seconds:
 
 ```bash
-rm <vault>/Projects/Alpha/attachment/report.pdf
+rm $VAULT/Projects/Alpha/attachment/p15-dev-01-report.pdf
+```
+
+In Terminal 2, verify sibling removed from DB (count should be 0) and audit entry written:
+
+```bash
+sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path LIKE '%p15-dev-01-report.pdf.md%'"
+```
+
+```bash
+sqlite3 data/kb.db "SELECT stage, outcome FROM audit_log WHERE stage='watcher:binary_delete' ORDER BY rowid DESC LIMIT 3"
 ```
 
 **Check:**
@@ -1113,17 +1354,34 @@ rm <vault>/Projects/Alpha/attachment/report.pdf
 ### P15-DEV-02 · Watcher binary-rename sync — sibling renamed
 _Origin: implementation · Granularity: mechanism_
 
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P15-DEV-02
+```
+
 **Run:**
+First, capture the binary to establish sibling in DB:
+
+```bash
+uv run kms capture Projects/Alpha/attachment/p15-dev-02-old.pdf
+```
+
 In Terminal 1, start the watcher:
 
 ```bash
 uv run kms watch
 ```
 
-In Terminal 2, rename a binary in attachment/ and wait ~5 seconds:
+In Terminal 2, rename the binary and wait ~5 seconds:
 
 ```bash
-mv <vault>/Projects/Alpha/attachment/old.pdf <vault>/Projects/Alpha/attachment/new.pdf
+mv $VAULT/Projects/Alpha/attachment/p15-dev-02-old.pdf $VAULT/Projects/Alpha/attachment/p15-dev-02-new.pdf
+```
+
+In Terminal 2, verify DB row updated with new path and attachment_path:
+
+```bash
+sqlite3 data/kb.db "SELECT vault_path, attachment_path FROM documents WHERE vault_path LIKE '%p15-dev-02-new.pdf.md%'"
 ```
 
 **Check:**
@@ -1142,23 +1400,46 @@ mv <vault>/Projects/Alpha/attachment/old.pdf <vault>/Projects/Alpha/attachment/n
 ### P15-DEV-03 · Watcher binary cross-folder move — old sibling orphaned
 _Origin: implementation · Granularity: mechanism_
 
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P15-DEV-03
+```
+
 **Run:**
+First, capture the binary to establish sibling in DB:
+
+```bash
+uv run kms capture Projects/Alpha/attachment/p15-dev-03-file.pdf
+```
+
+Create the destination folder:
+
+```bash
+mkdir -p $VAULT/Projects/Beta/attachment
+```
+
 In Terminal 1, start the watcher:
 
 ```bash
 uv run kms watch
 ```
 
-In Terminal 2, move a binary across folders and wait ~5 seconds:
+In Terminal 2, move the binary to a different project's attachment/ and wait ~5 seconds:
 
 ```bash
-mv <vault>/Projects/A/attachment/file.pdf <vault>/Projects/B/attachment/file.pdf
+mv $VAULT/Projects/Alpha/attachment/p15-dev-03-file.pdf $VAULT/Projects/Beta/attachment/p15-dev-03-file.pdf
+```
+
+In Terminal 2, verify old sibling DB row removed (count should be 0):
+
+```bash
+sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path LIKE '%Projects/Alpha/attachment/.summaries/p15-dev-03-file.pdf.md%'"
 ```
 
 **Check:**
-- [ ] Old sibling .md in Projects/A/attachment/.summaries/ deleted
-- [ ] DB row for old sibling removed
-- [ ] New orphan binary in Projects/B/attachment/ picked up on next `uv run kms reconcile`
+- [ ] Old sibling .md in Projects/Alpha/attachment/.summaries/ deleted from disk
+- [ ] DB row for old sibling removed (count = 0)
+- [ ] New orphan binary in Projects/Beta/attachment/ picked up on next `uv run kms reconcile`
 
 **Last tested:** never
 **Last result:** none
@@ -1171,17 +1452,38 @@ mv <vault>/Projects/A/attachment/file.pdf <vault>/Projects/B/attachment/file.pdf
 ### P15-DEV-04 · Reconcile stage 3 — re-summarize stale binaries
 _Origin: implementation · Granularity: mechanism_
 
-**Run:**
-Update a binary's mtime so it is newer than its sibling .md:
-
+**Setup:**
 ```bash
-touch <vault>/Projects/Alpha/attachment/report.pdf
+bash docs/system_behavior/setup_test_vault.sh P15-DEV-04
 ```
 
-Then run reconcile:
+**Run:**
+First, capture the binary to establish sibling in DB and record the initial content_hash:
+
+```bash
+uv run kms capture Projects/Alpha/attachment/p15-dev-04-report.pdf
+```
+
+```bash
+sqlite3 data/kb.db "SELECT vault_path, content_hash FROM documents WHERE vault_path LIKE '%p15-dev-04-report.pdf.md%'"
+```
+
+Touch the binary to make it newer than the sibling .md:
+
+```bash
+touch $VAULT/Projects/Alpha/attachment/p15-dev-04-report.pdf
+```
+
+Run reconcile:
 
 ```bash
 uv run kms reconcile
+```
+
+Verify sibling DB row has an updated content_hash:
+
+```bash
+sqlite3 data/kb.db "SELECT vault_path, content_hash FROM documents WHERE vault_path LIKE '%p15-dev-04-report.pdf.md%'"
 ```
 
 **Check:**
@@ -1199,17 +1501,34 @@ uv run kms reconcile
 ### P15-DEV-05 · Debounce coalescing — rapid file events produce single capture
 _Origin: implementation · Granularity: mechanism_
 
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P15-DEV-05
+```
+
 **Run:**
+Clear any prior DB row for the test file:
+
+```bash
+sqlite3 data/kb.db "DELETE FROM documents WHERE vault_path='inbox/p15-dev-05-debounce.md'"
+```
+
 In Terminal 1, start the watcher:
 
 ```bash
 uv run kms watch
 ```
 
-In Terminal 2, save the same file 5 times within 1 second:
+In Terminal 2, touch the file 5 times within 1 second:
 
 ```bash
-for i in 1 2 3 4 5; do touch <vault>/inbox/test.md; done
+for i in 1 2 3 4 5; do touch $VAULT/inbox/p15-dev-05-debounce.md; done
+```
+
+After the debounce window (~3 sec), verify only one DB row exists (count should be 1):
+
+```bash
+sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path='inbox/p15-dev-05-debounce.md'"
 ```
 
 **Check:**
@@ -1227,15 +1546,27 @@ for i in 1 2 3 4 5; do touch <vault>/inbox/test.md; done
 ### P15-DEV-06 · Scan skips .summaries/ paths in added loop
 _Origin: implementation · Granularity: mechanism_
 
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P15-DEV-06
+```
+
 **Run:**
-Ensure .summaries/ sibling files exist on disk (from a prior capture). Then run scan:
+Run scan:
 
 ```bash
 uv run kms capture --scan
 ```
 
+Verify the sibling fixture was NOT captured as a new document (count should be 0):
+
+```bash
+sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path='Projects/Alpha/attachment/.summaries/p15-dev-06-test.pdf.md'"
+```
+
 **Check:**
-- [ ] Sibling .md files inside .summaries/ NOT re-captured
+- [ ] Sibling .md files inside .summaries/ NOT re-captured by scan
+- [ ] No DB row created for p15-dev-06-test.pdf.md (count = 0)
 - [ ] No rename or identity wipe on existing siblings
 
 **Last tested:** never
@@ -1264,7 +1595,23 @@ uv run kms watch
 In Terminal 2, drop file and wait for pipeline to start (but not finish), then touch it:
 
 ```bash
-cp tests/fixtures/sample.md <vault>/inbox/ && sleep 5 && touch <vault>/inbox/sample.md
+cp tests/fixtures/sample.md /Users/phatchenh/ai_kms_test_vault/actual_test_vault/inbox/ && sleep 5 && touch /Users/phatchenh/ai_kms_test_vault/actual_test_vault/inbox/sample.md
+```
+
+In Terminal 2, check logs for the skip marker and verify only one capture fired:
+
+```bash
+grep 'skip_in_flight' logs/app.log | tail -5
+```
+
+```bash
+grep 'metadata.captured' logs/app.log | tail -5
+```
+
+Verify only one audit entry for this path:
+
+```bash
+sqlite3 data/kb.db "SELECT count(*), stage, outcome FROM audit_log WHERE outcome='CAPTURED' GROUP BY stage, outcome ORDER BY rowid DESC LIMIT 5"
 ```
 
 **Check:**
@@ -1287,18 +1634,42 @@ cp tests/fixtures/sample.md <vault>/inbox/ && sleep 5 && touch <vault>/inbox/sam
 ### VR-CONTENT-01 · Binary content change detected and re-summarized
 _Origin: implementation · Granularity: mechanism_
 
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh VR-CONTENT-01
+```
+
 **Run:**
-Start the watcher:
+Ensure the binary has been captured first (creates sibling in .summaries/):
+
+```bash
+uv run kms capture Projects/Alpha/attachment/vr-content-01-test.xlsx
+```
+
+Record the current content_hash:
+
+```bash
+sqlite3 data/kb.db "SELECT vault_path, content_hash FROM documents WHERE vault_path LIKE '%vr-content-01%'"
+```
+
+In Terminal 1, start the watcher:
 
 ```bash
 uv run kms watch
 ```
 
-Edit an XLSX file's content (not just touch — actual data change) and wait for the watcher to detect the SHA-256 change.
+In Terminal 2, edit the XLSX content (actual data change, not just touch) and wait ~5 seconds for watcher to detect SHA-256 change.
+
+Verify content_hash changed:
+
+```bash
+sqlite3 data/kb.db "SELECT vault_path, content_hash FROM documents WHERE vault_path LIKE '%vr-content-01%'"
+```
 
 **Check:**
 - [ ] Sibling .md re-summarized with updated content
-- [ ] source_hash updated in sibling frontmatter and DB row
+- [ ] source_hash updated in sibling frontmatter (open .summaries/vr-content-01-test.xlsx.md to verify)
+- [ ] content_hash in DB row differs from pre-edit value
 
 **Last tested:** never
 **Last result:** none

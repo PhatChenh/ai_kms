@@ -1,9 +1,9 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-06-04 (vault-restructure merged to main; 956 tests pass)_
+_Last updated: 2026-06-07 (Project Registry — plan written; TD-042 deprecated-key strip complete; 959 tests pass)_
 
 ## Current Position
-**Phase**: Vault-Restructure — Editable/No-Edit Binary Categorization ✅ **Complete as of 2026-06-04**
+**Phase**: Vault-Restructure ✅ **Complete** — Planning phase for TD-040 + TD-041 (Batch-ID Fix) complete as of 2026-06-07. Next: `/tdd-implement` against `docs/5_plans/td040-td041-batch-id-fix.md`.
 
 **Phase 0 Final Checklist** _(CLOSED)_:
 - [x] core/exceptions.py
@@ -129,4 +129,51 @@ Triggered by `/superpowers:requesting-code-review`. Applied subset of review fin
 - **TD-037 closed** — binary modify now triggers re-capture via content-change detection
 - **New module**: `src/vault/move_guard.py` — thread-safe registry suppressing watcher re-home for pipeline-initiated moves
 
-**Next roadmap work**: Phase 2 — Classify pipeline.
+**[TD-042 — Deprecated-key strip — ✅ COMPLETE 2026-06-07]**:
+- [x] 1 lazy import + 3-line dirty check in `src/pipelines/reconcile.py` Stage 5
+- [x] 3 new tests (P2-REC-01/02/03) in `tests/test_pipelines/test_reconcile.py`
+- [x] 6 new fixture `.md` files in `tests/fixtures/`
+- [x] 3 pre-existing `write_text()` hook violations in `test_reconcile.py` fixed
+- [x] 959 tests pass; 1 pre-existing flaky watcher test (order-dependent, investigation dispatched)
+- **TD-042 CLOSED** — Stage 5 now strips deprecated frontmatter keys via `_DEPRECATED_KEYS` dirty check
+
+**[TD-040 + TD-041 — Batch-ID Fix — Plan written 2026-06-07]** _(PENDING implementation)_:
+- [ ] Phase 1 — SQL migration 006: add `folder_path` column to `batches`
+- [ ] Phase 2 — `storage/batches.py`: extend `insert()` + add `find_by_folder_path()`
+- [ ] Phase 3 — `vault/paths.py`: add `is_batch_subfolder()` predicate
+- [ ] Phase 4 — `pipelines/capture.py`: batch-stamp single-file capture + subfolder detection in `scan_capture()`
+- [ ] Phase 5 — `vault/watcher.py`: batch-stamp on watcher move + add `update_batch_id()` to `storage/documents.py`
+- [ ] Phase 6 — Integration smoke: full watcher-move + scan path exercised end-to-end
+
+**Plan:** `docs/5_plans/td040-td041-batch-id-fix.md`
+**Design:** `docs/1_design/td040-td041-batch-id-fix.md`
+**Key decisions locked:**
+- `batch_id` = live subfolder membership (not a capture timestamp)
+- Applies to subfolders in `inbox/`, `Projects/<A>/`, `Domain/<D>/` — NOT roots, not `attachment/`, `.summaries/`, `Archive/`
+- `folder_path` required on `batches.insert()` — schema migration 006 (`006_batches_folder_path.sql`)
+- `file_count = 1` for single-file-created batches (TD-043 — approximation; accurate counting deferred to Phase 8)
+- `scan_capture()` dispatches via `capture_folder()` — Case B handles LLM-skip for already-located folders
+- New `is_batch_subfolder()` predicate in `vault/paths.py` (must unpack `_location_context()` tuple)
+
+**Session notes (2026-06-07):**
+- `codebase-design-analysis` skill updated: Implications section now plain-English-first; Open Questions section got explicit format template
+- `build-pipeline` skill updated: phase transition gate added between phases (output message + wait for user confirmation)
+- TD-043 logged in TECH_DEBT.md (`file_count` approximation for single-file-created batches)
+
+**[Project Registry — Plan written 2026-06-07]** _(PENDING implementation)_:
+- [ ] Phase 1 — `vault/registry.py`: data classes + `build_registry()` + `format_for_prompt()` (P2-REG-01 through P2-REG-04)
+- [ ] Phase 2 — `LiveRegistry`: thread-safe mutation methods (P2-REG-05, P2-REG-06)
+- [ ] Phase 3 — `VaultWatcher` hookup: `registry` constructor param + 4 event dispatch points
+
+**Plan:** `docs/5_plans/project-registry.md`
+**Spec:** `docs/3_specs/project-registry.md`
+**Research:** `docs/4_research/project-registry.md`
+**Key decisions locked:**
+- Domain declared via `domain/<D>` tag in `tags:` list (not scalar — scalar is deprecated)
+- `build_registry()` returns `Result[ProjectRegistry]`, never raises (C-12)
+- `LiveRegistry` uses `threading.Lock()` — same pattern as watcher's three locks
+- `VaultWatcher.__init__` gains `registry: LiveRegistry | None = None` — all existing callers unaffected
+- Directory event registry calls go INSIDE existing `if event.is_directory: return` branches
+- TD-034 retired by this plan (project-to-domain registry now exists)
+
+**Next roadmap work**: Phase 2 — Classify pipeline (after TD-040/TD-041 and Project Registry implementation).

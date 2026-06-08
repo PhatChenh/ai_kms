@@ -34,12 +34,12 @@ _Architecture and design:_
 - `docs/architecture/system_adr/` — system-wide Architecture Decision Records
 
 _Skill output folders (where skills read/write — numbered by pipeline stage):_
-- `docs/0. draft/` — raw input drafts (pipeline input)
-- `docs/1. design/` — output of `/codebase-design-analysis`; input to `/writing-detailed-specs`
-- `docs/1.5 usability_test/` — success criteria from `/codebase-design-analysis`
-- `docs/2. specs/` — output of `/writing-detailed-specs`; input to `/research` and `/plan-from-specs`
-- `docs/2.5 research/` — output of `/research`; consumed by `/plan-from-specs`
-- `docs/3. plans/` — output of `/plan-from-specs`; executed by `/tdd-implement`
+- `docs/0_draft/` — raw input drafts (pipeline input)
+- `docs/1_design/` — output of `/codebase-design-analysis`; input to `/writing-detailed-specs`
+- `docs/2_usability_test/` — success criteria from `/codebase-design-analysis`
+- `docs/3_specs/` — output of `/writing-detailed-specs`; input to `/research` and `/plan-from-specs`
+- `docs/4_research/` — output of `/research`; consumed by `/plan-from-specs`
+- `docs/5_plans/` — output of `/plan-from-specs`; executed by `/tdd-implement`
 - `docs/discussions/` — output of `/capture_discussion_v2`; historical design rationale
 - `/build-pipeline` orchestrates `design→spec→research→plan` as isolated subagents (lean main session); the four skills above still run standalone.
 ---
@@ -71,12 +71,12 @@ _Skill output folders (where skills read/write — numbered by pipeline stage):_
 ├── TECH_DEBT.md       ← deferred tasks to revisit
 ├── OPEN_QUESTIONS.md  ← unresolved decisions
 ├── docs/
-│   ├── 0. draft/              ← raw input drafts (pipeline input)
-│   ├── 1. design/             ← output of /codebase-design-analysis
-│   ├── 1.5 usability_test/    ← success criteria from /codebase-design-analysis
-│   ├── 2. specs/              ← output of /writing-detailed-specs
-│   ├── 2.5 research/          ← output of /research
-│   ├── 3. plans/              ← output of /plan-from-specs
+│   ├── 0_draft/              ← raw input drafts (pipeline input)
+│   ├── 1_design/             ← output of /codebase-design-analysis
+│   ├── 2_usability_test/    ← success criteria from /codebase-design-analysis
+│   ├── 3_specs/              ← output of /writing-detailed-specs
+│   ├── 4_research/          ← output of /research
+│   ├── 5_plans/              ← output of /plan-from-specs
 │   ├── discussions/           ← output of /capture_discussion_v2
 │   ├── _archive/              ← completed phase artifacts (mirrors numbered structure)
 │   ├── architecture/
@@ -110,7 +110,7 @@ AI-kms/
 │   ├── pipelines/       ← one file per roadmap feature; pure-function stages (capture, reconcile)
 │   ├── prompts/         ← all AI prompts as YAML — edit here, never in code
 │   ├── storage/         ← SQLite state (audit log, batches, document index)
-│   │   └── migrations/  ← numbered .sql migration files (001–005)
+│   │   └── migrations/  ← numbered .sql migration files (001–005; 006 pending TD-040/TD-041)
 │   └── vault/           ← ALL Obsidian filesystem I/O; nothing else touches the vault directly
 │       ├── move_guard.py ← suppresses watcher re-home for pipeline-initiated moves
 │       └── (reader, writer, watcher, indexer, paths, frontmatter)
@@ -331,7 +331,7 @@ The following rules are enforced by hooks in `.claude/settings.json` — Claude 
 
 ## Build progress
 
-**Overall:** Phase 1 of 8 complete + Brief #2/#3 done + Phase 1.5 Pay-Debt complete + Phase Pre-2 complete + Vault-Restructure complete (2026-06-04, 956 tests). Next: Phase 2 — Classify pipeline.
+**Overall:** Phase 1 of 8 complete + Brief #2/#3 done + Phase 1.5 Pay-Debt complete + Phase Pre-2 complete + Vault-Restructure complete (2026-06-04, 956 tests). TD-042 deprecated-key strip complete (2026-06-07, 959 tests). TD-040/TD-041 Batch-ID Fix plan complete (2026-06-07) — ready for TDD. Next: Phase 2 — Classify pipeline.
 
 (Phase 0 + Phase 1 checklists closed — see STATE.md for full history.)
 
@@ -378,13 +378,10 @@ from core.config import CONFIG
 ## What Claude gets wrong in this codebase
 
 ### Test patterns
+- **Deprecated-key test fixtures cannot use `write_note` — `dumps()` strips `_DEPRECATED_KEYS` at write time.** Use `shutil.copy()` from pre-written `.md` files in `tests/fixtures/` to land a note on disk that still has the deprecated key. Applies to any key added to `_DEPRECATED_KEYS` in `vault/frontmatter.py`.
 - **`RuntimeWarning` in `test_claude_cli_provider.py` is pre-existing — do not fix.** Every full `pytest tests/` run shows `coroutine 'AsyncMockMixin._execute_mock_call' was never awaited` from `test_invalid_json_stdout_returns_failure_recoverable`. Pre-dates Brief #2. Leave it.
 - **Adding a type tag to `config/tags.yaml` breaks two count tests.** `tests/test_core/test_tags.py` has `test_tags_yaml_is_valid_and_has_nine_types` and `test_load_taxonomy_returns_correct_taxonomy` — both assert `len(allowed_types) == 9` (currently). Grep for the count integer and update when adding types. `SAMPLE_TAXONOMY` in the same file is a minimal logic-test fixture — do NOT update it when adding tags.
 - **Using `@property` instead of Pydantic `Field` for user-configurable values.** Rule: `Field` = things a human configures. `@property` = things the code computes from other fields.
-- **Importing `CONFIG` at module scope in tests.** `CONFIG` validates vault root at import time; tests on machines without the vault fail immediately. Pass explicit paths (e.g. `db_path=tmp_path / "kb.db"`) to bypass CONFIG, or lazy-import inside the function under test.
-
-### Removed VaultConfig APIs
-- **Two properties removed — do not access them.** `CONFIG.main.vault.attachment_path` → use `project_attachment(name)` or `domain_attachment(name)` from `vault/paths.py`. `VaultConfig.archive_path` → use `domain_archive(name, vault_config)` from `vault/paths.py`. Both raise `AttributeError` at runtime.
 
 ### vault/ — sibling files
 - **Sibling `.md` files: location AND naming.** Non-md capture creates sibling at `Projects/<A>/attachment/.summaries/<binary.name>.md` — suffix is `.md` appended to the FULL filename (e.g. `report.pdf.md`), NOT `<binary.stem>.md`. Use `_sibling_for(binary, vault_config)` from `vault/watcher.py` — never recompute inline. `documents.vault_path` for a sibling row = the sibling path; `metadata.attachment_path` = the binary path. See ADR-0007.
@@ -402,9 +399,7 @@ from core.config import CONFIG
 - **`vault/paths.py` has TWO near-twin predicates.** `_is_in_managed_attachment(path, cfg)` (in `vault/paths.py`, not `vault/indexer.py`) — True only under `Projects/<A>/attachment/` or `Domain/<D>/attachment/`. Used by watcher `_should_skip`, indexer Rule 1, reconcile Stages 2+3. `_is_managed_summaries_area(path, cfg)` — True under any `attachment/` subtree OR under `inbox/`. Used by reconcile Stage 4. Picking the wrong one is silent.
 - **`VaultConfig.no_edit_extensions` controls binary placement; `_should_skip` also blocks AI-output folders.** `no_edit_extensions` (pdf, png, jpg, jpeg, gif, webp) → `attachment/` hidden; everything else non-md → project/domain root visible. Use `resolve_placement()` from `vault/paths.py` — never decide placement inline. `Briefings/`, `Synthesis/`, `Documentation/` are capture-excluded — adding content there requires `vault/writer.py`, not the capture pipeline.
 - **`vault/move_guard.py` suppresses watcher re-home for pipeline moves.** Pipeline calls `get_active().register(path)` before moving. Watcher checks registry before re-homing. Thread-safe via `threading.Lock`. Without this, watcher sees the move as "misplaced file" and moves it back.
-
-### vault/ — test monkeypatching
-- **Target `vault.watcher.<name>`, NOT the source module.** `watcher.py` imports `move_note`, `write_note`, `delete_by_path`, `rename as rename_doc`, `read_note`, `audit_write`, `AIDecision`, `Failure`, `Success` at module top. Patching `vault.writer.move_note` leaves `vault.watcher.move_note` pointing at the original. Patch the importing module, not the source. (TD-033)
+- **`is_batch_subfolder()` in `vault/paths.py` must unpack `_location_context()` as a tuple.** `_location_context(path, vault_cfg)` returns `tuple[str | None, str | None]` — e.g. `("project", "Alpha")`, `("inbox", None)`, or `(None, None)`. Never treat the return value as a single string. When implementing `is_batch_subfolder`, always unpack: `loc_type, loc_name = _location_context(path, vault_cfg)`. A tuple in a boolean context is always truthy — silent bug.
 
 ### General patterns
 - **Standard `logging` module does not support keyword arguments.** Use `%s`-style: `_log.warning("msg key=%s", value)` not `_log.warning("msg", key=value)`. Structlog supports kwargs; `logging.getLogger(__name__)` does not.
@@ -413,6 +408,12 @@ from core.config import CONFIG
 ### Phase 2 specific
 - **CLUELESS marker body is a one-line placeholder string, not `""`.** `pipelines/capture.py::_store_nonmd` CLUELESS path writes `_Pending classification — binary at: <vp>_` + handoff note. Phase 2 Classify overwrites the body when resolving the marker.
 
+
+### Hook-enforced — no longer needed here
+The following were moved out of active guidance because hooks in `.claude/settings.json` now block or warn on them automatically:
+- **`CONFIG` module-scope import in tests** — hook blocks `^from core.config import CONFIG` (unindented) in `tests/**/*.py`
+- **Removed VaultConfig APIs** (`.attachment_path`, `.archive_path`) — hook blocks any `.py` file accessing these; use `project_attachment()`/`domain_attachment()`/`domain_archive()` from `vault/paths.py`
+- **Patching `vault.writer.<name>` in tests** — hook warns; patch `vault.watcher.<name>` instead (TD-033)
 
 ## Constraint Index
 <!-- guardrail-check skill writes here when new constraint groups are added -->

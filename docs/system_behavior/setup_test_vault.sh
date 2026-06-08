@@ -8,7 +8,7 @@
 #   STAGING = parent of VAULT — staging files the tester copies/drags into VAULT
 #
 # IMPORTANT: This script operates on the TEST vault, never the real vault.
-# Last generated: 2026-06-05
+# Last generated: 2026-06-07
 
 set -euo pipefail
 
@@ -167,14 +167,7 @@ setup_P1_CAP_06() {
     sqlite3 "$DB" "DELETE FROM documents WHERE vault_path LIKE '%q3-planning-brief.docx%'" 2>/dev/null || true
     # ── create ──
     mkdir -p "$VAULT/inbox"
-    cd "$PROJECT_ROOT" && uv run python -c "
-    from docx import Document
-    doc = Document()
-    doc.add_heading('Q3 Planning Brief', 0)
-    doc.add_paragraph('DOCX file dropped in inbox creates pending-routing marker (n.')
-    doc.add_paragraph('Test fixture for P1-CAP-06.')
-    doc.save('$VAULT/inbox/q3-planning-brief.docx')
-    "
+    cd "$PROJECT_ROOT" && uv run python -c "from docx import Document; doc = Document(); doc.add_heading('Q3 Planning Brief', 0); doc.add_paragraph('DOCX file dropped in inbox creates pending-routing marker (n.'); doc.add_paragraph('Test fixture for P1-CAP-06.'); doc.save('$VAULT/inbox/q3-planning-brief.docx')"
 }
 
 # phase | P1-CAP-07: Watcher auto-captures new file drops
@@ -191,7 +184,7 @@ setup_P1_CAP_07() {
     Test fixture for P1-CAP-07."
 }
 
-# phase | P1-CAP-08: Gibberish-named PDF gets FULL_RENAME to AI-chosen title
+# phase | P1-CAP-08: Gibberish-named inbox PDF gets pending-routing marker (rename deferred to Phase 2 Classify)
 setup_P1_CAP_08() {
     # ── cleanup ──
     rm -f "$VAULT/inbox/xkjdhfs83.pdf"
@@ -240,9 +233,10 @@ setup_P1_CAP_11() {
     sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/test-url-note.md'" 2>/dev/null || true
     # ── create ──
     write_md "$VAULT/inbox/test-url-note.md" \
-    "URL enrichment — sparse note with URLs gets content fetched.
+    "Quick note — read this later: https://example.com
 
-    Test fixture for P1-CAP-11."
+    Test fixture for P1-CAP-11.
+    "
 }
 # ─── Phase 1.5 — Location Tags + Attachment Layout + Reconcile (phase) ─────
 
@@ -252,7 +246,8 @@ setup_P15_REC_01() {
     rm -f "$VAULT/inbox/test-stale-domain-tag.md"
     sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/test-stale-domain-tag.md'" 2>/dev/null || true
     # ── create ──
-    write_md "$VAULT/inbox/test-stale-domain-tag.md" \
+    write_md_with_frontmatter "$VAULT/inbox/test-stale-domain-tag.md" \
+    $'type: capture\ntags:\n- domain/OldDomain\n- type/capture' \
     "Reconcile removes stale domain tag when folder deleted.
 
     Test fixture for P15-REC-01."
@@ -292,7 +287,8 @@ setup_P15_REC_04() {
     rm -f "$VAULT/Projects/Alpha/attachment/.summaries/deleted-file.pdf.md"
     sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'Projects/Alpha/attachment/.summaries/deleted-file.pdf.md'" 2>/dev/null || true
     # ── create ──
-    write_md "$VAULT/Projects/Alpha/attachment/.summaries/deleted-file.pdf.md" \
+    write_md_with_frontmatter "$VAULT/Projects/Alpha/attachment/.summaries/deleted-file.pdf.md" \
+    $'type: attachment-summary\nattachment_path: Projects/Alpha/attachment/deleted-file.pdf' \
     "Reconcile deletes orphan sibling when binary is gone.
 
     Test fixture for P15-REC-04."
@@ -300,10 +296,17 @@ setup_P15_REC_04() {
 
 # phase | P15-REC-05: Reconcile clears stale batch_id when doc moved away from batch destination
 setup_P15_REC_05() {
-    echo "P15-REC-05: No pre-created fixtures. Trigger: kms reconcile"
+    # ── cleanup ──
+    rm -f "$VAULT/Projects/Alpha/note-batch-test.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'Projects/Alpha/note-batch-test.md'" 2>/dev/null || true
+    # ── create ──
+    write_md "$VAULT/Projects/Alpha/note-batch-test.md" \
+    "Reconcile clears stale batch_id when doc moved away from batch destination.
+
+    Test fixture for P15-REC-05."
 }
 
-# phase | P15-HDL-01: XLSX file captured with sibling .md
+# phase | P15-HDL-01: XLSX file dropped in inbox gets pending-routing marker
 setup_P15_HDL_01() {
     # ── cleanup ──
     rm -f "$VAULT/inbox/q2-budget.xlsx"
@@ -311,19 +314,10 @@ setup_P15_HDL_01() {
     sqlite3 "$DB" "DELETE FROM documents WHERE vault_path LIKE '%q2-budget.xlsx%'" 2>/dev/null || true
     # ── create ──
     mkdir -p "$VAULT/inbox"
-    cd "$PROJECT_ROOT" && uv run python -c "
-    import openpyxl
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = 'Q2 Budget'
-    ws.append(['Column A', 'Column B', 'Column C'])
-    ws.append(['Row 1 A', 'Row 1 B', 'Row 1 C'])
-    ws.append(['Row 2 A', 'Row 2 B', 'Row 2 C'])
-    wb.save('$VAULT/inbox/q2-budget.xlsx')
-    "
+    cd "$PROJECT_ROOT" && uv run python -c "import openpyxl; wb = openpyxl.Workbook(); ws = wb.active; ws.title = 'Q2 Budget'; ws.append(['Column A', 'Column B', 'Column C']); ws.append(['Row 1 A', 'Row 1 B', 'Row 1 C']); ws.append(['Row 2 A', 'Row 2 B', 'Row 2 C']); wb.save('$VAULT/inbox/q2-budget.xlsx')"
 }
 
-# phase | P15-HDL-02: PPTX file captured with sibling .md
+# phase | P15-HDL-02: PPTX file dropped in inbox gets pending-routing marker
 setup_P15_HDL_02() {
     # ── cleanup ──
     rm -f "$VAULT/inbox/deck.pptx"
@@ -331,17 +325,10 @@ setup_P15_HDL_02() {
     sqlite3 "$DB" "DELETE FROM documents WHERE vault_path LIKE '%deck.pptx%'" 2>/dev/null || true
     # ── create ──
     mkdir -p "$VAULT/inbox"
-    cd "$PROJECT_ROOT" && uv run python -c "
-    from pptx import Presentation
-    prs = Presentation()
-    slide = prs.slides.add_slide(prs.slide_layouts[0])
-    slide.shapes.title.text = 'Deck'
-    slide.placeholders[1].text = 'Test fixture for P15-HDL-02.'
-    prs.save('$VAULT/inbox/deck.pptx')
-    "
+    cd "$PROJECT_ROOT" && uv run python -c "from pptx import Presentation; prs = Presentation(); slide = prs.slides.add_slide(prs.slide_layouts[0]); slide.shapes.title.text = 'Deck'; slide.placeholders[1].text = 'Test fixture for P15-HDL-02.'; prs.save('$VAULT/inbox/deck.pptx')"
 }
 
-# phase | P15-HDL-03: CSV file captured with sibling .md
+# phase | P15-HDL-03: CSV file dropped in inbox gets pending-routing marker
 setup_P15_HDL_03() {
     # ── cleanup ──
     rm -f "$VAULT/inbox/data.csv"
@@ -352,7 +339,7 @@ setup_P15_HDL_03() {
     printf 'name,value,notes\nrow1,100,test\nrow2,200,fixture\n' > "$VAULT/inbox/data.csv"
 }
 
-# phase | P15-HDL-04: HTML file captured with sibling .md
+# phase | P15-HDL-04: HTML file dropped in inbox gets pending-routing marker
 setup_P15_HDL_04() {
     # ── cleanup ──
     rm -f "$VAULT/inbox/page.html"
@@ -363,7 +350,7 @@ setup_P15_HDL_04() {
     printf '<html><body><h1>Page</h1><p>Test fixture for P15-HDL-04.</p></body></html>\n' > "$VAULT/inbox/page.html"
 }
 
-# phase | P15-HDL-05: EML email file captured with sibling .md
+# phase | P15-HDL-05: EML email file dropped in inbox gets pending-routing marker
 setup_P15_HDL_05() {
     # ── cleanup ──
     rm -f "$VAULT/inbox/message.eml"
@@ -374,7 +361,7 @@ setup_P15_HDL_05() {
     printf 'From: sender@example.com\nTo: receiver@example.com\nSubject: Test Email for P15-HDL-05\nDate: Wed, 04 Jun 2026 10:00:00 +0700\nMIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\n\nTest email body for P15-HDL-05.\n' > "$VAULT/inbox/message.eml"
 }
 
-# phase | P15-HDL-06: MSG Outlook file captured with sibling .md
+# phase | P15-HDL-06: MSG Outlook file dropped in inbox gets pending-routing marker
 setup_P15_HDL_06() {
     # ── cleanup ──
     rm -f "$VAULT/inbox/outlook-msg.msg"
@@ -434,14 +421,15 @@ setup_PRE2_DB_01() {
     Test fixture for PRE2-DB-01."
 }
 
-# phase | PRE2-DOM-01: Old domain: scalar stripped on re-write (lazy migration)
+# phase | PRE2-DOM-01: Old domain: scalar stripped by reconcile (lazy migration — Stage 5)
 setup_PRE2_DOM_01() {
     # ── cleanup ──
-    rm -f "$VAULT/inbox/test-old-domain-scalar.md"
-    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/test-old-domain-scalar.md'" 2>/dev/null || true
+    rm -f "$VAULT/Domain/Finance/test-pre2-dom-01.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'Domain/Finance/test-pre2-dom-01.md'" 2>/dev/null || true
     # ── create ──
-    write_md "$VAULT/inbox/test-old-domain-scalar.md" \
-    "Old domain: scalar stripped on re-write (lazy migration).
+    write_md_with_frontmatter "$VAULT/Domain/Finance/test-pre2-dom-01.md" \
+    $'domain: finance\ntags:\n- domain/Finance\n- type/capture' \
+    "Old domain: scalar stripped by reconcile (lazy migration — Stage 5).
 
     Test fixture for PRE2-DOM-01."
 }
@@ -449,28 +437,105 @@ setup_PRE2_DOM_01() {
 
 # phase | VR-PLACE-01: No-edit binary (PDF/PNG/JPG) routed to attachment/
 setup_VR_PLACE_01() {
-    echo "VR-PLACE-01: No pre-created fixtures. Trigger: kms capture <no-edit binary>"
+    # ── cleanup ──
+    rm -f "$VAULT/Projects/Alpha/vr-place-01-test.pdf"
+    rm -f "$VAULT/Projects/Alpha/attachment/vr-place-01-test.pdf"
+    rm -f "$VAULT/Projects/Alpha/attachment/.summaries/vr-place-01-test.pdf.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path LIKE '%vr-place-01-test.pdf%'" 2>/dev/null || true
+    # ── create ──
+    mkdir -p "$VAULT/Projects/Alpha"
+    if [ -f "$FIXTURES/sample_text.pdf" ]; then
+        cp "$FIXTURES/sample_text.pdf" "$VAULT/Projects/Alpha/vr-place-01-test.pdf"
+    else
+        echo "⚠ VR-PLACE-01: No sample PDF at $FIXTURES/sample_text.pdf — place a test PDF manually"
+    fi
 }
 
 # phase | VR-PLACE-02: Editable binary (XLSX/DOCX/PPTX) routed to project/domain root
 setup_VR_PLACE_02() {
-    echo "VR-PLACE-02: No pre-created fixtures. Trigger: kms capture <editable binary>"
+    # ── cleanup ──
+    rm -f "$VAULT/Projects/Alpha/vr-place-02-test.xlsx"
+    rm -f "$VAULT/Projects/Alpha/.summaries/vr-place-02-test.xlsx.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path LIKE '%vr-place-02-test.xlsx%'" 2>/dev/null || true
+    # ── create ──
+    mkdir -p "$VAULT/Projects/Alpha"
+    cd "$PROJECT_ROOT" && uv run python -c "import openpyxl; wb = openpyxl.Workbook(); ws = wb.active; ws.title = 'Vr Place 02 Test'; ws.append(['Column A', 'Column B', 'Column C']); ws.append(['Row 1 A', 'Row 1 B', 'Row 1 C']); ws.append(['Row 2 A', 'Row 2 B', 'Row 2 C']); wb.save('$VAULT/Projects/Alpha/vr-place-02-test.xlsx')"
 }
 
 # phase | VR-SKIP-01: Watcher and scan skip AI-output folders (Briefings/Synthesis/Documentation)
 setup_VR_SKIP_01() {
-    echo "VR-SKIP-01: No pre-created fixtures. Trigger: kms capture --scan or kms watch"
+    # ── cleanup ──
+    rm -f "$VAULT/Briefings/vr-skip-01-test.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'Briefings/vr-skip-01-test.md'" 2>/dev/null || true
+    # ── create ──
+    write_md "$VAULT/Briefings/vr-skip-01-test.md" \
+    "Watcher and scan skip AI-output folders (Briefings/Synthesis/Documentation).
+
+    Test fixture for VR-SKIP-01."
 }
 
 # phase | VR-REHOME-01: Misplaced binary re-homed to correct placement
 setup_VR_REHOME_01() {
-    echo "VR-REHOME-01: No pre-created fixtures. Trigger: kms reconcile (stage 7)"
+    # ── cleanup ──
+    rm -f "$VAULT/Projects/Alpha/attachment/vr-rehome-01-test.xlsx"
+    rm -f "$VAULT/Projects/Alpha/attachment/.summaries/vr-rehome-01-test.xlsx.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path LIKE '%vr-rehome-01-test.xlsx%'" 2>/dev/null || true
+    # ── create ──
+    mkdir -p "$VAULT/Projects/Alpha/attachment"
+    cd "$PROJECT_ROOT" && uv run python -c "import openpyxl; wb = openpyxl.Workbook(); ws = wb.active; ws.title = 'Vr Rehome 01 Test'; ws.append(['Column A', 'Column B', 'Column C']); ws.append(['Row 1 A', 'Row 1 B', 'Row 1 C']); ws.append(['Row 2 A', 'Row 2 B', 'Row 2 C']); wb.save('$VAULT/Projects/Alpha/attachment/vr-rehome-01-test.xlsx')"
+}
+# ─── Phase 2 (phase) ───────────────────────────────────────────────────────
+
+# phase | P2-REC-01: reconcile strips deprecated frontmatter key from a note that already has valid tags and correct project field
+setup_P2_REC_01() {
+    # ── cleanup ──
+    rm -f "$VAULT/Projects/Alpha/note.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'Projects/Alpha/note.md'" 2>/dev/null || true
+    # ── create ──
+    write_md_with_frontmatter "$VAULT/Projects/Alpha/note.md" \
+    $'type: note\ntags: []\nproject: Alpha\ndomain: finance' \
+    "reconcile strips deprecated frontmatter key from a note that already has valid tags and correct project field.
+
+    Test fixture for P2-REC-01."
+}
+
+# phase | P2-REC-02: reconcile leaves a human-locked note untouched even if it has a deprecated frontmatter key
+setup_P2_REC_02() {
+    # ── cleanup ──
+    rm -f "$VAULT/Projects/Alpha/locked.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'Projects/Alpha/locked.md'" 2>/dev/null || true
+    # ── create ──
+    write_md_with_frontmatter "$VAULT/Projects/Alpha/locked.md" \
+    $'type: note\ntags: []\nproject: Alpha\ndomain: finance\nupdated_by_human: true' \
+    "reconcile leaves a human-locked note untouched even if it has a deprecated frontmatter key.
+
+    Test fixture for P2-REC-02."
+}
+
+# phase | P2-REC-03: reconcile does not write a note that has no deprecated keys and no other dirty reason
+setup_P2_REC_03() {
+    # ── cleanup ──
+    rm -f "$VAULT/Projects/Alpha/clean.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'Projects/Alpha/clean.md'" 2>/dev/null || true
+    # ── create ──
+    write_md_with_frontmatter "$VAULT/Projects/Alpha/clean.md" \
+    $'type: note\ntags: []\nproject: Alpha' \
+    "reconcile does not write a note that has no deprecated keys and no other dirty reason.
+
+    Test fixture for P2-REC-03."
 }
 # ─── Phase 1 — Capture Pipeline (full) ─────────────────────────────────────
 
 # full | P1-DEV-01: Audit trail written for every capture decision
 setup_P1_DEV_01() {
-    echo "P1-DEV-01: No pre-created fixtures. Trigger: kms capture <any file>"
+    # ── cleanup ──
+    rm -f "$VAULT/inbox/p1-dev-01-test.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/p1-dev-01-test.md'" 2>/dev/null || true
+    # ── create ──
+    write_md "$VAULT/inbox/p1-dev-01-test.md" \
+    "Audit trail written for every capture decision.
+
+    Test fixture for P1-DEV-01."
 }
 
 # full | P1-DEV-02: Tag violation audited — invalid tags stripped and logged
@@ -490,38 +555,107 @@ setup_P1_DEV_04() {
 
 # full | P1-DEV-05: Pending-routing guard blocks re-capture of CLUELESS binary
 setup_P1_DEV_05() {
-    echo "P1-DEV-05: No pre-created fixtures. Trigger: kms capture <binary> (already has pending-routing marker)"
+    # ── cleanup ──
+    rm -f "$VAULT/inbox/mystery-file.pdf"
+    rm -f "$VAULT/inbox/.summaries/mystery-file.pdf.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path LIKE '%mystery-file.pdf%'" 2>/dev/null || true
+    # ── create ──
+    mkdir -p "$VAULT/inbox"
+    if [ -f "$FIXTURES/sample_text.pdf" ]; then
+        cp "$FIXTURES/sample_text.pdf" "$VAULT/inbox/mystery-file.pdf"
+    else
+        echo "⚠ P1-DEV-05: No sample PDF at $FIXTURES/sample_text.pdf — place a test PDF manually"
+    fi
 }
 # ─── Phase 1.5 — Location Tags + Attachment Layout + Reconcile (full) ──────
 
 # full | P15-DEV-01: Watcher binary-delete sync — sibling cleaned up
 setup_P15_DEV_01() {
-    echo "P15-DEV-01: No pre-created fixtures. Trigger: Delete a binary file while kms watch running"
+    # ── cleanup ──
+    rm -f "$VAULT/Projects/Alpha/attachment/p15-dev-01-report.pdf"
+    rm -f "$VAULT/Projects/Alpha/attachment/attachment/p15-dev-01-report.pdf"
+    rm -f "$VAULT/Projects/Alpha/attachment/attachment/.summaries/p15-dev-01-report.pdf.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path LIKE '%p15-dev-01-report.pdf%'" 2>/dev/null || true
+    # ── create ──
+    mkdir -p "$VAULT/Projects/Alpha/attachment"
+    if [ -f "$FIXTURES/sample_text.pdf" ]; then
+        cp "$FIXTURES/sample_text.pdf" "$VAULT/Projects/Alpha/attachment/p15-dev-01-report.pdf"
+    else
+        echo "⚠ P15-DEV-01: No sample PDF at $FIXTURES/sample_text.pdf — place a test PDF manually"
+    fi
 }
 
 # full | P15-DEV-02: Watcher binary-rename sync — sibling renamed
 setup_P15_DEV_02() {
-    echo "P15-DEV-02: No pre-created fixtures. Trigger: Rename a binary file while kms watch running"
+    # ── cleanup ──
+    rm -f "$VAULT/Projects/Alpha/attachment/p15-dev-02-old.pdf"
+    rm -f "$VAULT/Projects/Alpha/attachment/attachment/p15-dev-02-old.pdf"
+    rm -f "$VAULT/Projects/Alpha/attachment/attachment/.summaries/p15-dev-02-old.pdf.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path LIKE '%p15-dev-02-old.pdf%'" 2>/dev/null || true
+    # ── create ──
+    mkdir -p "$VAULT/Projects/Alpha/attachment"
+    if [ -f "$FIXTURES/sample_text.pdf" ]; then
+        cp "$FIXTURES/sample_text.pdf" "$VAULT/Projects/Alpha/attachment/p15-dev-02-old.pdf"
+    else
+        echo "⚠ P15-DEV-02: No sample PDF at $FIXTURES/sample_text.pdf — place a test PDF manually"
+    fi
 }
 
 # full | P15-DEV-03: Watcher binary cross-folder move — old sibling orphaned
 setup_P15_DEV_03() {
-    echo "P15-DEV-03: No pre-created fixtures. Trigger: Move binary between attachment/ folders while kms watch running"
+    # ── cleanup ──
+    rm -f "$VAULT/Projects/Alpha/attachment/p15-dev-03-file.pdf"
+    rm -f "$VAULT/Projects/Alpha/attachment/attachment/p15-dev-03-file.pdf"
+    rm -f "$VAULT/Projects/Alpha/attachment/attachment/.summaries/p15-dev-03-file.pdf.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path LIKE '%p15-dev-03-file.pdf%'" 2>/dev/null || true
+    # ── create ──
+    mkdir -p "$VAULT/Projects/Alpha/attachment"
+    if [ -f "$FIXTURES/sample_text.pdf" ]; then
+        cp "$FIXTURES/sample_text.pdf" "$VAULT/Projects/Alpha/attachment/p15-dev-03-file.pdf"
+    else
+        echo "⚠ P15-DEV-03: No sample PDF at $FIXTURES/sample_text.pdf — place a test PDF manually"
+    fi
 }
 
 # full | P15-DEV-04: Reconcile stage 3 — re-summarize stale binaries
 setup_P15_DEV_04() {
-    echo "P15-DEV-04: No pre-created fixtures. Trigger: kms reconcile"
+    # ── cleanup ──
+    rm -f "$VAULT/Projects/Alpha/attachment/p15-dev-04-report.pdf"
+    rm -f "$VAULT/Projects/Alpha/attachment/attachment/p15-dev-04-report.pdf"
+    rm -f "$VAULT/Projects/Alpha/attachment/attachment/.summaries/p15-dev-04-report.pdf.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path LIKE '%p15-dev-04-report.pdf%'" 2>/dev/null || true
+    # ── create ──
+    mkdir -p "$VAULT/Projects/Alpha/attachment"
+    if [ -f "$FIXTURES/sample_text.pdf" ]; then
+        cp "$FIXTURES/sample_text.pdf" "$VAULT/Projects/Alpha/attachment/p15-dev-04-report.pdf"
+    else
+        echo "⚠ P15-DEV-04: No sample PDF at $FIXTURES/sample_text.pdf — place a test PDF manually"
+    fi
 }
 
 # full | P15-DEV-05: Debounce coalescing — rapid file events produce single capture
 setup_P15_DEV_05() {
-    echo "P15-DEV-05: No pre-created fixtures. Trigger: kms watch + rapid file saves"
+    # ── cleanup ──
+    rm -f "$VAULT/inbox/p15-dev-05-debounce.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/p15-dev-05-debounce.md'" 2>/dev/null || true
+    # ── create ──
+    write_md "$VAULT/inbox/p15-dev-05-debounce.md" \
+    "Debounce coalescing — rapid file events produce single capture.
+
+    Test fixture for P15-DEV-05."
 }
 
 # full | P15-DEV-06: Scan skips .summaries/ paths in added loop
 setup_P15_DEV_06() {
-    echo "P15-DEV-06: No pre-created fixtures. Trigger: kms capture --scan"
+    # ── cleanup ──
+    rm -f "$VAULT/Projects/Alpha/attachment/.summaries/p15-dev-06-test.pdf.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'Projects/Alpha/attachment/.summaries/p15-dev-06-test.pdf.md'" 2>/dev/null || true
+    # ── create ──
+    write_md_with_frontmatter "$VAULT/Projects/Alpha/attachment/.summaries/p15-dev-06-test.pdf.md" \
+    $'type: attachment-summary\nattachment_path: Projects/Alpha/attachment/p15-dev-06-test.pdf' \
+    "Scan skips .summaries/ paths in added loop.
+
+    Test fixture for P15-DEV-06."
 }
 
 # full | P15-DEV-07: In-flight guard — modify event during running pipeline does not launch second capture
@@ -539,7 +673,13 @@ setup_P15_DEV_07() {
 
 # full | VR-CONTENT-01: Binary content change detected and re-summarized
 setup_VR_CONTENT_01() {
-    echo "VR-CONTENT-01: No pre-created fixtures. Trigger: kms watch + binary file edited"
+    # ── cleanup ──
+    rm -f "$VAULT/Projects/Alpha/attachment/vr-content-01-test.xlsx"
+    rm -f "$VAULT/Projects/Alpha/attachment/.summaries/vr-content-01-test.xlsx.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path LIKE '%vr-content-01-test.xlsx%'" 2>/dev/null || true
+    # ── create ──
+    mkdir -p "$VAULT/Projects/Alpha/attachment"
+    cd "$PROJECT_ROOT" && uv run python -c "import openpyxl; wb = openpyxl.Workbook(); ws = wb.active; ws.title = 'Vr Content 01 Test'; ws.append(['Column A', 'Column B', 'Column C']); ws.append(['Row 1 A', 'Row 1 B', 'Row 1 C']); ws.append(['Row 2 A', 'Row 2 B', 'Row 2 C']); wb.save('$VAULT/Projects/Alpha/attachment/vr-content-01-test.xlsx')"
 }
 
 # ─── Tier runners ──────────────────────────────────────────────────────────────
@@ -581,6 +721,9 @@ run_phase() {
     setup_VR_PLACE_02
     setup_VR_SKIP_01
     setup_VR_REHOME_01
+    setup_P2_REC_01
+    setup_P2_REC_02
+    setup_P2_REC_03
 }
 
 run_all() {
@@ -621,53 +764,56 @@ case "${1:-all}" in
         echo ""; echo "✓ Phase fixtures ready (smoke + phase)"
         ;;
     # ── Smoke ──
-    P1-CAP-01)  setup_P1_CAP_01 ;;
-    P1-CAP-02)  setup_P1_CAP_02 ;;
-    P1-CAP-03)  setup_P1_CAP_03 ;;
-    P1-CAP-04)  setup_P1_CAP_04 ;;
-    P1-CAP-05)  setup_P1_CAP_05 ;;
-    P15-LOC-01)  setup_P15_LOC_01 ;;
-    P15-LOC-02)  setup_P15_LOC_02 ;;
+    P1-CAP-01)  reset_db; clean_vault; setup_P1_CAP_01 ;;
+    P1-CAP-02)  reset_db; clean_vault; setup_P1_CAP_02 ;;
+    P1-CAP-03)  reset_db; clean_vault; setup_P1_CAP_03 ;;
+    P1-CAP-04)  reset_db; clean_vault; setup_P1_CAP_04 ;;
+    P1-CAP-05)  reset_db; clean_vault; setup_P1_CAP_05 ;;
+    P15-LOC-01)  reset_db; clean_vault; setup_P15_LOC_01 ;;
+    P15-LOC-02)  reset_db; clean_vault; setup_P15_LOC_02 ;;
     # ── Phase ──
-    P1-CAP-06)  setup_P1_CAP_06 ;;
-    P1-CAP-07)  setup_P1_CAP_07 ;;
-    P1-CAP-08)  setup_P1_CAP_08 ;;
-    P1-CAP-09)  setup_P1_CAP_09 ;;
-    P1-CAP-10)  setup_P1_CAP_10 ;;
-    P1-CAP-11)  setup_P1_CAP_11 ;;
-    P15-REC-01)  setup_P15_REC_01 ;;
-    P15-REC-02)  setup_P15_REC_02 ;;
-    P15-REC-03)  setup_P15_REC_03 ;;
-    P15-REC-04)  setup_P15_REC_04 ;;
-    P15-REC-05)  setup_P15_REC_05 ;;
-    P15-HDL-01)  setup_P15_HDL_01 ;;
-    P15-HDL-02)  setup_P15_HDL_02 ;;
-    P15-HDL-03)  setup_P15_HDL_03 ;;
-    P15-HDL-04)  setup_P15_HDL_04 ;;
-    P15-HDL-05)  setup_P15_HDL_05 ;;
-    P15-HDL-06)  setup_P15_HDL_06 ;;
-    P15-HDL-07)  setup_P15_HDL_07 ;;
-    P15-FOLD-01)  setup_P15_FOLD_01 ;;
-    PRE2-DB-01)  setup_PRE2_DB_01 ;;
-    PRE2-DOM-01)  setup_PRE2_DOM_01 ;;
-    VR-PLACE-01)  setup_VR_PLACE_01 ;;
-    VR-PLACE-02)  setup_VR_PLACE_02 ;;
-    VR-SKIP-01)  setup_VR_SKIP_01 ;;
-    VR-REHOME-01)  setup_VR_REHOME_01 ;;
+    P1-CAP-06)  reset_db; clean_vault; setup_P1_CAP_06 ;;
+    P1-CAP-07)  reset_db; clean_vault; setup_P1_CAP_07 ;;
+    P1-CAP-08)  reset_db; clean_vault; setup_P1_CAP_08 ;;
+    P1-CAP-09)  reset_db; clean_vault; setup_P1_CAP_09 ;;
+    P1-CAP-10)  reset_db; clean_vault; setup_P1_CAP_10 ;;
+    P1-CAP-11)  reset_db; clean_vault; setup_P1_CAP_11 ;;
+    P15-REC-01)  reset_db; clean_vault; setup_P15_REC_01 ;;
+    P15-REC-02)  reset_db; clean_vault; setup_P15_REC_02 ;;
+    P15-REC-03)  reset_db; clean_vault; setup_P15_REC_03 ;;
+    P15-REC-04)  reset_db; clean_vault; setup_P15_REC_04 ;;
+    P15-REC-05)  reset_db; clean_vault; setup_P15_REC_05 ;;
+    P15-HDL-01)  reset_db; clean_vault; setup_P15_HDL_01 ;;
+    P15-HDL-02)  reset_db; clean_vault; setup_P15_HDL_02 ;;
+    P15-HDL-03)  reset_db; clean_vault; setup_P15_HDL_03 ;;
+    P15-HDL-04)  reset_db; clean_vault; setup_P15_HDL_04 ;;
+    P15-HDL-05)  reset_db; clean_vault; setup_P15_HDL_05 ;;
+    P15-HDL-06)  reset_db; clean_vault; setup_P15_HDL_06 ;;
+    P15-HDL-07)  reset_db; clean_vault; setup_P15_HDL_07 ;;
+    P15-FOLD-01)  reset_db; clean_vault; setup_P15_FOLD_01 ;;
+    PRE2-DB-01)  reset_db; clean_vault; setup_PRE2_DB_01 ;;
+    PRE2-DOM-01)  reset_db; clean_vault; setup_PRE2_DOM_01 ;;
+    VR-PLACE-01)  reset_db; clean_vault; setup_VR_PLACE_01 ;;
+    VR-PLACE-02)  reset_db; clean_vault; setup_VR_PLACE_02 ;;
+    VR-SKIP-01)  reset_db; clean_vault; setup_VR_SKIP_01 ;;
+    VR-REHOME-01)  reset_db; clean_vault; setup_VR_REHOME_01 ;;
+    P2-REC-01)  reset_db; clean_vault; setup_P2_REC_01 ;;
+    P2-REC-02)  reset_db; clean_vault; setup_P2_REC_02 ;;
+    P2-REC-03)  reset_db; clean_vault; setup_P2_REC_03 ;;
     # ── Full ──
-    P1-DEV-01)  setup_P1_DEV_01 ;;
-    P1-DEV-02)  setup_P1_DEV_02 ;;
-    P1-DEV-03)  setup_P1_DEV_03 ;;
-    P1-DEV-04)  setup_P1_DEV_04 ;;
-    P1-DEV-05)  setup_P1_DEV_05 ;;
-    P15-DEV-01)  setup_P15_DEV_01 ;;
-    P15-DEV-02)  setup_P15_DEV_02 ;;
-    P15-DEV-03)  setup_P15_DEV_03 ;;
-    P15-DEV-04)  setup_P15_DEV_04 ;;
-    P15-DEV-05)  setup_P15_DEV_05 ;;
-    P15-DEV-06)  setup_P15_DEV_06 ;;
-    P15-DEV-07)  setup_P15_DEV_07 ;;
-    VR-CONTENT-01)  setup_VR_CONTENT_01 ;;
+    P1-DEV-01)  reset_db; clean_vault; setup_P1_DEV_01 ;;
+    P1-DEV-02)  reset_db; clean_vault; setup_P1_DEV_02 ;;
+    P1-DEV-03)  reset_db; clean_vault; setup_P1_DEV_03 ;;
+    P1-DEV-04)  reset_db; clean_vault; setup_P1_DEV_04 ;;
+    P1-DEV-05)  reset_db; clean_vault; setup_P1_DEV_05 ;;
+    P15-DEV-01)  reset_db; clean_vault; setup_P15_DEV_01 ;;
+    P15-DEV-02)  reset_db; clean_vault; setup_P15_DEV_02 ;;
+    P15-DEV-03)  reset_db; clean_vault; setup_P15_DEV_03 ;;
+    P15-DEV-04)  reset_db; clean_vault; setup_P15_DEV_04 ;;
+    P15-DEV-05)  reset_db; clean_vault; setup_P15_DEV_05 ;;
+    P15-DEV-06)  reset_db; clean_vault; setup_P15_DEV_06 ;;
+    P15-DEV-07)  reset_db; clean_vault; setup_P15_DEV_07 ;;
+    VR-CONTENT-01)  reset_db; clean_vault; setup_VR_CONTENT_01 ;;
     *)
         echo "Unknown test ID: ${1}"
         echo "Usage: $0 [test-id|all|smoke|phase]"

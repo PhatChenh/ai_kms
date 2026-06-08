@@ -22,7 +22,9 @@ from core.logging_setup import setup_logging  # noqa: E402
 # (which validates vault root) before logging is ready.
 _log_cfg: dict = {}
 try:
-    with open(Path(__file__).parent.parent / "config" / "config.yaml", encoding="utf-8") as _f:
+    with open(
+        Path(__file__).parent.parent / "config" / "config.yaml", encoding="utf-8"
+    ) as _f:
         _log_cfg = (yaml.safe_load(_f) or {}).get("logging", {})
 except Exception:
     pass
@@ -36,6 +38,7 @@ setup_logging(
 # CLI group
 # ---------------------------------------------------------------------------
 
+
 @click.group()
 def cli() -> None:
     """AI-KMS: AI-enhanced knowledge management system."""
@@ -45,10 +48,15 @@ def cli() -> None:
 # Placeholder commands — filled in as pipelines are built
 # ---------------------------------------------------------------------------
 
+
 @cli.command()
 @click.argument("file", type=str, required=False)
-@click.option("--scan", is_flag=True, default=False,
-              help="Capture all un-indexed notes in vault. Modified notes are not re-captured.")
+@click.option(
+    "--scan",
+    is_flag=True,
+    default=False,
+    help="Capture all un-indexed notes in vault. Modified notes are not re-captured.",
+)
 def capture(file: str | None, scan: bool) -> None:
     """Run the capture pipeline on a single file, or scan the vault with --scan."""
     import asyncio
@@ -66,6 +74,7 @@ def capture(file: str | None, scan: bool) -> None:
                 raise SystemExit(1)
     elif file:
         from core.config import CONFIG
+
         _path = Path(file)
         if not _path.is_absolute():
             _path = CONFIG.main.vault.root / _path
@@ -87,6 +96,7 @@ def capture(file: str | None, scan: bool) -> None:
 def classify(file: str) -> None:
     """Run the classify pipeline on a single file."""
     from core.config import CONFIG
+
     _path = Path(file)
     if not _path.is_absolute():
         _path = CONFIG.main.vault.root / _path
@@ -220,7 +230,11 @@ def watch() -> None:
             # has already inserted the new vault_path into the DB.
             match get_by_path(vault_rel, db_path=db_path):
                 case Success(value=row) if row is not None:
-                    _wlog.debug("watcher.create_skip", vault_path=vault_rel, reason="already_in_db")
+                    _wlog.debug(
+                        "watcher.create_skip",
+                        vault_path=vault_rel,
+                        reason="already_in_db",
+                    )
                     return
                 case _:
                     pass
@@ -234,8 +248,15 @@ def watch() -> None:
                 case Success(value=row) if row is not None and row.content_hash:
                     match read_note(path):
                         case Success(value=note):
-                            if hashlib.sha256(note.content.encode()).hexdigest() == row.content_hash:
-                                _wlog.debug("watcher.modify_skip", vault_path=vault_rel, reason="hash_unchanged")
+                            if (
+                                hashlib.sha256(note.content.encode()).hexdigest()
+                                == row.content_hash
+                            ):
+                                _wlog.debug(
+                                    "watcher.modify_skip",
+                                    vault_path=vault_rel,
+                                    reason="hash_unchanged",
+                                )
                                 return
                         case _:
                             pass
@@ -252,23 +273,33 @@ def watch() -> None:
             match delete_by_path(vault_rel, db_path=db_path):
                 case Success(value=rowcount):
                     if rowcount == 0:
-                        _wlog.warning("watcher.binary_not_in_index", vault_path=vault_rel)
+                        _wlog.warning(
+                            "watcher.binary_not_in_index", vault_path=vault_rel
+                        )
                     else:
                         _wlog.info("watcher.deleted", vault_path=vault_rel)
                 case Failure(error=e):
-                    _wlog.warning("watcher.delete_failed", vault_path=vault_rel, error=e)
+                    _wlog.warning(
+                        "watcher.delete_failed", vault_path=vault_rel, error=e
+                    )
 
         def on_move(src: Path, dst: Path) -> None:
+            if src.name.startswith("."):
+                return
             old_rel = to_vault_path(src)
             new_rel = to_vault_path(dst)
             match rename_doc(old_rel, new_rel, db_path=db_path):
                 case Success(value=rowcount):
                     if rowcount == 0:
-                        _wlog.warning("watcher.binary_not_in_index", old=old_rel, new=new_rel)
+                        _wlog.warning(
+                            "watcher.binary_not_in_index", old=old_rel, new=new_rel
+                        )
                     else:
                         _wlog.info("watcher.renamed", old=old_rel, new=new_rel)
                 case Failure(error=e):
-                    _wlog.warning("watcher.rename_failed", old=old_rel, new=new_rel, error=e)
+                    _wlog.warning(
+                        "watcher.rename_failed", old=old_rel, new=new_rel, error=e
+                    )
 
         watcher = VaultWatcher(
             root=root,
@@ -281,6 +312,7 @@ def watch() -> None:
             binary_settle_seconds=CONFIG.main.capture.binary_settle_seconds,
         )
         from vault.move_guard import set_active as set_active_guard
+
         set_active_guard(watcher._move_guard)
         watcher.start()
         click.echo(f"Watching {root} — Ctrl-C to stop")

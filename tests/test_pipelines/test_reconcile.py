@@ -11,6 +11,7 @@ import pytest
 from core.result import Failure, Success
 
 _FIXTURE_PDF = Path(__file__).parent.parent / "fixtures" / "sample_text.pdf"
+_FIXTURE_DIR = Path(__file__).parent.parent / "fixtures"
 
 
 def _copy_pdf(dst: Path) -> None:
@@ -176,11 +177,7 @@ async def test_reconcile_orphan_binaries_skips_binary_with_sibling(
 
     pdf = att / "existing.pdf"
     _copy_pdf(pdf)
-    # Create sibling summary
-    (sum_dir / "existing.pdf.md").write_text(
-        "---\nattachment_path: Projects/Delta/attachment/existing.pdf\n---\nSummary text.",
-        encoding="utf-8",
-    )
+    shutil.copy(_FIXTURE_DIR / "sibling_existing_pdf.md", sum_dir / "existing.pdf.md")
 
     mock_capture = AsyncMock(return_value=Success(MagicMock()))
     monkeypatch.setattr("pipelines.reconcile.capture_file", mock_capture)
@@ -217,13 +214,11 @@ async def test_reconcile_stale_binaries_recaptures_when_binary_newer(
     _copy_pdf(pdf)
 
     sibling = sum_dir / "stale.pdf.md"
-    sibling.write_text(
-        "---\nattachment_path: Projects/Epsilon/attachment/stale.pdf\n---\nOld summary.",
-        encoding="utf-8",
-    )
+    shutil.copy(_FIXTURE_DIR / "sibling_stale_pdf.md", sibling)
 
     # Set binary mtime newer than sibling mtime
     import os
+
     old_time = 1000000000.0
     new_time = old_time + 3600.0  # 1 hour newer
     os.utime(sibling, (old_time, old_time))
@@ -258,13 +253,11 @@ async def test_reconcile_stale_binaries_skips_when_binary_older(
     _copy_pdf(pdf)
 
     sibling = sum_dir / "fresh.pdf.md"
-    sibling.write_text(
-        "---\nattachment_path: Projects/Zeta/attachment/fresh.pdf\n---\nFresh summary.",
-        encoding="utf-8",
-    )
+    shutil.copy(_FIXTURE_DIR / "sibling_fresh_pdf.md", sibling)
 
     # Sibling newer than binary (just-written summary)
     import os
+
     old_time = 1000000000.0
     new_time = old_time + 3600.0
     os.utime(pdf, (old_time, old_time))
@@ -452,7 +445,9 @@ async def test_reconcile_runs_all_six_stages(
         case Success(value=r):
             assert isinstance(r, ReconcileResult)
             # Stage 1 should have reconciled the deleted note
-            assert r.paths_reconciled >= 1, f"Expected paths_reconciled >= 1, got {r.paths_reconciled}"
+            assert r.paths_reconciled >= 1, (
+                f"Expected paths_reconciled >= 1, got {r.paths_reconciled}"
+            )
             # All stage counters should be ints
             assert isinstance(r.new_captures, int)
             assert isinstance(r.restale_count, int)
@@ -505,12 +500,15 @@ async def test_reconcile_stale_tags_removes_stale_domain_tag(
 
     # Verify stale tag is gone from the written note
     from vault.reader import read_note
+
     match read_note(note_path):
         case Success(note):
-            assert "domain/OldDomain" not in note.metadata.tags, \
+            assert "domain/OldDomain" not in note.metadata.tags, (
                 "Stale domain tag should have been removed"
-            assert "some-other-tag" in note.metadata.tags, \
+            )
+            assert "some-other-tag" in note.metadata.tags, (
                 "Non-domain tags should be preserved"
+            )
 
 
 @pytest.mark.asyncio
@@ -548,10 +546,12 @@ async def test_reconcile_stale_tags_adds_missing_domain_tag(
             pytest.fail(f"Stage 5 failed: {f}")
 
     from vault.reader import read_note
+
     match read_note(note_path):
         case Success(note):
-            assert "domain/Engineering" in note.metadata.tags, \
+            assert "domain/Engineering" in note.metadata.tags, (
                 "domain/Engineering tag should have been added"
+            )
 
 
 @pytest.mark.asyncio
@@ -586,10 +586,12 @@ async def test_reconcile_stale_tags_sets_project_field(
             pytest.fail(f"Stage 5 failed: {f}")
 
     from vault.reader import read_note
+
     match read_note(note_path):
         case Success(note):
-            assert note.metadata.project == "Alpha", \
+            assert note.metadata.project == "Alpha", (
                 f"Expected project=Alpha, got {note.metadata.project}"
+            )
 
 
 @pytest.mark.asyncio
@@ -624,10 +626,12 @@ async def test_reconcile_stale_tags_inbox_note_unchanged(
             pytest.fail(f"Stage 5 failed: {f}")
 
     from vault.reader import read_note
+
     match read_note(note_path):
         case Success(note):
-            assert note.metadata.project == original_project, \
+            assert note.metadata.project == original_project, (
                 "inbox note project field should be unchanged"
+            )
 
 
 @pytest.mark.asyncio
@@ -675,18 +679,19 @@ async def test_reconcile_stale_tags_skips_human_edited(
     initial = ReconcileResult()
     match await reconcile_stale_tags(initial, pipeline_ctx, entries):
         case Success(value=r):
-            assert r.tags_updated == 0, \
+            assert r.tags_updated == 0, (
                 "Human-edited note should not increment tags_updated"
+            )
         case f:
             pytest.fail(f"Stage 5 failed: {f}")
 
     # Verify no warning was emitted for the human-edited note (it's expected — not an error)
     stale_tag_warnings = [
-        (msg, args) for msg, args, _ in warning_calls
-        if "reconcile_stale_tags" in msg
+        (msg, args) for msg, args, _ in warning_calls if "reconcile_stale_tags" in msg
     ]
-    assert len(stale_tag_warnings) == 0, \
+    assert len(stale_tag_warnings) == 0, (
         f"Expected no reconcile_stale_tags warnings for human-edited note, got: {stale_tag_warnings}"
+    )
 
 
 @pytest.mark.asyncio
@@ -715,6 +720,7 @@ async def test_reconcile_stale_tags_load_valid_domains_called_once(
     original_load = None
 
     import vault.paths as vp_module
+
     original_load = vp_module.load_valid_domains
 
     def counting_load(vault_root_arg):
@@ -733,7 +739,133 @@ async def test_reconcile_stale_tags_load_valid_domains_called_once(
         case f:
             pytest.fail(f"Stage 5 failed: {f}")
 
-    assert call_count == 1, f"load_valid_domains should be called once, called {call_count} times"
+    assert call_count == 1, (
+        f"load_valid_domains should be called once, called {call_count} times"
+    )
+
+
+# TD-042: deprecated frontmatter key strip (P2-REC-01 / P2-REC-02 / P2-REC-03)
+
+_FIXTURE_DIR = Path(__file__).parent.parent / "fixtures"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stale_tags_strips_deprecated_key(
+    vault_root, db_path, pipeline_ctx
+):
+    """Stage 5 (P2-REC-01): note with deprecated 'domain:' scalar but already-valid
+    tags and project field → deprecated key stripped from disk after reconcile."""
+    import shutil
+
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_tags
+    from vault.indexer import scan_vault
+    from vault.reader import read_note
+    from core.result import Success
+
+    # Copy pre-written fixture — it has 'domain: finance' in raw frontmatter.
+    # We cannot use write_note here because dumps() strips _DEPRECATED_KEYS.
+    note_path = vault_root / "Projects" / "Alpha" / "note.md"
+    note_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(_FIXTURE_DIR / "deprecated_key_note.md", note_path)
+
+    match scan_vault(vault_root):
+        case Success(entries):
+            pass
+        case f:
+            pytest.fail(f"scan_vault failed: {f}")
+
+    initial = ReconcileResult()
+    match await reconcile_stale_tags(initial, pipeline_ctx, entries):
+        case Success(value=r):
+            assert r.tags_updated >= 1, "Expected tags_updated to increment"
+        case f:
+            pytest.fail(f"Stage 5 failed: {f}")
+
+    match read_note(note_path):
+        case Success(note):
+            assert "domain" not in note.metadata.extra, (
+                "Deprecated 'domain' key should have been stripped from frontmatter"
+            )
+        case f:
+            pytest.fail(f"read_note failed after reconcile: {f}")
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stale_tags_leaves_deprecated_key_on_human_locked_note(
+    vault_root, db_path, pipeline_ctx
+):
+    """Stage 5 (P2-REC-02): note with deprecated key AND updated_by_human=true →
+    write refused, deprecated key stays on disk, tags_updated not incremented."""
+    import shutil
+
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_tags
+    from vault.indexer import scan_vault
+    from vault.reader import read_note
+    from core.result import Success
+
+    note_path = vault_root / "Projects" / "Alpha" / "locked.md"
+    note_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(_FIXTURE_DIR / "deprecated_key_locked_note.md", note_path)
+
+    match scan_vault(vault_root):
+        case Success(entries):
+            pass
+        case f:
+            pytest.fail(f"scan_vault failed: {f}")
+
+    initial = ReconcileResult()
+    match await reconcile_stale_tags(initial, pipeline_ctx, entries):
+        case Success(value=r):
+            assert r.tags_updated == 0, (
+                "Human-locked note must not increment tags_updated"
+            )
+        case f:
+            pytest.fail(f"Stage 5 failed: {f}")
+
+    match read_note(note_path):
+        case Success(note):
+            assert "domain" in note.metadata.extra, (
+                "Deprecated key must stay on disk when note is human-locked"
+            )
+        case f:
+            pytest.fail(f"read_note failed: {f}")
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stale_tags_does_not_write_note_without_deprecated_key(
+    vault_root, db_path, pipeline_ctx
+):
+    """Stage 5 (P2-REC-03): note with no deprecated keys and no other dirty reason →
+    not written, tags_updated not incremented (regression guard)."""
+    import shutil
+
+    from pipelines.reconcile import ReconcileResult, reconcile_stale_tags
+    from vault.indexer import scan_vault
+    from vault.reader import read_note
+    from core.result import Success
+
+    note_path = vault_root / "Projects" / "Alpha" / "clean.md"
+    note_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(_FIXTURE_DIR / "clean_project_note.md", note_path)
+
+    match scan_vault(vault_root):
+        case Success(entries):
+            pass
+        case f:
+            pytest.fail(f"scan_vault failed: {f}")
+
+    initial = ReconcileResult()
+    match await reconcile_stale_tags(initial, pipeline_ctx, entries):
+        case Success(value=r):
+            assert r.tags_updated == 0, "Clean note must not trigger a write"
+        case f:
+            pytest.fail(f"Stage 5 failed: {f}")
+
+    match read_note(note_path):
+        case Success(note):
+            assert note.metadata.extra == {}, "Clean note must have no extra keys"
+        case f:
+            pytest.fail(f"read_note failed: {f}")
 
 
 # ---------------------------------------------------------------------------
@@ -800,7 +932,9 @@ async def test_stale_batch_refs_file_still_at_destination(db_path, pipeline_ctx)
     initial = ReconcileResult()
     match await reconcile_stale_batch_refs(initial, pipeline_ctx):
         case Success(value=r):
-            assert r.batch_refs_cleared == 0, "File still at destination — should not clear"
+            assert r.batch_refs_cleared == 0, (
+                "File still at destination — should not clear"
+            )
         case Failure(error=e):
             pytest.fail(f"Stage 6 failed: {e}")
 
@@ -918,13 +1052,16 @@ async def test_stale_batch_refs_respects_nondefault_projects_dir(db_path, tmp_pa
     vc = VaultConfig(root=vroot, projects_dir="Work")
     config = MagicMock()
     config.vault = vc
-    ctx = PipelineContext(config=config, correlation_id="test-nondefault", db_path=db_path)
+    ctx = PipelineContext(
+        config=config, correlation_id="test-nondefault", db_path=db_path
+    )
 
     initial = ReconcileResult()
     match await reconcile_stale_batch_refs(initial, ctx):
         case Success(value=r):
-            assert r.batch_refs_cleared == 0, \
+            assert r.batch_refs_cleared == 0, (
                 "File under non-default projects_dir is still at destination"
+            )
         case Failure(error=e):
             pytest.fail(f"Stage 6 failed: {e}")
 
@@ -962,15 +1099,17 @@ async def test_stale_batch_refs_prefix_boundary(db_path, pipeline_ctx):
     initial = ReconcileResult()
     match await reconcile_stale_batch_refs(initial, pipeline_ctx):
         case Success(value=r):
-            assert r.batch_refs_cleared == 0, \
+            assert r.batch_refs_cleared == 0, (
                 "Both docs are at their own destinations; nothing should clear"
+            )
         case Failure(error=e):
             pytest.fail(f"Stage 6 failed: {e}")
 
     conn2 = sqlite3.connect(str(db_path))
     try:
-        assert _get_batch_id(conn2, "Projects/AlphaBeta/note.md") == beta_batch, \
+        assert _get_batch_id(conn2, "Projects/AlphaBeta/note.md") == beta_batch, (
             "AlphaBeta doc must NOT be cleared by Alpha batch (prefix boundary)"
+        )
         assert _get_batch_id(conn2, "Projects/Alpha/note.md") == alpha_batch
     finally:
         conn2.close()
@@ -1018,6 +1157,7 @@ async def test_stale_tags_human_lock_guard_ignores_error_prose(
     # Stage 5 imports write_note inside the function body, so patch the source
     # module attribute (vault.writer), not reconcile_mod.
     import vault.writer as writer_mod
+
     monkeypatch.setattr(writer_mod, "write_note", locked_write)
 
     warning_calls = []
@@ -1037,11 +1177,11 @@ async def test_stale_tags_human_lock_guard_ignores_error_prose(
             pytest.fail(f"Stage 5 failed: {f}")
 
     stale_tag_warnings = [
-        (msg, args) for msg, args, _ in warning_calls
-        if "reconcile_stale_tags" in msg
+        (msg, args) for msg, args, _ in warning_calls if "reconcile_stale_tags" in msg
     ]
-    assert len(stale_tag_warnings) == 0, \
+    assert len(stale_tag_warnings) == 0, (
         f"Human-lock guard must silently skip regardless of error prose, got: {stale_tag_warnings}"
+    )
 
 
 @pytest.mark.asyncio
@@ -1082,6 +1222,7 @@ async def test_stale_tags_real_write_error_still_warns(
 
     # Patch the source module — Stage 5 imports write_note inside the function.
     import vault.writer as writer_mod
+
     monkeypatch.setattr(writer_mod, "write_note", failing_write)
 
     warning_calls = []
@@ -1101,11 +1242,13 @@ async def test_stale_tags_real_write_error_still_warns(
             pytest.fail(f"Stage 5 failed: {f}")
 
     stale_tag_warnings = [
-        (msg, args) for msg, args, _ in warning_calls
+        (msg, args)
+        for msg, args, _ in warning_calls
         if "reconcile_stale_tags.write_failed" in msg
     ]
-    assert len(stale_tag_warnings) == 1, \
+    assert len(stale_tag_warnings) == 1, (
         f"Genuine write error must be logged, not swallowed; got: {stale_tag_warnings}"
+    )
 
 
 @pytest.mark.asyncio
@@ -1118,6 +1261,7 @@ async def test_stale_batch_refs_no_batches_table(tmp_path, monkeypatch):
 
     # Create a DB with only schema.sql applied — no migrations (no batches table)
     from storage.db import _connect, _SCHEMA_FILE
+
     bare_db = tmp_path / "bare.db"
     conn = _connect(bare_db)
     conn.executescript(_SCHEMA_FILE.read_text())
@@ -1128,7 +1272,9 @@ async def test_stale_batch_refs_no_batches_table(tmp_path, monkeypatch):
     (tmp_path / "vault").mkdir(exist_ok=True)
     config = MagicMock()
     config.vault = vc
-    ctx = PipelineContext(config=config, correlation_id="test-no-table", db_path=bare_db)
+    ctx = PipelineContext(
+        config=config, correlation_id="test-no-table", db_path=bare_db
+    )
 
     initial = ReconcileResult()
     match await reconcile_stale_batch_refs(initial, ctx):
