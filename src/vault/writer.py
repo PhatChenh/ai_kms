@@ -39,7 +39,7 @@ WriteActor = Literal["ai", "human"]
 class WriteOutcome:
     """Returned by write_note and move_note; feed to storage.documents.upsert()."""
 
-    vault_path: str       # POSIX, relative to vault root, NFC-normalised
+    vault_path: str  # POSIX, relative to vault root, NFC-normalised
     absolute_path: Path
     content_hash: str
     metadata: NoteMetadata
@@ -67,7 +67,9 @@ def _merge_metadata(
         NoteMetadata with timestamps applied, ready to write.
     """
     ex = existing
-    created = (ex.created if ex and ex.created else None) or incoming.created or date.today()
+    created = (
+        (ex.created if ex and ex.created else None) or incoming.created or date.today()
+    )
     return NoteMetadata(
         created=created,
         updated=datetime.now(timezone.utc),
@@ -82,6 +84,10 @@ def _merge_metadata(
         attachment_path=incoming.attachment_path,
         status=incoming.status,
         source_hash=incoming.source_hash,
+        suggested_project=incoming.suggested_project,
+        suggested_primary_domain=incoming.suggested_primary_domain,
+        classify_confidence=incoming.classify_confidence,
+        classify_reasoning=incoming.classify_reasoning,
         extra=incoming.extra,
     )
 
@@ -337,4 +343,3 @@ def move_folder(folder_path: Path, destination: Path) -> Result[Path]:
         )
 
     return Success(final)
-
