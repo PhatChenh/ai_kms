@@ -5,6 +5,7 @@ End-to-end behavioral tests for core/pipeline.run_pipeline.
 All tests use real DB (tmp_path), real audit_log, and trivial async stages.
 No production code is mocked except config (MagicMock — no vault needed).
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -26,20 +27,36 @@ from storage.db import init_db
 
 
 async def add_one(value: int, ctx: PipelineContext) -> Result[int]:
-    decision = AIDecision(action="add_one", confidence=1.0, reasoning="test", source_ids=[])
-    audit.write(decision, pipeline="test", stage="add_one", outcome="AUTO", db_path=ctx.db_path)
+    decision = AIDecision(
+        action="add_one", confidence=1.0, reasoning="test", source_ids=[]
+    )
+    audit.write(
+        decision, pipeline="test", stage="add_one", outcome="AUTO", db_path=ctx.db_path
+    )
     return Success(value + 1)
 
 
 async def double(value: int, ctx: PipelineContext) -> Result[int]:
-    decision = AIDecision(action="double", confidence=1.0, reasoning="test", source_ids=[])
-    audit.write(decision, pipeline="test", stage="double", outcome="AUTO", db_path=ctx.db_path)
+    decision = AIDecision(
+        action="double", confidence=1.0, reasoning="test", source_ids=[]
+    )
+    audit.write(
+        decision, pipeline="test", stage="double", outcome="AUTO", db_path=ctx.db_path
+    )
     return Success(value * 2)
 
 
 async def to_string(value: int, ctx: PipelineContext) -> Result[str]:
-    decision = AIDecision(action="to_string", confidence=1.0, reasoning="test", source_ids=[])
-    audit.write(decision, pipeline="test", stage="to_string", outcome="AUTO", db_path=ctx.db_path)
+    decision = AIDecision(
+        action="to_string", confidence=1.0, reasoning="test", source_ids=[]
+    )
+    audit.write(
+        decision,
+        pipeline="test",
+        stage="to_string",
+        outcome="AUTO",
+        db_path=ctx.db_path,
+    )
     return Success(str(value))
 
 
@@ -57,7 +74,9 @@ def db(tmp_path):
 
 @pytest.fixture()
 def ctx(db):
-    return PipelineContext(config=MagicMock(), correlation_id="test-cid-123", db_path=db)
+    return PipelineContext(
+        config=MagicMock(), correlation_id="test-cid-123", db_path=db
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +164,7 @@ class TestPipelineContextTaxonomy:
 
     def test_explicit_taxonomy_accessible_on_ctx(self, db) -> None:
         from core.tags import TagTaxonomy
+
         taxonomy = TagTaxonomy(
             allowed_types=frozenset(["report"]),
             valid_domains=frozenset(["finance"]),
@@ -157,6 +177,32 @@ class TestPipelineContextTaxonomy:
         )
         assert ctx.taxonomy is taxonomy
         assert ctx.taxonomy.valid_domains == frozenset(["finance"])
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 Classify: PipelineContext skip_classify + registry
+# ---------------------------------------------------------------------------
+
+
+def test_pipeline_context_skip_classify_default_false(db):
+    """PipelineContext.skip_classify defaults to False."""
+    ctx = PipelineContext(config=MagicMock(), correlation_id="x", db_path=db)
+    assert ctx.skip_classify is False
+
+
+def test_pipeline_context_registry_default_none(db):
+    """PipelineContext.registry defaults to None."""
+    ctx = PipelineContext(config=MagicMock(), correlation_id="x", db_path=db)
+    assert ctx.registry is None
+
+
+def test_pipeline_context_accepts_registry(db):
+    """PipelineContext stores a LiveRegistry when passed via registry=."""
+    mock_reg = MagicMock()
+    ctx = PipelineContext(
+        config=MagicMock(), correlation_id="x", db_path=db, registry=mock_reg
+    )
+    assert ctx.registry is mock_reg
 
 
 @pytest.mark.asyncio

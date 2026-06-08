@@ -60,6 +60,8 @@ class PipelineContext:
     db_path: Path | None = field(default=None)
     taxonomy: "TagTaxonomy | None" = field(default=None)
     batch_id: int | None = field(default=None)
+    skip_classify: bool = False
+    registry: Any = field(default=None)
 
 
 # ---------------------------------------------------------------------------
@@ -74,8 +76,7 @@ class Stage(Protocol):
     A stage that raises instead of returning Failure is caught by run_pipeline.
     """
 
-    async def __call__(self, input: Any, context: PipelineContext) -> Result[Any]:
-        ...
+    async def __call__(self, input: Any, context: PipelineContext) -> Result[Any]: ...
 
 
 # ---------------------------------------------------------------------------
