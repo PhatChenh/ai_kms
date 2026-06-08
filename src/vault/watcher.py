@@ -34,18 +34,25 @@ from core.audit import write as audit_write
 from core.confidence import AIDecision
 from core.logging_setup import new_correlation_id
 from core.result import Failure, Success
-from storage.documents import delete_by_path, get_by_path, rename as rename_doc
+from storage.documents import (
+    delete_by_path,
+    get_by_path,
+    rename as rename_doc,
+    update_batch_id,
+)
 from vault.indexer import IGNORE_DIRS
 from vault.paths import (
     _is_ai_output,
     _is_in_managed_attachment,
     _is_misplaced,
     _location_context,
+    is_batch_subfolder,
     resolve_placement,
 )
 from vault.reader import read_note
 from vault.move_guard import MoveGuard
 from vault.writer import move_attachment, move_note, write_note
+import storage.batches as batches
 
 if TYPE_CHECKING:
     from core.config import VaultConfig
@@ -89,11 +96,7 @@ def _sibling_for(binary: Path, vault_config: VaultConfig) -> Path:
     Returns:
         Path to <parent>/<summaries_subdir>/<binary.name>.md
     """
-    return (
-        binary.parent
-        / vault_config.summaries_subdir
-        / f"{binary.name}.md"
-    )
+    return binary.parent / vault_config.summaries_subdir / f"{binary.name}.md"
 
 
 class _VaultEventHandler(FileSystemEventHandler):
@@ -122,6 +125,7 @@ class _VaultEventHandler(FileSystemEventHandler):
         on_folder_stable: Callable[[Path], None] | None = None,
         move_guard: MoveGuard | None = None,
         binary_settle_seconds: float = 5.0,
+        db_path: Path | None = None,
     ) -> None:
         super().__init__()
         self._root = root
@@ -135,6 +139,7 @@ class _VaultEventHandler(FileSystemEventHandler):
         self._on_folder_stable = on_folder_stable
         self._move_guard = move_guard
         self._binary_settle_seconds = binary_settle_seconds
+        self._db_path = db_path
         # key: str(path) → (active timer, callable, args)
         self._timers: dict[str, tuple[threading.Timer, Callable, tuple]] = {}
         self._lock = threading.Lock()
@@ -213,12 +218,8 @@ class _VaultEventHandler(FileSystemEventHandler):
 
         if self._should_skip(path):
             return
-        if path.suffix.lower() == ".md" and _is_misplaced(
-            path, self._vault_config
-        ):
-            self._debounce(
-                f"misplaced:{path}", self._handle_misplaced_md, (path,)
-            )
+        if path.suffix.lower() == ".md" and _is_misplaced(path, self._vault_config):
+            self._debounce(f"misplaced:{path}", self._handle_misplaced_md, (path,))
             return
         self._debounce(str(path), self._on_create, (path,))
 
@@ -367,12 +368,8 @@ class _VaultEventHandler(FileSystemEventHandler):
             # and are not vault content — skip before binary modify dispatch.
             if self._should_skip(path):
                 return
-            if self._is_internal(path) and not _is_ai_output(
-                path, self._vault_config
-            ):
-                self._debounce(
-                    f"binmod:{path}", self._handle_binary_modify, (path,)
-                )
+            if self._is_internal(path) and not _is_ai_output(path, self._vault_config):
+                self._debounce(f"binmod:{path}", self._handle_binary_modify, (path,))
             return
 
         if self._should_skip(path):
@@ -389,9 +386,7 @@ class _VaultEventHandler(FileSystemEventHandler):
         # the headline Brief #3 scenario (user deletes Projects/A/attachment/X.pdf).
         # Mirrors on_moved ordering (see lines below). TD-030 fix.
         if _is_binary(path) and self._is_internal(path):
-            self._debounce(
-                f"bin:{path}", self._handle_binary_delete, (path,)
-            )
+            self._debounce(f"bin:{path}", self._handle_binary_delete, (path,))
 
         if self._should_skip(path):
             return
@@ -406,9 +401,7 @@ class _VaultEventHandler(FileSystemEventHandler):
         # Binary sync always fires for internal binary moves — even when dst
         # is inside a managed attachment/ dir (we need to orphan the old sibling).
         if _is_binary(src) and self._is_internal(src):
-            self._debounce(
-                f"bin:{dst}", self._handle_binary_move, (src, dst)
-            )
+            self._debounce(f"bin:{dst}", self._handle_binary_move, (src, dst))
 
         if self._should_skip(dst):
             return
@@ -438,9 +431,7 @@ class _VaultEventHandler(FileSystemEventHandler):
             counter += 1
             inbox_dst = self._vault_config.inbox_path / f"{stem}-{counter}{suffix}"
         if inbox_dst.exists():
-            _log.warning(
-                "watcher.misplaced_md_collision_exhausted path=%s", path
-            )
+            _log.warning("watcher.misplaced_md_collision_exhausted path=%s", path)
             return
 
         match move_note(path, inbox_dst, actor="ai"):
@@ -482,6 +473,7 @@ class _VaultEventHandler(FileSystemEventHandler):
     def _handle_binary_delete(self, path: Path) -> None:
         """Remove sibling DB row + audit when a binary file is deleted."""
         import structlog
+
         structlog.contextvars.bind_contextvars(correlation_id=new_correlation_id())
         sibling = _sibling_for(path, self._vault_config)
         sibling_vp = unicodedata.normalize(
@@ -492,17 +484,20 @@ class _VaultEventHandler(FileSystemEventHandler):
                 if rowcount == 0:
                     _log.warning(
                         "watcher.binary_delete_sibling_not_found binary=%s sibling=%s",
-                        path, sibling_vp,
+                        path,
+                        sibling_vp,
                     )
                 else:
                     _log.info(
                         "watcher.binary_delete_sibling_removed binary=%s sibling=%s",
-                        path, sibling_vp,
+                        path,
+                        sibling_vp,
                     )
             case Failure(error=e):
                 _log.warning(
                     "watcher.binary_delete_sibling_failed binary=%s error=%s",
-                    path, e,
+                    path,
+                    e,
                 )
         match audit_write(
             AIDecision(
@@ -520,9 +515,12 @@ class _VaultEventHandler(FileSystemEventHandler):
             case Success():
                 pass
 
-    def _handle_binary_move(self, src: Path, dst: Path, *, _settled: bool = False) -> None:
+    def _handle_binary_move(
+        self, src: Path, dst: Path, *, _settled: bool = False
+    ) -> None:
         """Sync sibling when a binary file is renamed or moved."""
         import structlog
+
         structlog.contextvars.bind_contextvars(correlation_id=new_correlation_id())
         old_sibling = _sibling_for(src, self._vault_config)
         new_sibling = _sibling_for(dst, self._vault_config)
@@ -539,7 +537,9 @@ class _VaultEventHandler(FileSystemEventHandler):
                 case Failure(error=e):
                     _log.warning(
                         "watcher.binary_move_sibling_rename_failed src=%s dst=%s error=%s",
-                        src, dst, e,
+                        src,
+                        dst,
+                        e,
                     )
                     return
                 case Success():
@@ -550,18 +550,22 @@ class _VaultEventHandler(FileSystemEventHandler):
                 case Success(value=note):
                     new_attachment_vp = _vp(dst)
                     note.metadata.attachment_path = new_attachment_vp
-                    match write_note(new_sibling, note.content, note.metadata, actor="ai"):
+                    match write_note(
+                        new_sibling, note.content, note.metadata, actor="ai"
+                    ):
                         case Failure(error=e):
                             _log.warning(
                                 "watcher.binary_move_pointer_update_failed sibling=%s error=%s",
-                                new_sibling, e,
+                                new_sibling,
+                                e,
                             )
                         case Success():
                             pass
                 case Failure(error=e):
                     _log.warning(
                         "watcher.binary_move_read_sibling_failed sibling=%s error=%s",
-                        new_sibling, e,
+                        new_sibling,
+                        e,
                     )
 
             # Step 3: update DB row
@@ -572,12 +576,14 @@ class _VaultEventHandler(FileSystemEventHandler):
                     if rowcount == 0:
                         _log.warning(
                             "watcher.binary_move_sibling_not_in_index old=%s new=%s",
-                            old_sibling_vp, new_sibling_vp,
+                            old_sibling_vp,
+                            new_sibling_vp,
                         )
                 case Failure(error=e):
                     _log.warning(
                         "watcher.binary_move_rename_failed old=%s error=%s",
-                        old_sibling_vp, e,
+                        old_sibling_vp,
+                        e,
                     )
 
             # Step 4: audit
@@ -622,12 +628,14 @@ class _VaultEventHandler(FileSystemEventHandler):
                         if rowcount == 0:
                             _log.warning(
                                 "watcher.binary_move_rehome_unknown_location orphan_not_found binary=%s sibling=%s",
-                                src, old_sibling_vp,
+                                src,
+                                old_sibling_vp,
                             )
                     case Failure(error=e):
                         _log.warning(
                             "watcher.binary_move_rehome_unknown_location_orphan_failed binary=%s error=%s",
-                            src, e,
+                            src,
+                            e,
                         )
                 match audit_write(
                     AIDecision(
@@ -657,7 +665,8 @@ class _VaultEventHandler(FileSystemEventHandler):
                 case Failure(error=e):
                     _log.warning(
                         "watcher.binary_rehome_get_row_failed sibling=%s error=%s",
-                        old_sibling_vp, e,
+                        old_sibling_vp,
+                        e,
                     )
                     # Fall back to orphan path
                     match delete_by_path(old_sibling_vp):
@@ -716,7 +725,8 @@ class _VaultEventHandler(FileSystemEventHandler):
                     if row.updated_by_human:
                         _log.info(
                             "watcher.binary_rehome_human_lock binary=%s sibling=%s",
-                            src, old_sibling_vp,
+                            src,
+                            old_sibling_vp,
                         )
                         return
 
@@ -732,7 +742,9 @@ class _VaultEventHandler(FileSystemEventHandler):
                     case Failure(error=e):
                         _log.warning(
                             "watcher.binary_rehome_move_failed src=%s dst=%s error=%s",
-                            dst, final_binary, e,
+                            dst,
+                            final_binary,
+                            e,
                         )
                         return
                     case Success():
@@ -744,7 +756,9 @@ class _VaultEventHandler(FileSystemEventHandler):
                     case Failure(error=e):
                         _log.warning(
                             "watcher.binary_rehome_move_note_failed src=%s dst=%s error=%s",
-                            old_sibling, new_sibling_path, e,
+                            old_sibling,
+                            new_sibling_path,
+                            e,
                         )
                         return
                     case Success():
@@ -758,18 +772,21 @@ class _VaultEventHandler(FileSystemEventHandler):
                             case Failure(error=e):
                                 _log.warning(
                                     "watcher.binary_rehome_pointer_update_failed sibling=%s error=%s",
-                                    new_sibling_path, e,
+                                    new_sibling_path,
+                                    e,
                                 )
                             case Success():
                                 pass
                     case Failure(error=e):
                         _log.warning(
                             "watcher.binary_rehome_read_sibling_failed sibling=%s error=%s",
-                            new_sibling_path, e,
+                            new_sibling_path,
+                            e,
                         )
             else:
                 # Sibling absent on disk: rebuild from DB row
                 from vault.frontmatter import NoteMetadata
+
                 rebuilt_meta = NoteMetadata(
                     type="attachment-summary",
                     confidence=row.confidence,
@@ -791,7 +808,8 @@ class _VaultEventHandler(FileSystemEventHandler):
                     case Failure(error=e):
                         _log.warning(
                             "watcher.binary_rehome_rebuild_failed sibling=%s error=%s",
-                            new_sibling_path, e,
+                            new_sibling_path,
+                            e,
                         )
                         return
                     case Success():
@@ -802,15 +820,69 @@ class _VaultEventHandler(FileSystemEventHandler):
                 case Success(value=0):
                     _log.warning(
                         "watcher.binary_rehome_db_row_not_found old=%s new=%s",
-                        old_sibling_vp, new_sibling_vp,
+                        old_sibling_vp,
+                        new_sibling_vp,
                     )
                 case Failure(error=e):
                     _log.warning(
                         "watcher.binary_rehome_rename_failed old=%s error=%s",
-                        old_sibling_vp, e,
+                        old_sibling_vp,
+                        e,
                     )
                 case Success():
                     pass
+
+            # Sub-step g2 — stamp batch_id on documents row (TD-041 watcher fix)
+            # Deterministic path math; no AI decision; no audit row required (C-13 N/A).
+            if is_batch_subfolder(dst.parent, self._vault_config):
+                _folder_vp = unicodedata.normalize(
+                    "NFC",
+                    str(dst.parent.relative_to(self._root).as_posix()),
+                )
+                _batch_id: int | None = None
+                match batches.find_by_folder_path(_folder_vp, db_path=self._db_path):
+                    case Success(value=None):
+                        match batches.insert(
+                            folder_name=dst.parent.name,
+                            destination_type=loc_type,
+                            destination_name=loc_name,
+                            confidence=1.0,
+                            status="ROUTING",
+                            file_count=1,
+                            folder_path=_folder_vp,
+                            db_path=self._db_path,
+                        ):
+                            case Success(value=_bid):
+                                _batch_id = _bid
+                            case Failure(error=_berr):
+                                _log.warning(
+                                    "watcher.binary_rehome_batch_insert_failed dst=%s error=%s",
+                                    dst,
+                                    _berr,
+                                )
+                    case Success(value=_existing_bid):
+                        _batch_id = _existing_bid
+                    case Failure(error=_berr):
+                        _log.warning(
+                            "watcher.binary_rehome_batch_lookup_failed dst=%s error=%s",
+                            dst,
+                            _berr,
+                        )
+                if _batch_id is not None:
+                    match update_batch_id(new_sibling_vp, _batch_id, self._db_path):
+                        case Success(value=0):
+                            _log.warning(
+                                "watcher.binary_rehome_batch_id_update_no_row sibling=%s",
+                                new_sibling_vp,
+                            )
+                        case Failure(error=_berr):
+                            _log.warning(
+                                "watcher.binary_rehome_batch_id_update_failed sibling=%s error=%s",
+                                new_sibling_vp,
+                                _berr,
+                            )
+                        case Success():
+                            pass
 
             # Sub-step h — write audit row
             is_no_edit = dst.suffix.lower() in self._vault_config.no_edit_extensions
@@ -848,6 +920,7 @@ class _VaultEventHandler(FileSystemEventHandler):
         """
         import hashlib
         import structlog
+
         structlog.contextvars.bind_contextvars(correlation_id=new_correlation_id())
 
         # 1. Compute current hash
@@ -875,7 +948,8 @@ class _VaultEventHandler(FileSystemEventHandler):
                     case Failure(error=e):
                         _log.warning(
                             "watcher.binary_modify_hash_update_failed path=%s error=%s",
-                            path, e,
+                            path,
+                            e,
                         )
                         return
                     case Success():
@@ -899,15 +973,14 @@ class _VaultEventHandler(FileSystemEventHandler):
                     outcome="BINARY_MODIFIED",
                 ):
                     case Failure(error=e):
-                        _log.warning(
-                            "watcher.binary_modify_audit_failed error=%s", e
-                        )
+                        _log.warning("watcher.binary_modify_audit_failed error=%s", e)
                     case Success():
                         pass
             case Failure(error=e):
                 _log.warning(
                     "watcher.binary_modify_read_sibling_failed path=%s error=%s",
-                    sibling, e,
+                    sibling,
+                    e,
                 )
 
 
