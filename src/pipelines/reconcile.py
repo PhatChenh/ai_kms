@@ -14,7 +14,12 @@ from core.confidence import AIDecision
 from core.pipeline import PipelineContext
 from core.result import Failure, Result, Success
 from pipelines.capture import capture_file
-from vault.paths import _is_in_managed_attachment, _is_managed_summaries_area, _location_context, resolve_placement
+from vault.paths import (
+    _is_in_managed_attachment,
+    _is_managed_summaries_area,
+    _location_context,
+    resolve_placement,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -83,16 +88,19 @@ async def reconcile_paths(
             case Success(value=n):
                 reconciled += n
             case Failure() as f:
-                _log.warning("reconcile.rename_failed old=%s new=%s error=%s",
-                             old_vp, entry.vault_path, f.error)
+                _log.warning(
+                    "reconcile.rename_failed old=%s new=%s error=%s",
+                    old_vp,
+                    entry.vault_path,
+                    f.error,
+                )
 
     for vp in changes.deleted:
         match documents.delete_by_path(vp, db_path=db_path):
             case Success(value=n):
                 reconciled += n
             case Failure() as f:
-                _log.warning("reconcile.delete_failed path=%s error=%s",
-                             vp, f.error)
+                _log.warning("reconcile.delete_failed path=%s error=%s", vp, f.error)
 
     return Success(result.replace(paths_reconciled=reconciled))
 
@@ -132,14 +140,23 @@ async def reconcile_orphan_binaries(
                 case Success():
                     new_captures += 1
                     audit_write(
-                        AIDecision(action="capture", confidence=1.0,
-                                   source_ids=[str(entry)], reasoning="orphan binary"),
-                        pipeline="reconcile", stage="reconcile_orphan_binaries",
-                        outcome="ORPHAN_BINARY_CAPTURED", db_path=ctx.db_path,
+                        AIDecision(
+                            action="capture",
+                            confidence=1.0,
+                            source_ids=[str(entry)],
+                            reasoning="orphan binary",
+                        ),
+                        pipeline="reconcile",
+                        stage="reconcile_orphan_binaries",
+                        outcome="ORPHAN_BINARY_CAPTURED",
+                        db_path=ctx.db_path,
                     )
                 case Failure() as f:
-                    _log.warning("reconcile.orphan_capture_failed path=%s error=%s",
-                                 entry, f.error)
+                    _log.warning(
+                        "reconcile.orphan_capture_failed path=%s error=%s",
+                        entry,
+                        f.error,
+                    )
 
     return Success(result.replace(new_captures=new_captures))
 
@@ -184,15 +201,23 @@ async def reconcile_stale_binaries(
                     case Success():
                         restale_count += 1
                         audit_write(
-                            AIDecision(action="capture", confidence=1.0,
-                                       source_ids=[str(entry)],
-                                       reasoning="stale binary"),
-                            pipeline="reconcile", stage="reconcile_stale_binaries",
-                            outcome="BINARY_STALE_RESUMMARIZED", db_path=ctx.db_path,
+                            AIDecision(
+                                action="capture",
+                                confidence=1.0,
+                                source_ids=[str(entry)],
+                                reasoning="stale binary",
+                            ),
+                            pipeline="reconcile",
+                            stage="reconcile_stale_binaries",
+                            outcome="BINARY_STALE_RESUMMARIZED",
+                            db_path=ctx.db_path,
                         )
                     case Failure() as f:
-                        _log.warning("reconcile.restale_capture_failed path=%s error=%s",
-                                     entry, f.error)
+                        _log.warning(
+                            "reconcile.restale_capture_failed path=%s error=%s",
+                            entry,
+                            f.error,
+                        )
 
     return Success(result.replace(restale_count=restale_count))
 
@@ -265,23 +290,33 @@ async def reconcile_orphan_siblings(
                 case Success():
                     pass
                 case Failure() as f:
-                    _log.warning("reconcile.orphan_db_delete_failed path=%s error=%s",
-                                 vp, f.error)
+                    _log.warning(
+                        "reconcile.orphan_db_delete_failed path=%s error=%s",
+                        vp,
+                        f.error,
+                    )
                     continue
 
             try:
                 entry.unlink()
             except OSError as exc:
-                _log.warning("reconcile.orphan_unlink_failed path=%s error=%s",
-                             entry, exc)
+                _log.warning(
+                    "reconcile.orphan_unlink_failed path=%s error=%s", entry, exc
+                )
                 continue
 
             orphans_cleaned += 1
             audit_write(
-                AIDecision(action="delete", confidence=1.0,
-                           source_ids=[vp], reasoning="orphan sibling"),
-                pipeline="reconcile", stage="reconcile_orphan_siblings",
-                outcome="ORPHAN_SIBLING_CLEANED", db_path=ctx.db_path,
+                AIDecision(
+                    action="delete",
+                    confidence=1.0,
+                    source_ids=[vp],
+                    reasoning="orphan sibling",
+                ),
+                pipeline="reconcile",
+                stage="reconcile_orphan_siblings",
+                outcome="ORPHAN_SIBLING_CLEANED",
+                db_path=ctx.db_path,
             )
 
     return Success(result.replace(orphans_cleaned=orphans_cleaned))
@@ -306,6 +341,7 @@ async def reconcile_stale_tags(
     Args:
         entries: Pre-scanned VaultEntry list from reconcile() entry point.
     """
+    from vault.frontmatter import _DEPRECATED_KEYS
     from vault.paths import _location_context, load_valid_domains
     from vault.reader import read_note
     from vault.writer import write_note
@@ -325,8 +361,11 @@ async def reconcile_stale_tags(
 
         match read_note(entry.path):
             case Failure() as f:
-                _log.warning("reconcile_stale_tags.read_failed path=%s error=%s",
-                             entry.vault_path, f.error)
+                _log.warning(
+                    "reconcile_stale_tags.read_failed path=%s error=%s",
+                    entry.vault_path,
+                    f.error,
+                )
                 continue
             case Success(note):
                 pass
@@ -337,8 +376,11 @@ async def reconcile_stale_tags(
 
         # Remove stale domain/<X> tags (domains that no longer exist as folders)
         cleaned_tags = [
-            t for t in new_tags
-            if not (t.startswith("domain/") and t[len("domain/"):] not in valid_domains)
+            t
+            for t in new_tags
+            if not (
+                t.startswith("domain/") and t[len("domain/") :] not in valid_domains
+            )
         ]
         if len(cleaned_tags) != len(new_tags):
             new_tags = cleaned_tags
@@ -356,14 +398,23 @@ async def reconcile_stale_tags(
                 new_project = loc_name
                 dirty = True
 
+        # Deprecated frontmatter keys still present in extra — trigger write so
+        # dumps() strips them (lazy migration, TD-042).
+        if any(k in note.metadata.extra for k in _DEPRECATED_KEYS):
+            dirty = True
+
         if not dirty:
             continue
 
-        new_meta = note.metadata.model_copy(update={"tags": new_tags, "project": new_project})
+        new_meta = note.metadata.model_copy(
+            update={"tags": new_tags, "project": new_project}
+        )
         match write_note(entry.path, note.content, new_meta, actor="ai"):
             case Success():
                 tags_updated += 1
-            case Failure(recoverable=False, context=fc) as f if fc and "vault_path" in fc:
+            case Failure(recoverable=False, context=fc) as f if (
+                fc and "vault_path" in fc
+            ):
                 # updated_by_human=True — write_note's human-lock branch is the
                 # only recoverable=False failure that carries a "vault_path"
                 # context key (writer.py human-lock guard). Keying off that
@@ -371,8 +422,11 @@ async def reconcile_stale_tags(
                 # Skip silently; no retry will fix this.
                 pass
             case Failure() as f:
-                _log.warning("reconcile_stale_tags.write_failed path=%s error=%s",
-                             entry.vault_path, f.error)
+                _log.warning(
+                    "reconcile_stale_tags.write_failed path=%s error=%s",
+                    entry.vault_path,
+                    f.error,
+                )
 
     return Success(result.replace(tags_updated=result.tags_updated + tags_updated))
 
@@ -449,7 +503,9 @@ async def reconcile_stale_batch_refs(
                 context={"stage": "reconcile_stale_batch_refs"},
             )
 
-    return Success(replace(result, batch_refs_cleared=result.batch_refs_cleared + counter))
+    return Success(
+        replace(result, batch_refs_cleared=result.batch_refs_cleared + counter)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -539,7 +595,9 @@ async def reconcile_editable_migration(
             counter = 0
             while dst_binary.exists() and counter < 99:
                 counter += 1
-                dst_binary = placement.final_dir / f"{binary.stem}-{counter}{binary.suffix}"
+                dst_binary = (
+                    placement.final_dir / f"{binary.stem}-{counter}{binary.suffix}"
+                )
                 dst_sibling = placement.sibling_dir / f"{dst_binary.name}.md"
             if dst_binary.exists():
                 _log.warning(
@@ -557,22 +615,24 @@ async def reconcile_editable_migration(
                 case Failure(error=e):
                     _log.warning(
                         "reconcile.editable_migration_binary_move_failed src=%s dst=%s error=%s",
-                        binary, dst_binary, e,
+                        binary,
+                        dst_binary,
+                        e,
                     )
                     continue
                 case Success():
                     pass
 
             # Step 2: move or rebuild sibling
-            old_sibling_vp = str(
-                entry.relative_to(vault_cfg.root).as_posix()
-            )
+            old_sibling_vp = str(entry.relative_to(vault_cfg.root).as_posix())
             if entry.exists():
                 match move_note(entry, dst_sibling, actor="ai"):
                     case Failure(error=e):
                         _log.warning(
                             "reconcile.editable_migration_sibling_move_failed src=%s dst=%s error=%s",
-                            entry, dst_sibling, e,
+                            entry,
+                            dst_sibling,
+                            e,
                         )
                         # Binary already moved — log and continue with DB update
                     case Success():
@@ -585,20 +645,24 @@ async def reconcile_editable_migration(
                         )
                         moved_note.metadata.attachment_path = new_attachment_vp
                         match write_note(
-                            dst_sibling, moved_note.content,
-                            moved_note.metadata, actor="ai",
+                            dst_sibling,
+                            moved_note.content,
+                            moved_note.metadata,
+                            actor="ai",
                         ):
                             case Failure(error=e):
                                 _log.warning(
                                     "reconcile.editable_migration_pointer_update_failed sibling=%s error=%s",
-                                    dst_sibling, e,
+                                    dst_sibling,
+                                    e,
                                 )
                             case Success():
                                 pass
                     case Failure(error=e):
                         _log.warning(
                             "reconcile.editable_migration_read_moved_sibling_failed sibling=%s error=%s",
-                            dst_sibling, e,
+                            dst_sibling,
+                            e,
                         )
             else:
                 # Sibling absent on disk — rebuild from existing note metadata
@@ -607,31 +671,35 @@ async def reconcile_editable_migration(
                 )
                 note.metadata.attachment_path = new_attachment_vp
                 match write_note(
-                    dst_sibling, note.content, note.metadata, actor="ai",
+                    dst_sibling,
+                    note.content,
+                    note.metadata,
+                    actor="ai",
                 ):
                     case Failure(error=e):
                         _log.warning(
                             "reconcile.editable_migration_rebuild_failed sibling=%s error=%s",
-                            dst_sibling, e,
+                            dst_sibling,
+                            e,
                         )
                         continue
                     case Success():
                         pass
 
             # Step 3: update DB row (rename old sibling VP → new sibling VP)
-            new_sibling_vp = str(
-                dst_sibling.relative_to(vault_cfg.root).as_posix()
-            )
+            new_sibling_vp = str(dst_sibling.relative_to(vault_cfg.root).as_posix())
             match documents.rename(old_sibling_vp, new_sibling_vp, db_path=db_path):
                 case Success(value=0):
                     _log.warning(
                         "reconcile.editable_migration_db_row_not_found old=%s new=%s",
-                        old_sibling_vp, new_sibling_vp,
+                        old_sibling_vp,
+                        new_sibling_vp,
                     )
                 case Failure(error=e):
                     _log.warning(
                         "reconcile.editable_migration_rename_failed old=%s error=%s",
-                        old_sibling_vp, e,
+                        old_sibling_vp,
+                        e,
                     )
                 case Success():
                     pass

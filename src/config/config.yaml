@@ -22,7 +22,6 @@ claude_cli:
   timeout: 60
 database:
   path: ./data/kb.db
-env: dev
 handlers:
   max_file_size_bytes: 52428800       # 50 MB — PDF/DOCX hard cap
   max_web_fetch_bytes: 10485760       # 10 MB — web body hard cap
@@ -67,8 +66,9 @@ self_learning:
   include_examples_in_prompt: true
   max_examples: 5
   min_evaluations: 20
+env: test   # dev | prod = use vault.root | test = use testing.vault_path below
 testing:
-  vault_path: /Users/lap14806/ai_kms_test_vault/actual_test_vault  # isolated vault for manual testing guide runs — never the real vault
+  vault_path: /Users/phatchenh/ai_kms_test_vault/actual_test_vault  # isolated vault for manual testing guide runs — never the real vault
 vault:
   archive_dir: Archive
   briefings_dir: Briefings

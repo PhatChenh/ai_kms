@@ -280,6 +280,91 @@ Note: `MetadataResult.ai_domain` is **kept** as internal pipeline state — `app
 
 ---
 
+### TD-040 · Single-file capture never sets batch_id — batch association only possible via folder drop
+**Status:** OPEN
+**Phase:** Phase 2 / Phase 8 (Briefing)
+**Risk if triggered early:** Phase 8 Briefing groups content by batch. Any file captured individually — via `kms capture <file>`, `kms capture --scan`, or watcher single-file drop — will never appear in a batch grouping in the briefing, even if the user intentionally dropped several files into the same project folder one by one. The batch signal exists only for folder drops; individual drops are invisible to the batch layer.
+**What:** `capture_file()` is called with `ctx.batch_id = None` in all single-file code paths (CLI, scan, watcher on_create). `_insert_batch()` is only called inside `capture_folder()`, which is only triggered when the watcher detects a stable folder drop. There is no mechanism for single-file capture to associate itself with a batch — not by destination folder, not by time window, not by user intent.
+**Why deferred:** Folder-batch capture was the MVP design. Single-file batch association requires a new mechanism: either a time-window coalescer (files landing in the same destination within N seconds share a batch) or an explicit user signal. Neither was designed for Phase 1.
+**Unblock condition:** Design a batch-association strategy for single-file drops. 
+**Source:** P15-REC-05 test setup 2026-06-07 — test revealed no CLI/watcher path sets batch_id for individual files.
+
+---
+
+### TD-041 · scan_capture does not classify or batch-capture inbox subfolders
+**Status:** OPEN
+**Phase:** Phase 2 / Phase 8 (Briefing)
+**Risk if triggered early:** P15-FOLD-01 describes folder classification as a `kms capture --scan` capability. Current code: `scan_capture()` calls `capture_file()` per individual file and never calls `capture_folder()`. A folder sitting in `inbox/` is walked file-by-file with no LLM classification, no batch row, and no batch_id on the resulting documents. Files inside `inbox/<subfolder>/` and `Projects/<A>/<subfolder>/` and `Domain/<D>/<subfolder>/` are all captured individually without grouping.
+**What:** `scan_capture()` (`src/pipelines/capture.py`) does not detect or dispatch subfolder drops. `capture_folder()` is triggered only by `vault/watcher.py` on a stable folder-creation event, not by any CLI scan path. The desired behavior: `kms capture --scan` should detect unprocessed subfolders in `inbox/`, classify them via LLM, create a batch row, and assign a `batch_id` to all files inside — mirroring what `capture_folder()` does for watcher-triggered drops.
+**Why deferred:** Watcher-triggered folder capture was the Phase 1.5 MVP. Extending `scan_capture` to detect and classify subfolders requires: (1) a subfolder-detection pass in `scan_capture`, (2) deduplication logic so a folder already processed by the watcher is not re-classified, (3) batch-id assignment for files inside `Projects/<A>/<subfolder>/` and `Domain/<D>/<subfolder>/` without re-routing (already located).
+**Unblock condition:** Design the subfolder-detection pass. 
+**Source:** P15-FOLD-01 behavior review 2026-06-07 — test trigger and expected outcome describe scan capability that does not exist in `scan_capture()`.
+
+---
+
+### TD-042 · reconcile_stale_tags (Stage 5) does not mark dirty for deprecated frontmatter keys
+**Status:** CLOSED (2026-06-07 — implemented in `src/pipelines/reconcile.py` Stage 5; 3 tests P2-REC-01/02/03)
+**Phase:** Phase Pre-2 / Phase 2
+**Risk if triggered early:** PRE2-DOM-01 test passes setup but reconcile silently no-ops — `domain:` scalar stays on disk indefinitely for notes with no other dirty condition. Lazy migration never fires unless some other pipeline stage writes the file for an unrelated reason.
+**What:** `reconcile_stale_tags` (`src/pipelines/reconcile.py`, Stage 5) sets `dirty=True` only for stale/missing domain tags and wrong `project:` field. It does not check `note.metadata.extra` for keys in `_DEPRECATED_KEYS`. A note that has `domain: finance` in frontmatter but already has a valid `domain/Finance` tag and correct `project:` field will never be written by Stage 5 — so `dumps()` never gets to strip the deprecated key. Fix: add `if any(k in note.metadata.extra for k in _DEPRECATED_KEYS): dirty = True` to Stage 5 before the `if not dirty: continue` guard (line ~359 in reconcile.py). The `model_copy` call at line 362 already preserves `extra`, so `dumps()` will strip it on the next write automatically.
+**Why deferred:** Stage 5 was designed to fix tag/project mismatches. Deprecated-key stripping was assumed to be covered by any write — but notes with no other dirty condition are never written by Stage 5, leaving the key permanently. Discovered during PRE2-DOM-01 test design review 2026-06-07.
+**Unblock condition:** Add deprecated-key dirty check to `reconcile_stale_tags`
+**Source:** PRE2-DOM-01 behavior review 2026-06-07.
+
+---
+
+### TD-043 · `batches.file_count` is always 1 for single-file-created batches — count never updates
+**Status:** OPEN
+**Phase:** Phase 8 (Briefing)
+**Risk if triggered early:** If Phase 8 Briefing reads `file_count` to say "batch of N files processed," single-file-initiated batches will always report 1 even if many files later joined that batch via individual captures. The count is an approximation, not an accurate total.
+**What:** When `capture_file()` creates a new batch row for a batch-worthy subfolder (TD-040 fix), it sets `file_count = 1` — the one file being captured right now. Subsequent files captured individually into the same subfolder each update their own `batch_id` FK but do NOT increment `file_count` on the batch row. Only `capture_folder()` (watcher-triggered folder drop) sets an accurate initial count. No mechanism exists to keep `file_count` current for the single-file capture path.
+**Why deferred:** `file_count` is informational only in Phase 1–2. No routing, gating, or completeness logic reads it. Accurate counting requires either an UPDATE after every single-file capture (latency) or a reconcile pass (eventual). Neither is worth the complexity until Phase 8 actually consumes the field.
+**Unblock condition:** When Phase 8 Briefing needs accurate per-batch file counts, add an UPDATE to `batches.file_count` in the `capture_file()` batch-stamp path, or add a reconcile stage that counts `documents WHERE batch_id = ?`.
+**Source:** OQ-BATCH-2 design decision 2026-06-07 — deliberate approximation chosen during TD-040/041 design.
+
+---
+
+### TD-044 · Reconcile must detect and surface stale domain tags in `Projects/<A>/CLAUDE.md`
+**Status:** OPEN
+**Phase:** Phase 2+ (after Project Registry ships)
+**Risk if triggered early:** Project Registry silently moves affected projects to `Uncategorized` when their domain folder is renamed/deleted. Without reconcile, CLAUDE.md keeps a stale `domain/<D>` tag indefinitely; the project stays Uncategorized forever with no user notification.
+**What:** When a `Domain/<D>/` folder is renamed or deleted, any `Projects/<A>/CLAUDE.md` that still carries the old `domain/<D>` tag has a stale reference. Reconcile must detect rows where the tag's domain no longer exists as a vault folder, log them, and surface each violation in the Daily Briefing so the user can re-assign the project.
+**Why deferred:** Project Registry and Daily Briefing are not yet built. Reconcile cannot surface to Briefing until Briefing's input format is defined (Phase 8).
+**Source:** Grill session 2026-06-07 — Project Registry design.
+
+---
+
+### TD-045 · Reconcile must detect and surface missing domain tags in `Projects/<A>/CLAUDE.md`
+**Status:** OPEN
+**Phase:** Phase 2+ (after Project Registry ships)
+**Risk if triggered early:** New projects created without CLAUDE.md (or with CLAUDE.md missing a domain tag) stay in `Uncategorized` indefinitely. Classify can still route to them, but the domain grouping in briefings and search is degraded.
+**What:** Reconcile must scan all `Projects/<A>/CLAUDE.md` files and flag any that have no `domain/<D>` tag. Surface each missing mapping in the Daily Briefing so the user can set the domain once.
+**Why deferred:** Daily Briefing (Phase 8) is the notification channel; until Briefing's input format is defined, the reconcile stage can be stubbed but not wired end-to-end.
+**Source:** Grill session 2026-06-07 — Project Registry design.
+
+---
+
+### TD-046 · Reconcile must detect and surface multi-domain violations in `Projects/<A>/CLAUDE.md`
+**Status:** OPEN
+**Phase:** Phase 2+ (after Project Registry ships)
+**Risk if triggered early:** A project CLAUDE.md with two `domain/<D>` tags violates the one-domain-per-project rule (ADR to be written in design step). Project Registry will pick one domain (first found) silently; the violation is invisible to the user.
+**What:** Reconcile must detect `Projects/<A>/CLAUDE.md` files carrying more than one `domain/<D>` tag and surface each violation in the Daily Briefing. The user must decide which domain to keep; the AI must not auto-resolve (design decision).
+**Why deferred:** Enforcement requires the ADR to be accepted and the one-domain rule to be mechanically checked. Briefing channel not yet built.
+**Source:** Grill session 2026-06-07 — Project Registry design.
+
+---
+
+### TD-047 · Hook regex for removed VaultConfig APIs catches legitimate NoteMetadata field accesses (false-positive)
+**Status:** CLOSED (2026-06-07 — regex narrowed to `(vault_cfg|\.vault)\.(attachment_path|archive_path)` in `.claude/settings.json`)
+**Phase:** Maintenance (any session touching `reconcile.py`)
+**Risk if triggered early:** Every edit to `src/pipelines/reconcile.py` triggers a blocking hook error — "Removed VaultConfig API" — even when the code correctly accesses `note.metadata.attachment_path` (a legitimate `NoteMetadata` field). Causes developer friction and wastes edit cycles investigating a non-violation.
+**What:** The hook regex `\.(attachment_path|archive_path)\b` in `.claude/settings.json` matches ANY Python attribute access ending in `.attachment_path` or `.archive_path`, including `note.metadata.attachment_path` at `vault/frontmatter.py:69`. `reconcile.py` Stages 4 and 7 access `note.metadata.attachment_path` legitimately for sibling-binary path resolution. The hook's intent is to catch access to the removed `VaultConfig.attachment_path` / `VaultConfig.archive_path` properties — not NoteMetadata fields.
+**Why deferred:** The fix requires narrowing the regex (e.g. `vault_cfg\.(attachment_path|archive_path)` or scoping to variable names typed as `VaultConfig`). Hook regex syntax in `.claude/settings.json` may have limitations on lookaheads; needs brief investigation. Low urgency — false-positive is annoying but edits still persist.
+**Unblock condition:** Narrow the hook grep pattern so it only fires for config-object access (`vault_cfg`, `VaultConfig` instances), not arbitrary attribute access.
+**Source:** TD-042 implementation 2026-06-07 — hook fired on every edit to `reconcile.py` due to `note.metadata.attachment_path` in Stages 4 and 7.
+
+---
+
 ## Archive
 
 ### TD-001 · core/pipeline.py

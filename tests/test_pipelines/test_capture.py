@@ -18,7 +18,9 @@ from handlers.base import RawContent
 # ---------------------------------------------------------------------------
 
 
-def _make_raw(path: Path, text: str = "Some note content.", *, is_md: bool = True) -> RawContent:
+def _make_raw(
+    path: Path, text: str = "Some note content.", *, is_md: bool = True
+) -> RawContent:
     return RawContent(text=text, source_path=path, is_md=is_md)
 
 
@@ -42,7 +44,7 @@ def test_parse_metadata_json_valid_json():
 def test_parse_metadata_json_fenced_json():
     from pipelines.capture import _parse_metadata_json
 
-    content = "```json\n{\"title\": \"My Note\", \"tags\": [\"type/article\", \"ai\"]}\n```"
+    content = '```json\n{"title": "My Note", "tags": ["type/article", "ai"]}\n```'
     result = _parse_metadata_json(content, source_stem="fallback")
 
     assert isinstance(result, Success)
@@ -182,7 +184,9 @@ async def test_enrich_urls_no_urls_returns_raw_unchanged(vault_root, pipeline_ct
 
 
 @pytest.mark.asyncio
-async def test_enrich_urls_sparse_text_fetches_and_augments(vault_root, pipeline_ctx, monkeypatch):
+async def test_enrich_urls_sparse_text_fetches_and_augments(
+    vault_root, pipeline_ctx, monkeypatch
+):
     from pipelines.capture import enrich_urls
 
     sparse_text = "See https://example.com and https://example.org for details."
@@ -218,7 +222,9 @@ async def test_enrich_urls_dense_text_with_many_urls_skips(vault_root, pipeline_
 
 
 @pytest.mark.asyncio
-async def test_enrich_urls_never_returns_failure_when_fetches_fail(vault_root, pipeline_ctx, monkeypatch):
+async def test_enrich_urls_never_returns_failure_when_fetches_fail(
+    vault_root, pipeline_ctx, monkeypatch
+):
     from pipelines.capture import enrich_urls
 
     sparse_text = "See https://example.com and https://example.org here."
@@ -241,7 +247,9 @@ async def test_enrich_urls_never_returns_failure_when_fetches_fail(vault_root, p
 
 
 @pytest.mark.asyncio
-async def test_summarize_returns_summarize_result_with_non_empty_summary(vault_root, pipeline_ctx, monkeypatch):
+async def test_summarize_returns_summarize_result_with_non_empty_summary(
+    vault_root, pipeline_ctx, monkeypatch
+):
     from pipelines.capture import summarize, SummarizeResult
     from llm.provider import LLMResponse
 
@@ -251,7 +259,9 @@ async def test_summarize_returns_summarize_result_with_non_empty_summary(vault_r
     mock_provider.complete.return_value = Success(
         LLMResponse(content="  This is the AI summary.  ", model="test-model", usage={})
     )
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     result = await summarize(raw, pipeline_ctx)
 
@@ -285,7 +295,9 @@ async def test_metadata_writes_audit_log_row(vault_root, pipeline_ctx, monkeypat
             usage={},
         )
     )
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     result = await metadata(sr, pipeline_ctx)
 
@@ -305,7 +317,9 @@ async def test_metadata_writes_audit_log_row(vault_root, pipeline_ctx, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_metadata_ai_type_derived_from_type_tag(vault_root, pipeline_ctx, monkeypatch):
+async def test_metadata_ai_type_derived_from_type_tag(
+    vault_root, pipeline_ctx, monkeypatch
+):
     from pipelines.capture import metadata, SummarizeResult
     from llm.provider import LLMResponse
 
@@ -315,9 +329,15 @@ async def test_metadata_ai_type_derived_from_type_tag(vault_root, pipeline_ctx, 
 
     mock_provider = AsyncMock()
     mock_provider.complete.return_value = Success(
-        LLMResponse(content='{"title": "Note", "tags": ["type/report", "quarterly"]}', model="test", usage={})
+        LLMResponse(
+            content='{"title": "Note", "tags": ["type/report", "quarterly"]}',
+            model="test",
+            usage={},
+        )
     )
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     result = await metadata(sr, pipeline_ctx)
 
@@ -326,7 +346,9 @@ async def test_metadata_ai_type_derived_from_type_tag(vault_root, pipeline_ctx, 
 
 
 @pytest.mark.asyncio
-async def test_metadata_ai_type_none_when_no_type_tag(vault_root, pipeline_ctx, monkeypatch):
+async def test_metadata_ai_type_none_when_no_type_tag(
+    vault_root, pipeline_ctx, monkeypatch
+):
     from pipelines.capture import metadata, SummarizeResult
     from llm.provider import LLMResponse
 
@@ -336,9 +358,13 @@ async def test_metadata_ai_type_none_when_no_type_tag(vault_root, pipeline_ctx, 
 
     mock_provider = AsyncMock()
     mock_provider.complete.return_value = Success(
-        LLMResponse(content='{"title": "Note", "tags": ["quarterly"]}', model="test", usage={})
+        LLMResponse(
+            content='{"title": "Note", "tags": ["quarterly"]}', model="test", usage={}
+        )
     )
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     result = await metadata(sr, pipeline_ctx)
 
@@ -347,7 +373,9 @@ async def test_metadata_ai_type_none_when_no_type_tag(vault_root, pipeline_ctx, 
 
 
 @pytest.mark.asyncio
-async def test_metadata_ai_domain_derived_from_domain_tag(vault_root, pipeline_ctx, monkeypatch):
+async def test_metadata_ai_domain_derived_from_domain_tag(
+    vault_root, pipeline_ctx, monkeypatch
+):
     from pipelines.capture import metadata, SummarizeResult
     from llm.provider import LLMResponse
     from core.tags import TagTaxonomy
@@ -376,7 +404,9 @@ async def test_metadata_ai_domain_derived_from_domain_tag(vault_root, pipeline_c
             usage={},
         )
     )
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     result = await metadata(sr, ctx)
 
@@ -385,7 +415,9 @@ async def test_metadata_ai_domain_derived_from_domain_tag(vault_root, pipeline_c
 
 
 @pytest.mark.asyncio
-async def test_metadata_ai_domain_none_when_no_domain_tag(vault_root, pipeline_ctx, monkeypatch):
+async def test_metadata_ai_domain_none_when_no_domain_tag(
+    vault_root, pipeline_ctx, monkeypatch
+):
     from pipelines.capture import metadata, SummarizeResult
     from llm.provider import LLMResponse
 
@@ -395,9 +427,15 @@ async def test_metadata_ai_domain_none_when_no_domain_tag(vault_root, pipeline_c
 
     mock_provider = AsyncMock()
     mock_provider.complete.return_value = Success(
-        LLMResponse(content='{"title": "Note", "tags": ["type/report", "quarterly"]}', model="test", usage={})
+        LLMResponse(
+            content='{"title": "Note", "tags": ["type/report", "quarterly"]}',
+            model="test",
+            usage={},
+        )
     )
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     result = await metadata(sr, pipeline_ctx)
 
@@ -406,7 +444,9 @@ async def test_metadata_ai_domain_none_when_no_domain_tag(vault_root, pipeline_c
 
 
 @pytest.mark.asyncio
-async def test_metadata_taxonomy_none_skips_validation(vault_root, pipeline_ctx, monkeypatch):
+async def test_metadata_taxonomy_none_skips_validation(
+    vault_root, pipeline_ctx, monkeypatch
+):
     """With taxonomy=None, tags stored as-is without validation."""
     from pipelines.capture import metadata, SummarizeResult
     from llm.provider import LLMResponse
@@ -426,7 +466,9 @@ async def test_metadata_taxonomy_none_skips_validation(vault_root, pipeline_ctx,
             usage={},
         )
     )
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     result = await metadata(sr, pipeline_ctx)
 
@@ -436,7 +478,9 @@ async def test_metadata_taxonomy_none_skips_validation(vault_root, pipeline_ctx,
 
 
 @pytest.mark.asyncio
-async def test_metadata_with_violations_writes_two_audit_rows(vault_root, pipeline_ctx, monkeypatch):
+async def test_metadata_with_violations_writes_two_audit_rows(
+    vault_root, pipeline_ctx, monkeypatch
+):
     from pipelines.capture import metadata, SummarizeResult
     from llm.provider import LLMResponse
     from storage.audit_log import query
@@ -466,7 +510,9 @@ async def test_metadata_with_violations_writes_two_audit_rows(vault_root, pipeli
             usage={},
         )
     )
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     result = await metadata(sr, ctx)
 
@@ -481,7 +527,9 @@ async def test_metadata_with_violations_writes_two_audit_rows(vault_root, pipeli
 
 
 @pytest.mark.asyncio
-async def test_metadata_zero_violations_writes_one_audit_row(vault_root, pipeline_ctx, monkeypatch):
+async def test_metadata_zero_violations_writes_one_audit_row(
+    vault_root, pipeline_ctx, monkeypatch
+):
     from pipelines.capture import metadata, SummarizeResult
     from llm.provider import LLMResponse
     from storage.audit_log import query
@@ -511,7 +559,9 @@ async def test_metadata_zero_violations_writes_one_audit_row(vault_root, pipelin
             usage={},
         )
     )
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     result = await metadata(sr, ctx)
 
@@ -523,7 +573,9 @@ async def test_metadata_zero_violations_writes_one_audit_row(vault_root, pipelin
 
 
 @pytest.mark.asyncio
-async def test_metadata_tag_violation_audit_failure_is_nonfatal(vault_root, pipeline_ctx, monkeypatch):
+async def test_metadata_tag_violation_audit_failure_is_nonfatal(
+    vault_root, pipeline_ctx, monkeypatch
+):
     """TAG_VIOLATION audit write failure must not abort the pipeline."""
     from pipelines.capture import metadata, SummarizeResult
     from llm.provider import LLMResponse
@@ -554,7 +606,9 @@ async def test_metadata_tag_violation_audit_failure_is_nonfatal(vault_root, pipe
             usage={},
         )
     )
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     write_call_count = [0]
     original_write = audit_mod.write
@@ -563,7 +617,9 @@ async def test_metadata_tag_violation_audit_failure_is_nonfatal(vault_root, pipe
         write_call_count[0] += 1
         if write_call_count[0] == 2:
             return Failure(error="audit db full", recoverable=False, context={})
-        return original_write(decision, pipeline=pipeline, stage=stage, outcome=outcome, db_path=db_path)
+        return original_write(
+            decision, pipeline=pipeline, stage=stage, outcome=outcome, db_path=db_path
+        )
 
     monkeypatch.setattr("pipelines.capture.audit.write", failing_second_write)
 
@@ -579,7 +635,9 @@ async def test_metadata_tag_violation_audit_failure_is_nonfatal(vault_root, pipe
 
 
 @pytest.mark.asyncio
-async def test_capture_file_md_end_to_end_returns_write_outcome(vault_root, pipeline_ctx, monkeypatch):
+async def test_capture_file_md_end_to_end_returns_write_outcome(
+    vault_root, pipeline_ctx, monkeypatch
+):
     from pipelines.capture import capture_file
     from vault.writer import WriteOutcome
     from llm.provider import LLMResponse
@@ -595,14 +653,18 @@ async def test_capture_file_md_end_to_end_returns_write_outcome(vault_root, pipe
     mock_provider = AsyncMock()
     mock_provider.complete.side_effect = [
         Success(LLMResponse(content="AI-generated summary.", model="test", usage={})),
-        Success(LLMResponse(
-            # title matches stem → no rename; vault_path stays test-note.md
-            content='{"title": "test-note", "type": "note", "tags": ["test"]}',
-            model="test",
-            usage={},
-        )),
+        Success(
+            LLMResponse(
+                # title matches stem → no rename; vault_path stays test-note.md
+                content='{"title": "test-note", "type": "note", "tags": ["test"]}',
+                model="test",
+                usage={},
+            )
+        ),
     ]
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     result = await capture_file(md_file, context=pipeline_ctx)
 
@@ -613,7 +675,9 @@ async def test_capture_file_md_end_to_end_returns_write_outcome(vault_root, pipe
 
 
 @pytest.mark.asyncio
-async def test_capture_file_domain_written_to_note_metadata(vault_root, pipeline_ctx, monkeypatch):
+async def test_capture_file_domain_written_to_note_metadata(
+    vault_root, pipeline_ctx, monkeypatch
+):
     """NoteMetadata.domain in written note matches ai_domain derived from domain/ tag."""
     from pipelines.capture import capture_file
     from vault.writer import WriteOutcome
@@ -629,7 +693,18 @@ async def test_capture_file_domain_written_to_note_metadata(vault_root, pipeline
     monkeypatch.setattr("pipelines.capture.time", MagicMock(time=lambda: mtime + 120))
 
     taxonomy = TagTaxonomy(
-        allowed_types=frozenset(["report", "article", "meeting-note", "email", "reflection", "task-list", "transcript", "capture"]),
+        allowed_types=frozenset(
+            [
+                "report",
+                "article",
+                "meeting-note",
+                "email",
+                "reflection",
+                "task-list",
+                "transcript",
+                "capture",
+            ]
+        ),
         valid_domains=frozenset(["finance"]),
     )
     ctx = PipelineContext(
@@ -642,13 +717,17 @@ async def test_capture_file_domain_written_to_note_metadata(vault_root, pipeline
     mock_provider = AsyncMock()
     mock_provider.complete.side_effect = [
         Success(LLMResponse(content="Domain note summary.", model="test", usage={})),
-        Success(LLMResponse(
-            content='{"title": "domain-note", "tags": ["type/report", "domain/finance", "quarterly"]}',
-            model="test",
-            usage={},
-        )),
+        Success(
+            LLMResponse(
+                content='{"title": "domain-note", "tags": ["type/report", "domain/finance", "quarterly"]}',
+                model="test",
+                usage={},
+            )
+        ),
     ]
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     result = await capture_file(md_file, context=ctx)
 
@@ -675,13 +754,17 @@ async def test_capture_file_with_explicit_context_does_not_scan_domain_folder(
     mock_provider = AsyncMock()
     mock_provider.complete.side_effect = [
         Success(LLMResponse(content="Summary.", model="test", usage={})),
-        Success(LLMResponse(
-            content='{"title": "domain-test", "type": "note", "tags": ["test"]}',
-            model="test",
-            usage={},
-        )),
+        Success(
+            LLMResponse(
+                content='{"title": "domain-test", "type": "note", "tags": ["test"]}',
+                model="test",
+                usage={},
+            )
+        ),
     ]
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     # Track whether load_valid_domains is called
     scan_called = False
@@ -696,7 +779,9 @@ async def test_capture_file_with_explicit_context_does_not_scan_domain_folder(
     result = await capture_file(md_file, context=pipeline_ctx)
 
     assert isinstance(result, Success)
-    assert scan_called is False, "load_valid_domains must NOT be called when context is provided"
+    assert scan_called is False, (
+        "load_valid_domains must NOT be called when context is provided"
+    )
 
 
 # ===========================================================================
@@ -727,7 +812,9 @@ async def test_capture_file_entry_guard_fires_when_file_not_found(
 
     assert isinstance(result, Failure)
     assert result.recoverable is True
-    assert len(run_pipeline_called) == 0, "pipeline must not run when file not found at entry"
+    assert len(run_pipeline_called) == 0, (
+        "pipeline must not run when file not found at entry"
+    )
 
     entries = query(pipeline="capture", db_path=pipeline_ctx.db_path)
     assert isinstance(entries, Success)
@@ -755,11 +842,15 @@ async def test_store_guard_fires_when_file_gone_during_pipeline(
         ai_type="note",
         ai_domain=None,
         ai_tags=[],
-        decision=_AIDecision(action="auto", confidence=0.9, reasoning="ok", source_ids=[]),
+        decision=_AIDecision(
+            action="auto", confidence=0.9, reasoning="ok", source_ids=[]
+        ),
     )
 
     write_note_called = []
-    monkeypatch.setattr("pipelines.capture.write_note", lambda *a, **kw: write_note_called.append(True))
+    monkeypatch.setattr(
+        "pipelines.capture.write_note", lambda *a, **kw: write_note_called.append(True)
+    )
 
     result = await store(mr, pipeline_ctx)
 
@@ -775,9 +866,7 @@ async def test_store_guard_fires_when_file_gone_during_pipeline(
 
 
 @pytest.mark.asyncio
-async def test_store_guard_no_documents_row_inserted(
-    vault_root, pipeline_ctx
-):
+async def test_store_guard_no_documents_row_inserted(vault_root, pipeline_ctx):
     """store() guard fires → no documents row inserted into DB."""
     from pipelines.capture import store, MetadataResult
     from core.confidence import AIDecision as _AIDecision
@@ -792,7 +881,9 @@ async def test_store_guard_no_documents_row_inserted(
         ai_type="note",
         ai_domain=None,
         ai_tags=[],
-        decision=_AIDecision(action="auto", confidence=0.9, reasoning="ok", source_ids=[]),
+        decision=_AIDecision(
+            action="auto", confidence=0.9, reasoning="ok", source_ids=[]
+        ),
     )
 
     await store(mr, pipeline_ctx)
@@ -823,7 +914,9 @@ def _make_mr(
         ai_type=None,
         ai_domain=None,
         ai_tags=ai_tags if ai_tags is not None else [],
-        decision=AIDecision(action="capture:metadata", confidence=0.9, reasoning="ok", source_ids=[]),
+        decision=AIDecision(
+            action="capture:metadata", confidence=0.9, reasoning="ok", source_ids=[]
+        ),
         ai_project=ai_project,
     )
 
@@ -863,7 +956,9 @@ async def test_apply_location_tags_domain_file_adds_tag(vault_root, pipeline_ctx
 
 
 @pytest.mark.asyncio
-async def test_apply_location_tags_domain_file_no_duplicate_tag(vault_root, pipeline_ctx):
+async def test_apply_location_tags_domain_file_no_duplicate_tag(
+    vault_root, pipeline_ctx
+):
     """File already tagged domain/Engineering → no duplicate added."""
     from pipelines.capture import apply_location_tags
 
@@ -878,14 +973,21 @@ async def test_apply_location_tags_domain_file_no_duplicate_tag(vault_root, pipe
 
 
 @pytest.mark.asyncio
-async def test_apply_location_tags_invalid_domain_skips_tag(vault_root, pipeline_ctx, monkeypatch):
+async def test_apply_location_tags_invalid_domain_skips_tag(
+    vault_root, pipeline_ctx, monkeypatch
+):
     """Domain folder not in valid_domains → tag NOT added, result still Success."""
     from pipelines.capture import apply_location_tags
 
     warning_calls: list[tuple] = []
-    monkeypatch.setattr("pipelines.capture.logger.warning", lambda *args, **kwargs: warning_calls.append(args))
+    monkeypatch.setattr(
+        "pipelines.capture.logger.warning",
+        lambda *args, **kwargs: warning_calls.append(args),
+    )
 
-    ctx = _make_taxonomy_ctx(pipeline_ctx, frozenset(["Finance"]))  # Engineering not valid
+    ctx = _make_taxonomy_ctx(
+        pipeline_ctx, frozenset(["Finance"])
+    )  # Engineering not valid
     path = vault_root / "Domain" / "Engineering" / "note.md"
     mr = _make_mr(path, ai_tags=["type/report"])
 
@@ -901,7 +1003,9 @@ async def test_apply_location_tags_invalid_domain_skips_tag(vault_root, pipeline
 
 
 @pytest.mark.asyncio
-async def test_apply_location_tags_project_file_sets_ai_project(vault_root, pipeline_ctx):
+async def test_apply_location_tags_project_file_sets_ai_project(
+    vault_root, pipeline_ctx
+):
     """File under Projects/Alpha/ → ai_project set, no domain tag added."""
     from pipelines.capture import apply_location_tags
 
@@ -935,7 +1039,9 @@ async def test_apply_location_tags_inbox_file_no_changes(vault_root, pipeline_ct
 
 
 @pytest.mark.asyncio
-async def test_apply_location_tags_taxonomy_none_skips_domain_tag(vault_root, pipeline_ctx):
+async def test_apply_location_tags_taxonomy_none_skips_domain_tag(
+    vault_root, pipeline_ctx
+):
     """taxonomy=None → treat as no valid_domains → skip domain tag for domain file."""
     from pipelines.capture import apply_location_tags
 
@@ -959,9 +1065,12 @@ async def test_audit_file_lost_fails_silently(vault_root, pipeline_ctx, monkeypa
     md_file = vault_root / "inbox" / "ghost2.md"
     # File does not exist
 
-    monkeypatch.setattr("pipelines.capture.audit.write", lambda *a, **kw: Failure(
-        error="audit db unavailable", recoverable=False, context={}
-    ))
+    monkeypatch.setattr(
+        "pipelines.capture.audit.write",
+        lambda *a, **kw: Failure(
+            error="audit db unavailable", recoverable=False, context={}
+        ),
+    )
 
     result = await capture_file(md_file, context=pipeline_ctx)
 
@@ -975,7 +1084,9 @@ async def test_audit_file_lost_fails_silently(vault_root, pipeline_ctx, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_idempotent_md_unchanged_returns_skipped(vault_root, pipeline_ctx, monkeypatch):
+async def test_idempotent_md_unchanged_returns_skipped(
+    vault_root, pipeline_ctx, monkeypatch
+):
     """.md with hash matching DB → SKIPPED audit written, run_pipeline NOT called, Success returned."""
     from pipelines.capture import capture_file
     from vault.writer import WriteOutcome, write_note
@@ -1019,7 +1130,9 @@ async def test_idempotent_md_unchanged_returns_skipped(vault_root, pipeline_ctx,
     assert isinstance(result, Success)
     assert isinstance(result.value, WriteOutcome)
     assert result.value.vault_path == "inbox/unchanged-note.md"
-    assert len(run_pipeline_called) == 0, "pipeline must NOT run when content hash matches DB"
+    assert len(run_pipeline_called) == 0, (
+        "pipeline must NOT run when content hash matches DB"
+    )
 
     # SKIPPED audit row written
     entries = query(pipeline="capture", db_path=pipeline_ctx.db_path)
@@ -1030,7 +1143,9 @@ async def test_idempotent_md_unchanged_returns_skipped(vault_root, pipeline_ctx,
 
 
 @pytest.mark.asyncio
-async def test_idempotent_md_edited_runs_pipeline(vault_root, pipeline_ctx, monkeypatch):
+async def test_idempotent_md_edited_runs_pipeline(
+    vault_root, pipeline_ctx, monkeypatch
+):
     """.md with hash differing from DB → pipeline runs normally."""
     from pipelines.capture import capture_file
     from vault.writer import WriteOutcome
@@ -1073,7 +1188,9 @@ async def test_idempotent_md_edited_runs_pipeline(vault_root, pipeline_ctx, monk
 
 
 @pytest.mark.asyncio
-async def test_idempotent_md_not_in_db_runs_pipeline(vault_root, pipeline_ctx, monkeypatch):
+async def test_idempotent_md_not_in_db_runs_pipeline(
+    vault_root, pipeline_ctx, monkeypatch
+):
     """.md not yet in DB (first capture) → pipeline runs normally."""
     from pipelines.capture import capture_file
     from unittest.mock import MagicMock
@@ -1098,7 +1215,9 @@ async def test_idempotent_md_not_in_db_runs_pipeline(vault_root, pipeline_ctx, m
 
 
 @pytest.mark.asyncio
-async def test_idempotent_binary_matching_source_hash_skipped(vault_root, pipeline_ctx, monkeypatch):
+async def test_idempotent_binary_matching_source_hash_skipped(
+    vault_root, pipeline_ctx, monkeypatch
+):
     """Binary with sibling whose source_hash matches → SKIPPED, pipeline not called."""
     from pipelines.capture import capture_file
     from vault.writer import write_note
@@ -1140,7 +1259,9 @@ async def test_idempotent_binary_matching_source_hash_skipped(vault_root, pipeli
     result = await capture_file(binary_file, context=pipeline_ctx)
 
     assert isinstance(result, Success)
-    assert len(run_pipeline_called) == 0, "pipeline must NOT run when source_hash matches"
+    assert len(run_pipeline_called) == 0, (
+        "pipeline must NOT run when source_hash matches"
+    )
     assert result.value.vault_path == "inbox/.summaries/report.pdf.md"
 
     entries = query(pipeline="capture", db_path=pipeline_ctx.db_path)
@@ -1150,7 +1271,9 @@ async def test_idempotent_binary_matching_source_hash_skipped(vault_root, pipeli
 
 
 @pytest.mark.asyncio
-async def test_idempotent_binary_differing_source_hash_runs_pipeline(vault_root, pipeline_ctx, monkeypatch):
+async def test_idempotent_binary_differing_source_hash_runs_pipeline(
+    vault_root, pipeline_ctx, monkeypatch
+):
     """Binary with sibling whose source_hash differs → pipeline runs normally."""
     from pipelines.capture import capture_file
     from vault.writer import write_note
@@ -1192,7 +1315,9 @@ async def test_idempotent_binary_differing_source_hash_runs_pipeline(vault_root,
 
 
 @pytest.mark.asyncio
-async def test_idempotent_binary_no_sibling_runs_pipeline(vault_root, pipeline_ctx, monkeypatch):
+async def test_idempotent_binary_no_sibling_runs_pipeline(
+    vault_root, pipeline_ctx, monkeypatch
+):
     """Binary with no sibling at all → first capture, pipeline runs."""
     from pipelines.capture import capture_file
     from unittest.mock import MagicMock
@@ -1217,7 +1342,9 @@ async def test_idempotent_binary_no_sibling_runs_pipeline(vault_root, pipeline_c
 
 
 @pytest.mark.asyncio
-async def test_audit_skipped_fails_silently_success_still_returned(vault_root, pipeline_ctx, monkeypatch):
+async def test_audit_skipped_fails_silently_success_still_returned(
+    vault_root, pipeline_ctx, monkeypatch
+):
     """_audit_skipped failure must not abort the SKIPPED path — Success still returned."""
     from pipelines.capture import capture_file
     from vault.writer import WriteOutcome, write_note
@@ -1246,9 +1373,12 @@ async def test_audit_skipped_fails_silently_success_still_returned(vault_root, p
     monkeypatch.setattr("pipelines.capture.time", MagicMock(time=lambda: mtime + 120))
 
     # Make audit.write always fail
-    monkeypatch.setattr("pipelines.capture.audit.write", lambda *a, **kw: Failure(
-        error="audit db unavailable", recoverable=False, context={}
-    ))
+    monkeypatch.setattr(
+        "pipelines.capture.audit.write",
+        lambda *a, **kw: Failure(
+            error="audit db unavailable", recoverable=False, context={}
+        ),
+    )
 
     run_pipeline_called = []
 
@@ -1266,7 +1396,9 @@ async def test_audit_skipped_fails_silently_success_still_returned(vault_root, p
 
 
 @pytest.mark.asyncio
-async def test_idempotent_located_binary_matching_hash_skipped(vault_root, pipeline_ctx, monkeypatch):
+async def test_idempotent_located_binary_matching_hash_skipped(
+    vault_root, pipeline_ctx, monkeypatch
+):
     """LOCATED binary (Projects/Alpha/attachment/) with sibling at .summaries/ whose source_hash matches → SKIPPED, pipeline not called."""
     from pipelines.capture import capture_file
     from vault.writer import write_note
@@ -1310,7 +1442,9 @@ async def test_idempotent_located_binary_matching_hash_skipped(vault_root, pipel
     result = await capture_file(binary_file, context=pipeline_ctx)
 
     assert isinstance(result, Success)
-    assert len(run_pipeline_called) == 0, "pipeline must NOT run when LOCATED source_hash matches"
+    assert len(run_pipeline_called) == 0, (
+        "pipeline must NOT run when LOCATED source_hash matches"
+    )
 
 
 # ===========================================================================
@@ -1333,10 +1467,14 @@ class TestStoreNonmdLocatedBranch:
     def _make_pipeline_ctx(tmp_path, vault_cfg):
         """Build a PipelineContext with a mock config carrying the VaultConfig."""
         from unittest.mock import MagicMock
+
         cfg = MagicMock()
         cfg.vault = vault_cfg
         from core.pipeline import PipelineContext
-        return PipelineContext(config=cfg, correlation_id="test-cid", db_path=tmp_path / "test.db")
+
+        return PipelineContext(
+            config=cfg, correlation_id="test-cid", db_path=tmp_path / "test.db"
+        )
 
     @staticmethod
     def _make_metadata_result(src, suffix=".docx"):
@@ -1344,6 +1482,7 @@ class TestStoreNonmdLocatedBranch:
         from handlers.base import RawContent
         from core.confidence import AIDecision
         from pipelines.capture import MetadataResult
+
         raw = RawContent(text="Content text.", source_path=src, is_md=False)
         return MetadataResult(
             raw=raw,
@@ -1352,7 +1491,12 @@ class TestStoreNonmdLocatedBranch:
             ai_type=None,
             ai_domain=None,
             ai_tags=[],
-            decision=AIDecision(action="capture:metadata", confidence=0.9, reasoning="...", source_ids=[str(src)]),
+            decision=AIDecision(
+                action="capture:metadata",
+                confidence=0.9,
+                reasoning="...",
+                source_ids=[str(src)],
+            ),
             ai_project=None,
         )
 
@@ -1373,22 +1517,29 @@ class TestStoreNonmdLocatedBranch:
 
         # --- CONFIG (to_vault_path() uses CONFIG.main.vault.root) ---
         import core.config as cfg_module
+
         fake_full = MagicMock()
         fake_main = MagicMock()
         fake_main.vault = vault_cfg
         fake_full.main = fake_main
         monkeypatch.setattr(cfg_module, "_CONFIG", fake_full)
-        monkeypatch.setattr("pipelines.capture.resolve_placement", lambda *a, **kw: placement)
+        monkeypatch.setattr(
+            "pipelines.capture.resolve_placement", lambda *a, **kw: placement
+        )
 
         # --- write_note (sync — called without await in _store_nonmd) ---
         mock_write_note_call_args = []
         mock_write_note = MagicMock()
         mock_write_note.side_effect = lambda *a, **kw: (
             mock_write_note_call_args.append((a, kw))
-            or Success(WriteOutcome(vault_path="mocked/vp.md",
-                                    absolute_path=placement.sibling_dir / "mock.md",
-                                    content_hash="abc123",
-                                    metadata=NoteMetadata(type="attachment-summary")))
+            or Success(
+                WriteOutcome(
+                    vault_path="mocked/vp.md",
+                    absolute_path=placement.sibling_dir / "mock.md",
+                    content_hash="abc123",
+                    metadata=NoteMetadata(type="attachment-summary"),
+                )
+            )
         )
         monkeypatch.setattr("pipelines.capture.write_note", mock_write_note)
         mocks["write_note"] = mock_write_note
@@ -1398,8 +1549,7 @@ class TestStoreNonmdLocatedBranch:
         mock_move_call_args = []
         mock_move = MagicMock()
         mock_move.side_effect = lambda *a, **kw: (
-            mock_move_call_args.append((a, kw))
-            or Success(None)
+            mock_move_call_args.append((a, kw)) or Success(None)
         )
         monkeypatch.setattr("pipelines.capture.move_attachment", mock_move)
         mocks["move_attachment"] = mock_move
@@ -1420,16 +1570,25 @@ class TestStoreNonmdLocatedBranch:
 
         # --- decide_rename ---
         mock_rename_decision = RenameDecision(
-            action=RenameAction.SKIP, final_stem="report", reason="AI title matches", confidence=1.0
+            action=RenameAction.SKIP,
+            final_stem="report",
+            reason="AI title matches",
+            confidence=1.0,
         )
-        monkeypatch.setattr("pipelines.capture.decide_rename", lambda *a, **kw: mock_rename_decision)
+        monkeypatch.setattr(
+            "pipelines.capture.decide_rename", lambda *a, **kw: mock_rename_decision
+        )
 
         # --- get_provider (LLM) ---
         mock_provider = MagicMock()
-        mock_provider.complete = AsyncMock(return_value=Success(
-            LLMResponse(content="Mocked LLM summary.", model="mock-model", usage={})
-        ))
-        monkeypatch.setattr("pipelines.capture.get_provider", lambda *a, **kw: mock_provider)
+        mock_provider.complete = AsyncMock(
+            return_value=Success(
+                LLMResponse(content="Mocked LLM summary.", model="mock-model", usage={})
+            )
+        )
+        monkeypatch.setattr(
+            "pipelines.capture.get_provider", lambda *a, **kw: mock_provider
+        )
 
         return mocks
 
@@ -1459,14 +1618,18 @@ class TestStoreNonmdLocatedBranch:
         ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
         mr = self._make_metadata_result(src)
         from vault.frontmatter import NoteMetadata
+
         note_meta = NoteMetadata(summary="test", tags=[])
 
         # Patch _audit_rename_gate to skip its audit calls
-        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            "pipelines.capture._audit_rename_gate", lambda *a, **kw: None
+        )
         # Patch _audit_file_lost
         monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
 
         from pipelines.capture import _store_nonmd
+
         result = await _store_nonmd(mr, note_meta, ctx)
 
         assert result.is_success(), f"Expected Success, got {result}"
@@ -1506,12 +1669,16 @@ class TestStoreNonmdLocatedBranch:
         ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
         mr = self._make_metadata_result(src)
         from vault.frontmatter import NoteMetadata
+
         note_meta = NoteMetadata(summary="test", tags=[])
 
-        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            "pipelines.capture._audit_rename_gate", lambda *a, **kw: None
+        )
         monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
 
         from pipelines.capture import _store_nonmd
+
         result = await _store_nonmd(mr, note_meta, ctx)
 
         assert result.is_success(), f"Expected Success, got {result}"
@@ -1549,12 +1716,16 @@ class TestStoreNonmdLocatedBranch:
         ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
         mr = self._make_metadata_result(src)
         from vault.frontmatter import NoteMetadata
+
         note_meta = NoteMetadata(summary="test", tags=[])
 
-        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            "pipelines.capture._audit_rename_gate", lambda *a, **kw: None
+        )
         monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
 
         from pipelines.capture import _store_nonmd
+
         result = await _store_nonmd(mr, note_meta, ctx)
 
         assert result.is_success(), f"Expected Success, got {result}"
@@ -1590,12 +1761,16 @@ class TestStoreNonmdLocatedBranch:
         ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
         mr = self._make_metadata_result(src)
         from vault.frontmatter import NoteMetadata
+
         note_meta = NoteMetadata(summary="test", tags=[])
 
-        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            "pipelines.capture._audit_rename_gate", lambda *a, **kw: None
+        )
         monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
 
         from pipelines.capture import _store_nonmd
+
         result = await _store_nonmd(mr, note_meta, ctx)
 
         assert result.is_success(), f"Expected Success, got {result}"
@@ -1627,12 +1802,16 @@ class TestStoreNonmdLocatedBranch:
         ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
         mr = self._make_metadata_result(src)
         from vault.frontmatter import NoteMetadata
+
         note_meta = NoteMetadata(summary="test", tags=[])
 
-        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            "pipelines.capture._audit_rename_gate", lambda *a, **kw: None
+        )
         monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
 
         from pipelines.capture import _store_nonmd
+
         result = await _store_nonmd(mr, note_meta, ctx)
 
         assert result.is_success(), f"Expected Success, got {result}"
@@ -1675,12 +1854,16 @@ class TestStoreNonmdLocatedBranch:
         ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
         mr = self._make_metadata_result(src)
         from vault.frontmatter import NoteMetadata
+
         note_meta = NoteMetadata(summary="test", tags=[])
 
-        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            "pipelines.capture._audit_rename_gate", lambda *a, **kw: None
+        )
         monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
 
         from pipelines.capture import _store_nonmd
+
         result = await _store_nonmd(mr, note_meta, ctx)
 
         assert result.is_success(), f"Expected Success, got {result}"
@@ -1723,12 +1906,16 @@ class TestStoreNonmdLocatedBranch:
         ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
         mr = self._make_metadata_result(src)
         from vault.frontmatter import NoteMetadata
+
         note_meta = NoteMetadata(summary="test", tags=[])
 
-        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            "pipelines.capture._audit_rename_gate", lambda *a, **kw: None
+        )
         monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
 
         from pipelines.capture import _store_nonmd
+
         result = await _store_nonmd(mr, note_meta, ctx)
 
         assert not result.is_success()
@@ -1738,7 +1925,9 @@ class TestStoreNonmdLocatedBranch:
     # -- test 8: audit reasoning editable→root -----------------------------------
 
     @pytest.mark.asyncio
-    async def test_audit_reasoning_contains_editable_to_root(self, tmp_path, monkeypatch):
+    async def test_audit_reasoning_contains_editable_to_root(
+        self, tmp_path, monkeypatch
+    ):
         """Audit reasoning includes 'editable→root' for editable files."""
         from core.config import VaultConfig
         from vault.paths import Placement
@@ -1761,12 +1950,16 @@ class TestStoreNonmdLocatedBranch:
         ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
         mr = self._make_metadata_result(src)
         from vault.frontmatter import NoteMetadata
+
         note_meta = NoteMetadata(summary="test", tags=[])
 
-        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            "pipelines.capture._audit_rename_gate", lambda *a, **kw: None
+        )
         monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
 
         from pipelines.capture import _store_nonmd
+
         result = await _store_nonmd(mr, note_meta, ctx)
 
         assert result.is_success(), f"Expected Success, got {result}"
@@ -1779,12 +1972,16 @@ class TestStoreNonmdLocatedBranch:
                 break
         assert located_call is not None, "No LOCATED audit call found"
         reasoning = located_call[0][0].reasoning  # first positional arg = AIDecision
-        assert "editable→root" in reasoning, f"Reasoning missing 'editable→root': {reasoning}"
+        assert "editable→root" in reasoning, (
+            f"Reasoning missing 'editable→root': {reasoning}"
+        )
 
     # -- test 9: audit reasoning no-edit→attachment ------------------------------
 
     @pytest.mark.asyncio
-    async def test_audit_reasoning_contains_noedit_to_attachment(self, tmp_path, monkeypatch):
+    async def test_audit_reasoning_contains_noedit_to_attachment(
+        self, tmp_path, monkeypatch
+    ):
         """Audit reasoning includes 'no-edit→attachment' for no-edit files."""
         from core.config import VaultConfig
         from vault.paths import Placement
@@ -1807,12 +2004,16 @@ class TestStoreNonmdLocatedBranch:
         ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
         mr = self._make_metadata_result(src)
         from vault.frontmatter import NoteMetadata
+
         note_meta = NoteMetadata(summary="test", tags=[])
 
-        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            "pipelines.capture._audit_rename_gate", lambda *a, **kw: None
+        )
         monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
 
         from pipelines.capture import _store_nonmd
+
         result = await _store_nonmd(mr, note_meta, ctx)
 
         assert result.is_success(), f"Expected Success, got {result}"
@@ -1824,12 +2025,16 @@ class TestStoreNonmdLocatedBranch:
                 break
         assert located_call is not None, "No LOCATED audit call found"
         reasoning = located_call[0][0].reasoning
-        assert "no-edit→attachment" in reasoning, f"Reasoning missing 'no-edit→attachment': {reasoning}"
+        assert "no-edit→attachment" in reasoning, (
+            f"Reasoning missing 'no-edit→attachment': {reasoning}"
+        )
 
     # -- test 10: root-placement sibling has type="attachment-summary" ------------
 
     @pytest.mark.asyncio
-    async def test_root_placement_sibling_has_type_attachment_summary(self, tmp_path, monkeypatch):
+    async def test_root_placement_sibling_has_type_attachment_summary(
+        self, tmp_path, monkeypatch
+    ):
         """Root-level sibling metadata carries type='attachment-summary' (DECISION-029)."""
         from core.config import VaultConfig
         from vault.paths import Placement
@@ -1852,20 +2057,25 @@ class TestStoreNonmdLocatedBranch:
         ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
         mr = self._make_metadata_result(src)
         from vault.frontmatter import NoteMetadata
+
         note_meta = NoteMetadata(summary="test", tags=[])
 
-        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            "pipelines.capture._audit_rename_gate", lambda *a, **kw: None
+        )
         monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
 
         from pipelines.capture import _store_nonmd
+
         result = await _store_nonmd(mr, note_meta, ctx)
 
         assert result.is_success(), f"Expected Success, got {result}"
         # write_note was called — second positional arg is the NoteMetadata
         sibling_call = mocks["write_note"].call_args
         sibling_meta = sibling_call[0][2]  # third positional arg = NoteMetadata
-        assert sibling_meta.type == "attachment-summary", \
+        assert sibling_meta.type == "attachment-summary", (
             f"Expected type='attachment-summary', got type={sibling_meta.type!r}"
+        )
 
     # -- test 11: CLUELESS branch unaffected -------------------------------------
 
@@ -1889,9 +2099,13 @@ class TestStoreNonmdLocatedBranch:
 
         def _resolve_placement_spy(*args, **kwargs):
             resolve_called.append(True)
-            raise AssertionError("resolve_placement must not be called in CLUELESS branch")
+            raise AssertionError(
+                "resolve_placement must not be called in CLUELESS branch"
+            )
 
-        monkeypatch.setattr("pipelines.capture.resolve_placement", _resolve_placement_spy)
+        monkeypatch.setattr(
+            "pipelines.capture.resolve_placement", _resolve_placement_spy
+        )
 
         # Common patches for other deps (needs move_attachment for inbox-park)
         from unittest.mock import AsyncMock, MagicMock
@@ -1901,6 +2115,7 @@ class TestStoreNonmdLocatedBranch:
 
         # --- CONFIG (to_vault_path() uses CONFIG.main.vault.root) ---
         import core.config as cfg_module
+
         fake_full = MagicMock()
         fake_main = MagicMock()
         fake_main.vault = vault_cfg
@@ -1908,11 +2123,16 @@ class TestStoreNonmdLocatedBranch:
         monkeypatch.setattr(cfg_module, "_CONFIG", fake_full)
 
         # --- write_note (sync) ---
-        mock_write_note = MagicMock(return_value=Success(
-            WriteOutcome(vault_path="inbox/.summaries/mystery.pdf.md",
-                         absolute_path=inbox / ".summaries" / "mystery.pdf.md",
-                         content_hash="abc", metadata=NoteMetadata(type="attachment-summary"))
-        ))
+        mock_write_note = MagicMock(
+            return_value=Success(
+                WriteOutcome(
+                    vault_path="inbox/.summaries/mystery.pdf.md",
+                    absolute_path=inbox / ".summaries" / "mystery.pdf.md",
+                    content_hash="abc",
+                    metadata=NoteMetadata(type="attachment-summary"),
+                )
+            )
+        )
         monkeypatch.setattr("pipelines.capture.write_note", mock_write_note)
 
         # --- move_attachment (sync) ---
@@ -1931,17 +2151,31 @@ class TestStoreNonmdLocatedBranch:
         monkeypatch.setattr("pipelines.capture.documents", mock_docs)
 
         from core.rename_gate import RenameAction, RenameDecision
-        monkeypatch.setattr("pipelines.capture.decide_rename",
-                            lambda *a, **kw: RenameDecision(action=RenameAction.SKIP, final_stem="mystery",
-                                                            reason="...", confidence=1.0))
-        from llm.provider import LLMResponse
-        mock_provider = MagicMock()
-        mock_provider.complete = AsyncMock(return_value=Success(
-            LLMResponse(content="Mocked LLM summary.", model="mock-model", usage={})
-        ))
-        monkeypatch.setattr("pipelines.capture.get_provider", lambda *a, **kw: mock_provider)
 
-        monkeypatch.setattr("pipelines.capture._audit_rename_gate", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            "pipelines.capture.decide_rename",
+            lambda *a, **kw: RenameDecision(
+                action=RenameAction.SKIP,
+                final_stem="mystery",
+                reason="...",
+                confidence=1.0,
+            ),
+        )
+        from llm.provider import LLMResponse
+
+        mock_provider = MagicMock()
+        mock_provider.complete = AsyncMock(
+            return_value=Success(
+                LLMResponse(content="Mocked LLM summary.", model="mock-model", usage={})
+            )
+        )
+        monkeypatch.setattr(
+            "pipelines.capture.get_provider", lambda *a, **kw: mock_provider
+        )
+
+        monkeypatch.setattr(
+            "pipelines.capture._audit_rename_gate", lambda *a, **kw: None
+        )
         monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
 
         ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
@@ -1949,12 +2183,222 @@ class TestStoreNonmdLocatedBranch:
         note_meta = NoteMetadata(summary="test", tags=[])
 
         from pipelines.capture import _store_nonmd
+
         result = await _store_nonmd(mr, note_meta, ctx)
 
         # CLUELESS path: file NOT under Projects/ or Domain/ should be parked in inbox
-        assert len(resolve_called) == 0, "resolve_placement must NOT be called in CLUELESS branch"
+        assert len(resolve_called) == 0, (
+            "resolve_placement must NOT be called in CLUELESS branch"
+        )
         assert result.is_success(), f"Expected Success, got {result}"
         # Should have moved to inbox
         mock_move.assert_called_once()
         move_dst = mock_move.call_args[0][1]
         assert move_dst.parent == inbox
+
+
+# ===========================================================================
+# TestCaptureBatchStamp — TD-040: batch-stamp pre-step in capture_file
+# ===========================================================================
+
+
+class TestCaptureBatchStamp:
+    """Tests for the batch-stamp pre-step in capture_file().
+
+    The pre-step runs AFTER the idempotent guard and BEFORE run_pipeline:
+      1. Calls is_batch_subfolder(path.parent, vault_cfg)
+      2. If True  → find_by_folder_path to look up / create batch record → stamp ctx.batch_id
+      3. If False → skip entirely; ctx.batch_id stays None
+      4. On Failure from find_by_folder_path → log warning, proceed with batch_id=None
+    """
+
+    # ── helpers ──────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _write_md(path: Path) -> None:
+        from vault.frontmatter import NoteMetadata
+        from vault.writer import write_note
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_note(path, "Test content.", NoteMetadata(type="note"), actor="human")
+
+    @staticmethod
+    def _captured_ctx_from_run_pipeline(monkeypatch):
+        """Install a fake run_pipeline that captures the ctx it receives.
+
+        Returns a list; the first element will be the ctx passed to run_pipeline.
+        Call AFTER setting up the mock.
+        """
+        captured: list = []
+
+        async def fake_run_pipeline(pipeline_name, stages, path, context=None):
+            captured.append(context)
+            return Success(MagicMock())
+
+        monkeypatch.setattr("pipelines.capture.run_pipeline", fake_run_pipeline)
+        return captured
+
+    # ── test 1: subfolder → new batch created, ctx.batch_id stamped ──────────
+
+    @pytest.mark.asyncio
+    async def test_batch_stamp_sets_batch_id_on_subfolder_capture(
+        self, vault_root, pipeline_ctx, monkeypatch
+    ):
+        """File inside Projects/Alpha/Q2/ → batch-stamp creates new batch; ctx.batch_id = 42."""
+        import pipelines.capture as cap_mod
+        from unittest.mock import MagicMock
+
+        path = vault_root / "Projects" / "Alpha" / "Q2" / "note.md"
+        self._write_md(path)
+
+        # Stability gate: make file appear old enough to pass cooldown
+        mtime = path.stat().st_mtime
+        monkeypatch.setattr(
+            "pipelines.capture.time", MagicMock(time=lambda: mtime + 120)
+        )
+
+        # is_batch_subfolder → True (Projects/Alpha/Q2 is a batch subfolder)
+        monkeypatch.setattr("pipelines.capture.is_batch_subfolder", lambda p, c: True)
+
+        # find_by_folder_path → Success(None) → triggers new batch creation
+        monkeypatch.setattr(
+            cap_mod.batches,
+            "find_by_folder_path",
+            lambda folder_vp, db_path=None: Success(None),
+        )
+
+        # batches.insert → Success(42) → the new batch_id
+        monkeypatch.setattr(
+            cap_mod.batches,
+            "insert",
+            lambda **kw: Success(42),
+        )
+
+        captured = self._captured_ctx_from_run_pipeline(monkeypatch)
+
+        from pipelines.capture import capture_file
+
+        await capture_file(path, context=pipeline_ctx)
+
+        assert len(captured) == 1, "run_pipeline must be called exactly once"
+        assert captured[0].batch_id == 42, (
+            f"Expected ctx.batch_id == 42, got {captured[0].batch_id}"
+        )
+
+    # ── test 2: subfolder → existing batch reused, insert NOT called ──────────
+
+    @pytest.mark.asyncio
+    async def test_batch_stamp_reuses_existing_batch(
+        self, vault_root, pipeline_ctx, monkeypatch
+    ):
+        """find_by_folder_path returns Success(99) → ctx.batch_id = 99; insert never called."""
+        import pipelines.capture as cap_mod
+        from unittest.mock import MagicMock
+
+        path = vault_root / "Projects" / "Alpha" / "Q2" / "note.md"
+        self._write_md(path)
+
+        mtime = path.stat().st_mtime
+        monkeypatch.setattr(
+            "pipelines.capture.time", MagicMock(time=lambda: mtime + 120)
+        )
+
+        monkeypatch.setattr("pipelines.capture.is_batch_subfolder", lambda p, c: True)
+        monkeypatch.setattr(
+            cap_mod.batches,
+            "find_by_folder_path",
+            lambda folder_vp, db_path=None: Success(99),
+        )
+
+        insert_called = []
+        monkeypatch.setattr(
+            cap_mod.batches,
+            "insert",
+            lambda **kw: insert_called.append(True) or Success(999),
+        )
+
+        captured = self._captured_ctx_from_run_pipeline(monkeypatch)
+
+        from pipelines.capture import capture_file
+
+        await capture_file(path, context=pipeline_ctx)
+
+        assert len(captured) == 1
+        assert captured[0].batch_id == 99, (
+            f"Expected ctx.batch_id == 99, got {captured[0].batch_id}"
+        )
+        assert len(insert_called) == 0, (
+            "batches.insert must NOT be called when batch already exists"
+        )
+
+    # ── test 3: inbox root → is_batch_subfolder=False → batch_id stays None ──
+
+    @pytest.mark.asyncio
+    async def test_batch_stamp_skipped_for_inbox_root(
+        self, vault_root, pipeline_ctx, monkeypatch
+    ):
+        """File in inbox/ root → is_batch_subfolder=False → ctx.batch_id is None."""
+        from unittest.mock import MagicMock
+
+        path = vault_root / "inbox" / "note.md"
+        self._write_md(path)
+
+        mtime = path.stat().st_mtime
+        monkeypatch.setattr(
+            "pipelines.capture.time", MagicMock(time=lambda: mtime + 120)
+        )
+
+        # Explicitly mock as False (inbox root is not a batch subfolder)
+        monkeypatch.setattr("pipelines.capture.is_batch_subfolder", lambda p, c: False)
+
+        captured = self._captured_ctx_from_run_pipeline(monkeypatch)
+
+        from pipelines.capture import capture_file
+
+        await capture_file(path, context=pipeline_ctx)
+
+        assert len(captured) == 1
+        assert captured[0].batch_id is None, (
+            f"Expected ctx.batch_id is None for inbox root, got {captured[0].batch_id}"
+        )
+
+    # ── test 4: find_by_folder_path Failure → warning logged, pipeline still runs ──
+
+    @pytest.mark.asyncio
+    async def test_batch_stamp_failure_proceeds_with_no_batch(
+        self, vault_root, pipeline_ctx, monkeypatch
+    ):
+        """find_by_folder_path returns Failure → run_pipeline still called; ctx.batch_id is None."""
+        import pipelines.capture as cap_mod
+        from unittest.mock import MagicMock
+
+        path = vault_root / "Projects" / "Alpha" / "Q2" / "note.md"
+        self._write_md(path)
+
+        mtime = path.stat().st_mtime
+        monkeypatch.setattr(
+            "pipelines.capture.time", MagicMock(time=lambda: mtime + 120)
+        )
+
+        monkeypatch.setattr("pipelines.capture.is_batch_subfolder", lambda p, c: True)
+        monkeypatch.setattr(
+            cap_mod.batches,
+            "find_by_folder_path",
+            lambda folder_vp, db_path=None: Failure(
+                error="db_error", recoverable=False, context={}
+            ),
+        )
+
+        captured = self._captured_ctx_from_run_pipeline(monkeypatch)
+
+        from pipelines.capture import capture_file
+
+        result = await capture_file(path, context=pipeline_ctx)
+
+        # Pipeline must still be called despite the batch-lookup failure
+        assert len(captured) == 1, (
+            "run_pipeline must still be called after batch-lookup failure"
+        )
+        assert captured[0].batch_id is None, (
+            f"Expected ctx.batch_id is None after Failure, got {captured[0].batch_id}"
+        )

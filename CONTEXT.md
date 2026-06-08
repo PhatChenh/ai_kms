@@ -50,6 +50,20 @@ A `type/<name>` string entry in `tags` (e.g. `type/report`). Exactly one require
 **free tag:**
 A tag with no namespace prefix (e.g. `strategy`, `q1-review`). 5–10 required per note. Must not start with any `domain/`, `type/`, or other prefix.
 
+### Phase 2 — Classify
+
+**Project Registry:**
+The shared, live in-memory lookup of all valid vault destinations — active projects (`Projects/<A>/`) and domain folders (`Domain/<D>/`) — that Classify, Search, and Briefing query. Populated at startup by scanning vault folder structure; kept live by the watcher (folder add/rename/archive triggers an update). Does not include archived projects (`Domain/<D>/Archive/`). Output is grouped by domain; projects with no or stale domain tag appear under `Uncategorized`.
+_Avoid_: "project list", "destination table"
+
+**valid destination:**
+A project folder or domain folder that an inbox note may be filed into by the Classify pipeline. Specifically: any `Projects/<A>/` or `Domain/<D>/` entry in the Project Registry. Excludes `Domain/<D>/Archive/` entries and `inbox/` itself.
+_Avoid_: "routing target", "output folder"
+
+**Uncategorized (registry group):**
+A catch-all group in the Project Registry output containing active projects whose `CLAUDE.md` has no domain tag, an unrecognised domain tag, or a stale domain tag (domain folder was deleted/renamed). Classify can still route to these projects; the AI prompt explains the gap and instructs semantic inference. Reconcile resolves the underlying CLAUDE.md issue.
+_Avoid_: "unknown domain", "unassigned project"
+
 ### Vault Layout
 
 **sibling `.md`:**
@@ -75,3 +89,15 @@ _Source_: ADR-0006 (accepted 2026-06-04)
 **misplaced location:**
 Any folder that is NOT one of {`inbox/`, a specific `Projects/<A>/`(+its `attachment/`), a specific `Domain/<D>/`(+its `attachment/`)} and is NOT an AI-output folder. Examples: bare `Projects/`, bare `Domain/`, `Domain/<D>/Archive/`, vault root. A file dropped in a misplaced location is swept to `inbox/` by the watcher.
 _Source_: ADR-0006 (accepted 2026-06-04)
+
+**batch-worthy subfolder:**
+A folder whose location in the vault signals that a group of files belong together — specifically, any subfolder *inside* `inbox/`, `Projects/<A>/`, or `Domain/<D>/`, but NOT the root of those trees (`inbox/` itself, `Projects/<A>/` itself, or `Domain/<D>/` itself). Files captured from a batch-worthy subfolder are associated with a shared batch identifier so Phase 8 Briefing can group them. A file captured directly into `inbox/` root is NOT batch-worthy (no grouping signal).
+_Avoid_: "subfolder drop", "grouped folder"
+
+**live batch membership:**
+The meaning of the `batch_id` foreign key on a `documents` row — it records which active batch the file *currently* belongs to based on its folder position, not when it was first captured. If a file moves from one subfolder to another, its batch membership updates. Distinct from a capture timestamp (which records when the file was first processed, never updates).
+_Avoid_: "capture batch", "original batch"
+
+**folder_path (on batches table):**
+The vault-relative POSIX path of the subfolder that triggered the batch creation (e.g. `inbox/Q2-reports`). Used to look up whether a batch already exists for a given subfolder before creating a new one. NOT UNIQUE — multiple batch rows for the same folder_path are valid (e.g. re-drops after a cleanup); lookup always picks the most recent row.
+_Avoid_: "batch folder", "source folder"

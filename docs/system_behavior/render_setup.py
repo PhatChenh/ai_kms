@@ -8,6 +8,7 @@ Usage:
 
 Writes to stdout; caller redirects to file.
 """
+
 import sys
 from pathlib import Path
 
@@ -137,6 +138,8 @@ def indent(text: str, spaces: int = 4) -> str:
 
 
 def md_content(entry: dict, fixture_path: str) -> str:
+    if "fixture_body" in entry:
+        return entry["fixture_body"]
     behavior = entry["behavior"].rstrip(".")
     return f"{behavior}.\n\nTest fixture for {entry['id']}."
 
@@ -169,11 +172,11 @@ def cleanup_lines(fixture_path: str) -> list:
             lines.append(f'rm -f "$VAULT/inbox/.summaries/{filename}.md"')
 
         lines.append(
-            f"sqlite3 \"$DB\" \"DELETE FROM documents WHERE vault_path LIKE '%{filename}%'\" 2>/dev/null || true"
+            f'sqlite3 "$DB" "DELETE FROM documents WHERE vault_path LIKE \'%{filename}%\'" 2>/dev/null || true'
         )
     else:
         lines.append(
-            f"sqlite3 \"$DB\" \"DELETE FROM documents WHERE vault_path = '{fixture_path}'\" 2>/dev/null || true"
+            f'sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = \'{fixture_path}\'" 2>/dev/null || true'
         )
 
     return lines
@@ -185,7 +188,7 @@ def staging_cleanup_lines(filename: str) -> list:
     return [
         f'rm -f "$STAGING/{filename}"',
         f'rm -f "$VAULT/inbox/{filename}"',
-        f"sqlite3 \"$DB\" \"DELETE FROM documents WHERE vault_path = '{vault_inbox_path}'\" 2>/dev/null || true",
+        f'sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = \'{vault_inbox_path}\'" 2>/dev/null || true',
     ]
 
 
@@ -196,7 +199,26 @@ def fixture_bash(entry: dict, fixture_path: str) -> str:
 
     if ext == ".md":
         content = md_content(entry, fixture_path)
-        escaped = content.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
+        escaped = (
+            content.replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("$", "\\$")
+            .replace("`", "\\`")
+        )
+        if "fixture_frontmatter" in entry:
+            # Use ANSI-C $'...' quoting so \n becomes real newlines without
+            # multi-line bash string that indent() would corrupt.
+            fm = (
+                entry["fixture_frontmatter"]
+                .strip()
+                .replace("'", "\\'")
+                .replace("\n", "\\n")
+            )
+            return (
+                f'write_md_with_frontmatter "$VAULT/{fixture_path}" \\\n'
+                f"$'{fm}' \\\n"
+                f'"{escaped}"'
+            )
         return f'write_md "$VAULT/{fixture_path}" \\\n"{escaped}"'
 
     if ext == ".pdf":
@@ -204,9 +226,9 @@ def fixture_bash(entry: dict, fixture_path: str) -> str:
             f'mkdir -p "$VAULT/{parent}"\n'
             f'if [ -f "$FIXTURES/sample_text.pdf" ]; then\n'
             f'    cp "$FIXTURES/sample_text.pdf" "$VAULT/{fixture_path}"\n'
-            f'else\n'
+            f"else\n"
             f'    echo "⚠ {eid}: No sample PDF at $FIXTURES/sample_text.pdf — place a test PDF manually"\n'
-            f'fi'
+            f"fi"
         )
 
     if ext in (".png", ".jpg", ".jpeg"):
@@ -215,12 +237,12 @@ def fixture_bash(entry: dict, fixture_path: str) -> str:
             f'mkdir -p "$VAULT/{parent}"\n'
             f'if [ -f "$FIXTURES/{sample}" ]; then\n'
             f'    cp "$FIXTURES/{sample}" "$VAULT/{fixture_path}"\n'
-            f'else\n'
+            f"else\n"
             # Minimal 1×1 PNG via ANSI-C quoting — avoids backtick in double-quoted string
             r"    printf $'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB\x60\x82'"
             + f' > "$VAULT/{fixture_path}"\n'
             f'    echo "⚠ {eid}: Created minimal 1x1 PNG fallback. Replace with a real image for testing."\n'
-            f'fi'
+            f"fi"
         )
 
     if ext == ".docx":
@@ -229,13 +251,13 @@ def fixture_bash(entry: dict, fixture_path: str) -> str:
         behavior_short = entry["behavior"][:60].replace("'", "\\'")
         return (
             f'mkdir -p "$VAULT/{parent}"\n'
-            f'cd "$PROJECT_ROOT" && uv run python -c "\n'
-            f'from docx import Document\n'
-            f"doc = Document()\n"
-            f"doc.add_heading('{title}', 0)\n"
-            f"doc.add_paragraph('{behavior_short}.')\n"
-            f"doc.add_paragraph('Test fixture for {eid}.')\n"
-            f"doc.save('$VAULT/{fixture_path}')\n"
+            f'cd "$PROJECT_ROOT" && uv run python -c "'
+            f"from docx import Document; "
+            f"doc = Document(); "
+            f"doc.add_heading('{title}', 0); "
+            f"doc.add_paragraph('{behavior_short}.'); "
+            f"doc.add_paragraph('Test fixture for {eid}.'); "
+            f"doc.save('$VAULT/{fixture_path}')"
             f'"'
         )
 
@@ -243,15 +265,15 @@ def fixture_bash(entry: dict, fixture_path: str) -> str:
         sheet = Path(fixture_path).stem.replace("-", " ").replace("_", " ").title()
         return (
             f'mkdir -p "$VAULT/{parent}"\n'
-            f'cd "$PROJECT_ROOT" && uv run python -c "\n'
-            f'import openpyxl\n'
-            f"wb = openpyxl.Workbook()\n"
-            f"ws = wb.active\n"
-            f"ws.title = '{sheet}'\n"
-            f"ws.append(['Column A', 'Column B', 'Column C'])\n"
-            f"ws.append(['Row 1 A', 'Row 1 B', 'Row 1 C'])\n"
-            f"ws.append(['Row 2 A', 'Row 2 B', 'Row 2 C'])\n"
-            f"wb.save('$VAULT/{fixture_path}')\n"
+            f'cd "$PROJECT_ROOT" && uv run python -c "'
+            f"import openpyxl; "
+            f"wb = openpyxl.Workbook(); "
+            f"ws = wb.active; "
+            f"ws.title = '{sheet}'; "
+            f"ws.append(['Column A', 'Column B', 'Column C']); "
+            f"ws.append(['Row 1 A', 'Row 1 B', 'Row 1 C']); "
+            f"ws.append(['Row 2 A', 'Row 2 B', 'Row 2 C']); "
+            f"wb.save('$VAULT/{fixture_path}')"
             f'"'
         )
 
@@ -259,13 +281,13 @@ def fixture_bash(entry: dict, fixture_path: str) -> str:
         title = Path(fixture_path).stem.replace("-", " ").replace("_", " ").title()
         return (
             f'mkdir -p "$VAULT/{parent}"\n'
-            f'cd "$PROJECT_ROOT" && uv run python -c "\n'
-            f'from pptx import Presentation\n'
-            f"prs = Presentation()\n"
-            f"slide = prs.slides.add_slide(prs.slide_layouts[0])\n"
-            f"slide.shapes.title.text = '{title}'\n"
-            f"slide.placeholders[1].text = 'Test fixture for {eid}.'\n"
-            f"prs.save('$VAULT/{fixture_path}')\n"
+            f'cd "$PROJECT_ROOT" && uv run python -c "'
+            f"from pptx import Presentation; "
+            f"prs = Presentation(); "
+            f"slide = prs.slides.add_slide(prs.slide_layouts[0]); "
+            f"slide.shapes.title.text = '{title}'; "
+            f"slide.placeholders[1].text = 'Test fixture for {eid}.'; "
+            f"prs.save('$VAULT/{fixture_path}')"
             f'"'
         )
 
@@ -287,7 +309,7 @@ def fixture_bash(entry: dict, fixture_path: str) -> str:
             f'mkdir -p "$VAULT/{parent}"\n'
             f"printf 'From: sender@example.com\\nTo: receiver@example.com\\nSubject: Test Email for {eid}\\n"
             f"Date: Wed, 04 Jun 2026 10:00:00 +0700\\nMIME-Version: 1.0\\nContent-Type: text/plain; charset=UTF-8\\n\\n"
-            f"Test email body for {eid}.\\n' > \"$VAULT/{fixture_path}\""
+            f'Test email body for {eid}.\\n\' > "$VAULT/{fixture_path}"'
         )
 
     if ext == ".msg":
@@ -303,7 +325,12 @@ def fixture_bash_staging(entry: dict, filename: str) -> str:
 
     if ext == ".md":
         content = md_content(entry, filename)
-        escaped = content.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
+        escaped = (
+            content.replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("$", "\\$")
+            .replace("`", "\\`")
+        )
         return f'mkdir -p "$STAGING"\nwrite_md "$STAGING/{filename}" \\\n"{escaped}"'
 
     if ext == ".pdf":
@@ -311,9 +338,9 @@ def fixture_bash_staging(entry: dict, filename: str) -> str:
             f'mkdir -p "$STAGING"\n'
             f'if [ -f "$FIXTURES/sample_text.pdf" ]; then\n'
             f'    cp "$FIXTURES/sample_text.pdf" "$STAGING/{filename}"\n'
-            f'else\n'
+            f"else\n"
             f'    echo "⚠ {eid}: No sample PDF at $FIXTURES/sample_text.pdf — place a test PDF at $STAGING/{filename} manually"\n'
-            f'fi'
+            f"fi"
         )
 
     return f'echo "⚠ {eid}: staging fixture type {ext} not auto-generated — create $STAGING/{filename} manually"'
@@ -334,9 +361,7 @@ def render_setup_fn(entry: dict) -> str:
     if not has_any:
         trigger = str(entry.get("trigger", "")).replace('"', '\\"')
         lines.append(f"{fn}() {{")
-        lines.append(
-            f'    echo "{eid}: No pre-created fixtures. Trigger: {trigger}"'
-        )
+        lines.append(f'    echo "{eid}: No pre-created fixtures. Trigger: {trigger}"')
         lines.append("}")
         return "\n".join(lines)
 
@@ -423,16 +448,14 @@ def main() -> None:
     phase_calls = call_lines(phase)
     full_calls = call_lines(full)
 
-    # Case entries — individual test IDs use per-function cleanup (no full reset)
+    # Case entries — individual test IDs: full vault+db reset first, then place only needed fixtures
     case_lines = []
     for tier_label, tier_list in [("smoke", smoke), ("phase", phase), ("full", full)]:
         if tier_list:
             case_lines.append(f"    # ── {tier_label.title()} ──")
         for e in tier_list:
             eid = e["id"]
-            case_lines.append(
-                f"    {eid})  {fn_name(eid)} ;;"
-            )
+            case_lines.append(f"    {eid})  reset_db; clean_vault; {fn_name(eid)} ;;")
 
     output_parts = [
         SCRIPT_HEADER.format(date=today),

@@ -250,7 +250,9 @@ def test_on_delete_skips_attachment_dir(tmp_path: Path) -> None:
 
 def test_on_move_fires_for_internal_rename(tmp_path: Path) -> None:
     move_calls: list[tuple[Path, Path]] = []
-    handler, root, _ = _make_handler(tmp_path, on_move=lambda s, d: move_calls.append((s, d)))
+    handler, root, _ = _make_handler(
+        tmp_path, on_move=lambda s, d: move_calls.append((s, d))
+    )
 
     src = root / "inbox" / "old.md"
     dst = root / "Projects" / "new.md"
@@ -318,7 +320,9 @@ def test_watcher_module_has_no_pipeline_or_llm_imports() -> None:
     import ast
     import pathlib
 
-    watcher_src = pathlib.Path(__file__).parent.parent.parent / "src" / "vault" / "watcher.py"
+    watcher_src = (
+        pathlib.Path(__file__).parent.parent.parent / "src" / "vault" / "watcher.py"
+    )
     tree = ast.parse(watcher_src.read_text())
 
     forbidden_prefixes = ("pipelines", "llm")
@@ -381,7 +385,10 @@ def test_sibling_for_returns_summaries_path_for_project_binary():
     vc = VaultConfig(root=root)
     binary = root / "Projects" / "Alpha" / "attachment" / "report.pdf"
     result = _sibling_for(binary, vc)
-    assert result == root / "Projects" / "Alpha" / "attachment" / ".summaries" / "report.pdf.md"
+    assert (
+        result
+        == root / "Projects" / "Alpha" / "attachment" / ".summaries" / "report.pdf.md"
+    )
 
 
 def test_sibling_for_returns_summaries_path_for_inbox_binary():
@@ -437,13 +444,14 @@ def test_on_deleted_binary_removes_sibling_from_db(tmp_path: Path, monkeypatch):
     def fake_delete_by_path(vault_path, db_path=None):
         delete_calls.append(vault_path)
         from core.result import Success
+
         return Success(1)
 
-    monkeypatch.setattr(
-        "vault.watcher.delete_by_path", fake_delete_by_path
-    )
+    monkeypatch.setattr("vault.watcher.delete_by_path", fake_delete_by_path)
+
     def _fake_audit_write(*args, **kwargs):
         from core.result import Success
+
         return Success(None)
 
     monkeypatch.setattr("vault.watcher.audit_write", _fake_audit_write)
@@ -469,7 +477,9 @@ def test_on_deleted_binary_removes_sibling_from_db(tmp_path: Path, monkeypatch):
     )
 
 
-def test_on_deleted_binary_in_managed_attachment_dir_fires_sync(tmp_path: Path, monkeypatch):
+def test_on_deleted_binary_in_managed_attachment_dir_fires_sync(
+    tmp_path: Path, monkeypatch
+):
     """TD-030 regression: binary deleted from Projects/<A>/attachment/ MUST fire _handle_binary_delete.
 
     Previously _should_skip ran before binary-sync dispatch, so non-.md files inside a managed
@@ -488,12 +498,14 @@ def test_on_deleted_binary_in_managed_attachment_dir_fires_sync(tmp_path: Path, 
     def fake_delete_by_path(vault_path, db_path=None):
         delete_calls.append(vault_path)
         from core.result import Success
+
         return Success(1)
 
     monkeypatch.setattr("vault.watcher.delete_by_path", fake_delete_by_path)
 
     def _fake_audit_write(*args, **kwargs):
         from core.result import Success
+
         return Success(None)
 
     monkeypatch.setattr("vault.watcher.audit_write", _fake_audit_write)
@@ -537,12 +549,13 @@ def test_on_moved_binary_same_folder_renames_sibling(tmp_path: Path, monkeypatch
     vault_cfg = VaultConfig(root=root)
 
     # Create old sibling file on disk so move_note can find it
-    summaries_dir = (
-        root / "Projects" / "Alpha" / "attachment" / ".summaries"
-    )
+    summaries_dir = root / "Projects" / "Alpha" / "attachment" / ".summaries"
     summaries_dir.mkdir(parents=True)
     old_sibling = summaries_dir / "Q2 Report.pdf.md"
-    old_sibling.write_text("---\nattachment_path: Projects/Alpha/attachment/Q2 Report.pdf\n---\n# Summary\n", encoding="utf-8")
+    old_sibling.write_text(
+        "---\nattachment_path: Projects/Alpha/attachment/Q2 Report.pdf\n---\n# Summary\n",
+        encoding="utf-8",
+    )
 
     move_calls: list[tuple] = []
     write_calls: list[tuple] = []
@@ -551,20 +564,24 @@ def test_on_moved_binary_same_folder_renames_sibling(tmp_path: Path, monkeypatch
     def fake_move_note(src, dst, actor):
         move_calls.append((str(src), str(dst), actor))
         from core.result import Success
+
         return Success(None)
 
     def fake_write_note(path, body, metadata, actor):
         write_calls.append((str(path), body, metadata.attachment_path, actor))
         from core.result import Success
+
         return Success(MagicMock())
 
     def fake_rename(old, new, db_path=None):
         rename_calls.append((old, new))
         from core.result import Success
+
         return Success(1)
 
     # read_note must return the existing sibling metadata
     from vault.reader import Note
+
     fake_note = Note(
         path=old_sibling,
         content="# Summary\n",
@@ -576,14 +593,17 @@ def test_on_moved_binary_same_folder_renames_sibling(tmp_path: Path, monkeypatch
 
     def fake_read_note(path):
         from core.result import Success
+
         return Success(fake_note)
 
     monkeypatch.setattr("vault.watcher.move_note", fake_move_note)
     monkeypatch.setattr("vault.watcher.write_note", fake_write_note)
     monkeypatch.setattr("vault.watcher.rename_doc", fake_rename)
     monkeypatch.setattr("vault.watcher.read_note", fake_read_note)
+
     def _fake_audit_write(*args, **kwargs):
         from core.result import Success
+
         return Success(None)
 
     monkeypatch.setattr("vault.watcher.audit_write", _fake_audit_write)
@@ -605,15 +625,17 @@ def test_on_moved_binary_same_folder_renames_sibling(tmp_path: Path, monkeypatch
     time.sleep(0.1)
     # Verify sibling renamed via move_note
     old_sibling_str = str(old_sibling)
-    new_sibling_str = str(root / "Projects" / "Alpha" / "attachment" / ".summaries" / "Q2 Strategy.pdf.md")
+    new_sibling_str = str(
+        root / "Projects" / "Alpha" / "attachment" / ".summaries" / "Q2 Strategy.pdf.md"
+    )
     assert (old_sibling_str, new_sibling_str, "ai") in move_calls, (
         f"Expected move_note({old_sibling_str}, {new_sibling_str}), got {move_calls}"
     )
     # Verify documents.rename called
-    assert ("Projects/Alpha/attachment/.summaries/Q2 Report.pdf.md",
-            "Projects/Alpha/attachment/.summaries/Q2 Strategy.pdf.md") in rename_calls, (
-        f"Expected rename in DB, got {rename_calls}"
-    )
+    assert (
+        "Projects/Alpha/attachment/.summaries/Q2 Report.pdf.md",
+        "Projects/Alpha/attachment/.summaries/Q2 Strategy.pdf.md",
+    ) in rename_calls, f"Expected rename in DB, got {rename_calls}"
     # Verify attachment_path updated in write_note
     assert len(write_calls) == 1
     assert write_calls[0][2] == "Projects/Alpha/attachment/Q2 Strategy.pdf"
@@ -636,22 +658,27 @@ def test_on_moved_binary_different_folder_orphans_old_sibling(
     def fake_move_note(src, dst, actor):
         move_calls.append((str(src), str(dst), actor))
         from core.result import Success
+
         return Success(None)
 
     def fake_delete_by_path(vault_path, db_path=None):
         delete_calls.append(vault_path)
         from core.result import Success
+
         return Success(1)
 
     def fake_get_by_path(vault_path, db_path=None):
         from core.result import Success
+
         return Success(None)  # Not in DB → triggers orphan fallback
 
     monkeypatch.setattr("vault.watcher.move_note", fake_move_note)
     monkeypatch.setattr("vault.watcher.delete_by_path", fake_delete_by_path)
     monkeypatch.setattr("vault.watcher.get_by_path", fake_get_by_path)
+
     def _fake_audit_write(*args, **kwargs):
         from core.result import Success
+
         return Success(None)
 
     monkeypatch.setattr("vault.watcher.audit_write", _fake_audit_write)
@@ -678,9 +705,7 @@ def test_on_moved_binary_different_folder_orphans_old_sibling(
     assert expected_sibling in delete_calls, (
         f"Expected delete_by_path for {expected_sibling}, got {delete_calls}"
     )
-    assert len(move_calls) == 0, (
-        f"Expected no move_note calls, got {move_calls}"
-    )
+    assert len(move_calls) == 0, f"Expected no move_note calls, got {move_calls}"
 
 
 # ---------------------------------------------------------------------------
@@ -874,7 +899,9 @@ def test_stale_folder_timer_fire_is_ignored(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_folder_max_workers_one_serializes_captures(tmp_path: Path, monkeypatch) -> None:
+def test_folder_max_workers_one_serializes_captures(
+    tmp_path: Path, monkeypatch
+) -> None:
     """folder_max_workers=1: a second folder drop queues behind the first (I6).
 
     Two folders go stable back-to-back. With a single executor worker the second
@@ -899,9 +926,11 @@ def test_folder_max_workers_one_serializes_captures(tmp_path: Path, monkeypatch)
         with order_lock:
             order.append(f"end:{folder_path.name}")
         from core.result import Success
+
         return Success([])
 
     import pipelines.capture as capture_mod
+
     monkeypatch.setattr(capture_mod, "capture_folder", fake_capture_folder)
 
     watcher = VaultWatcher(
@@ -945,7 +974,9 @@ def test_folder_max_workers_one_serializes_captures(tmp_path: Path, monkeypatch)
     watcher.stop()
 
 
-def test_capture_runs_on_executor_thread_not_caller(tmp_path: Path, monkeypatch) -> None:
+def test_capture_runs_on_executor_thread_not_caller(
+    tmp_path: Path, monkeypatch
+) -> None:
     """C-10: asyncio.run(capture_folder(...)) executes on a ThreadPoolExecutor worker,
     never on the calling (observer/timer) thread (I6).
 
@@ -963,9 +994,11 @@ def test_capture_runs_on_executor_thread_not_caller(tmp_path: Path, monkeypatch)
         seen["worker_ident"] = threading.current_thread().ident
         done.set()
         from core.result import Success
+
         return Success([])
 
     import pipelines.capture as capture_mod
+
     monkeypatch.setattr(capture_mod, "capture_folder", fake_capture_folder)
 
     watcher = VaultWatcher(
@@ -993,7 +1026,9 @@ def test_capture_runs_on_executor_thread_not_caller(tmp_path: Path, monkeypatch)
 
 def test_pending_folder_removed_after_stable_fires(tmp_path: Path) -> None:
     """After folder timer fires, folder is no longer in _pending_folders or _pending_folder_paths."""
-    handler, root, _ = _make_handler_with_folder(tmp_path, folder_cooldown=FOLDER_COOLDOWN)
+    handler, root, _ = _make_handler_with_folder(
+        tmp_path, folder_cooldown=FOLDER_COOLDOWN
+    )
 
     folder_path = root / "inbox" / "mydir"
     handler.on_created(DirCreatedEvent(str(folder_path)))
@@ -1047,6 +1082,7 @@ class TestShouldSkipAiOutput:
 
     def test_should_skip_logs_debug_for_ai_output(self, tmp_path: Path, caplog):
         import logging
+
         handler, root, _ = _make_handler(tmp_path)
         path = root / "Briefings" / "daily.md"
         with caplog.at_level(logging.DEBUG, logger="vault.watcher"):
@@ -1056,7 +1092,9 @@ class TestShouldSkipAiOutput:
             f"Expected 'watcher.skip.ai_output' in logs, got: {caplog.text}"
         )
 
-    def test_td033_guard_patch_vault_watcher_not_paths(self, tmp_path: Path, monkeypatch):
+    def test_td033_guard_patch_vault_watcher_not_paths(
+        self, tmp_path: Path, monkeypatch
+    ):
         """TD-033: _is_ai_output must be patchable at vault.watcher._is_ai_output.
 
         Module-level imports in watcher.py copy the reference — patching
@@ -1078,7 +1116,227 @@ class TestShouldSkipAiOutput:
         # Verify the original vault.paths._is_ai_output is NOT patched
         from vault.paths import _is_ai_output as real_is_ai_output
         from core.config import VaultConfig
+
         r = root
         vc = VaultConfig(root=r)
         # Real function still returns False for project paths
         assert real_is_ai_output(r / "Projects" / "Alpha" / "note.md", vc) is False
+
+
+# ---------------------------------------------------------------------------
+# TestHandleBinaryMoveG2BatchStamp
+# ---------------------------------------------------------------------------
+
+
+class TestHandleBinaryMoveG2BatchStamp:
+    """Sub-step g2: stamp batch_id when a binary is re-homed into a batch subfolder.
+
+    All tests drive _handle_binary_move(..., _settled=True) on a cross-folder move
+    so the settle window is bypassed and g2 is reached directly.
+    """
+
+    def _make_handler_with_db(
+        self, tmp_path: Path
+    ) -> tuple[_VaultEventHandler, Path, VaultConfig]:
+        root = tmp_path / "vault"
+        root.mkdir(exist_ok=True)
+        vault_cfg = VaultConfig(root=root)
+        handler = _VaultEventHandler(
+            root=root,
+            vault_config=vault_cfg,
+            on_create=lambda p: None,
+            on_modify=lambda p: None,
+            on_delete=lambda p: None,
+            on_move=lambda s, d: None,
+            debounce_seconds=DEBOUNCE,
+            db_path=tmp_path / "kb.db",
+        )
+        return handler, root, vault_cfg
+
+    def _fake_row(self):
+        from storage.documents import DocumentRow
+
+        return DocumentRow(
+            id=1,
+            vault_path="Projects/Alpha/attachment/.summaries/report.pdf.md",
+            title="Report",
+            summary="A summary",
+            note_type="attachment-summary",
+            confidence=0.9,
+            created_at="2026-01-01T00:00:00",
+            updated_at="2026-01-01T00:00:00",
+            updated_by_human=False,
+            content_hash="abc123",
+        )
+
+    def _common_mocks(
+        self, monkeypatch, *, dst: Path, sibling_dir: Path, is_batch: bool = True
+    ):
+        from core.result import Success
+        from vault.paths import Placement
+
+        fake_placement = Placement(
+            final_dir=dst.parent,
+            sibling_dir=sibling_dir,
+            needs_move=False,
+        )
+        monkeypatch.setattr(
+            "vault.watcher._location_context", lambda p, vc: ("project", "Alpha")
+        )
+        monkeypatch.setattr(
+            "vault.watcher.get_by_path", lambda vp: Success(self._fake_row())
+        )
+        monkeypatch.setattr(
+            "vault.watcher.resolve_placement",
+            lambda fp, lt, ln, vc: fake_placement,
+        )
+        monkeypatch.setattr("vault.watcher.write_note", lambda *a, **kw: Success(None))
+        monkeypatch.setattr("vault.watcher.rename_doc", lambda *a, **kw: Success(1))
+        monkeypatch.setattr("vault.watcher.audit_write", lambda *a, **kw: Success(None))
+        monkeypatch.setattr("vault.watcher.delete_by_path", lambda vp: Success(1))
+        monkeypatch.setattr("vault.watcher.is_batch_subfolder", lambda p, vc: is_batch)
+
+    def test_g2_batch_stamp_reuses_existing_batch_id(self, tmp_path: Path, monkeypatch):
+        """find_by_folder_path returns Success(42) → update_batch_id called with 42."""
+        import vault.watcher as watcher_mod
+        from core.result import Success
+
+        handler, root, _ = self._make_handler_with_db(tmp_path)
+
+        src = root / "Projects" / "Alpha" / "attachment" / "report.pdf"
+        dst = root / "Projects" / "Alpha" / "subfolder" / "report.pdf"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        sibling_dir = dst.parent / ".summaries"
+        sibling_dir.mkdir(parents=True, exist_ok=True)
+
+        self._common_mocks(monkeypatch, dst=dst, sibling_dir=sibling_dir)
+
+        update_calls: list[tuple] = []
+
+        monkeypatch.setattr(
+            watcher_mod.batches,
+            "find_by_folder_path",
+            lambda folder_vp, *, db_path: Success(42),
+        )
+        monkeypatch.setattr(
+            "vault.watcher.update_batch_id",
+            lambda vault_path, batch_id, db_path: (
+                update_calls.append((vault_path, batch_id)) or Success(1)
+            ),
+        )
+
+        handler._handle_binary_move(src, dst, _settled=True)
+
+        assert len(update_calls) == 1
+        assert update_calls[0][1] == 42
+
+    def test_g2_batch_stamp_creates_new_batch_when_none_exists(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """find_by_folder_path returns Success(None) → insert new batch, update_batch_id with new ID."""
+        import vault.watcher as watcher_mod
+        from core.result import Success
+
+        handler, root, _ = self._make_handler_with_db(tmp_path)
+
+        src = root / "Projects" / "Alpha" / "attachment" / "report.pdf"
+        dst = root / "Projects" / "Alpha" / "subfolder" / "report.pdf"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        sibling_dir = dst.parent / ".summaries"
+        sibling_dir.mkdir(parents=True, exist_ok=True)
+
+        self._common_mocks(monkeypatch, dst=dst, sibling_dir=sibling_dir)
+
+        insert_calls: list[str] = []
+        update_calls: list[tuple] = []
+
+        monkeypatch.setattr(
+            watcher_mod.batches,
+            "find_by_folder_path",
+            lambda folder_vp, *, db_path: Success(None),
+        )
+        monkeypatch.setattr(
+            watcher_mod.batches,
+            "insert",
+            lambda *, folder_name, destination_type, destination_name, confidence, status, file_count, folder_path, db_path: (
+                insert_calls.append(folder_path) or Success(99)
+            ),
+        )
+        monkeypatch.setattr(
+            "vault.watcher.update_batch_id",
+            lambda vault_path, batch_id, db_path: (
+                update_calls.append((vault_path, batch_id)) or Success(1)
+            ),
+        )
+
+        handler._handle_binary_move(src, dst, _settled=True)
+
+        assert len(insert_calls) == 1
+        assert len(update_calls) == 1
+        assert update_calls[0][1] == 99
+
+    def test_g2_batch_stamp_skipped_when_not_batch_subfolder(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """is_batch_subfolder returns False → update_batch_id NOT called."""
+        import vault.watcher as watcher_mod
+        from core.result import Success
+
+        handler, root, _ = self._make_handler_with_db(tmp_path)
+
+        src = root / "Projects" / "Alpha" / "attachment" / "report.pdf"
+        dst = root / "Projects" / "Alpha" / "report.pdf"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        sibling_dir = dst.parent / ".summaries"
+        sibling_dir.mkdir(parents=True, exist_ok=True)
+
+        self._common_mocks(
+            monkeypatch, dst=dst, sibling_dir=sibling_dir, is_batch=False
+        )
+
+        update_calls: list = []
+        monkeypatch.setattr(
+            watcher_mod.batches,
+            "find_by_folder_path",
+            lambda *a, **kw: Success(42),
+        )
+        monkeypatch.setattr(
+            "vault.watcher.update_batch_id",
+            lambda *a, **kw: update_calls.append(a) or Success(1),
+        )
+
+        handler._handle_binary_move(src, dst, _settled=True)
+
+        assert update_calls == []
+
+    def test_g2_batch_stamp_lookup_failure_does_not_prevent_completion(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """find_by_folder_path returns Failure → update_batch_id NOT called; function completes."""
+        import vault.watcher as watcher_mod
+        from core.result import Failure, Success
+
+        handler, root, _ = self._make_handler_with_db(tmp_path)
+
+        src = root / "Projects" / "Alpha" / "attachment" / "report.pdf"
+        dst = root / "Projects" / "Alpha" / "subfolder" / "report.pdf"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        sibling_dir = dst.parent / ".summaries"
+        sibling_dir.mkdir(parents=True, exist_ok=True)
+
+        self._common_mocks(monkeypatch, dst=dst, sibling_dir=sibling_dir)
+
+        update_calls: list = []
+        monkeypatch.setattr(
+            watcher_mod.batches,
+            "find_by_folder_path",
+            lambda *a, **kw: Failure(error="db error", recoverable=True, context={}),
+        )
+        monkeypatch.setattr(
+            "vault.watcher.update_batch_id",
+            lambda *a, **kw: update_calls.append(a) or Success(1),
+        )
+
+        handler._handle_binary_move(src, dst, _settled=True)
+
+        assert update_calls == []

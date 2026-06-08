@@ -7,6 +7,7 @@ Usage:
 
 Writes to stdout; caller redirects to file.
 """
+
 import datetime
 import re
 import sys
@@ -17,8 +18,32 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 INVENTORY = PROJECT_ROOT / "docs" / "system_behavior" / "behavior_inventory.yaml"
+CONFIG_PATH = PROJECT_ROOT / "src" / "config" / "config.yaml"
 
 TODAY = datetime.date.today().isoformat()
+
+
+def _load_path_substitutions() -> dict:
+    """Read <vault> and <staging> from testing.vault_path in config.yaml."""
+    try:
+        with CONFIG_PATH.open() as fh:
+            cfg = yaml.safe_load(fh)
+        vault = str(cfg.get("testing", {}).get("vault_path", "<vault>"))
+        staging = str(Path(vault).parent)
+        return {"<vault>": vault, "<staging>": staging}
+    except Exception:
+        return {}
+
+
+_PATH_SUBS: dict = _load_path_substitutions()
+
+
+def resolve_path_placeholders(text: str) -> str:
+    """Replace <vault> and <staging> with actual paths from config.yaml."""
+    for placeholder, value in _PATH_SUBS.items():
+        text = text.replace(placeholder, value)
+    return text
+
 
 PHASE_TITLES = {
     "1": "Phase 1 — Capture Pipeline",
@@ -123,13 +148,13 @@ def escape_placeholders(text: str) -> str:
 def render_steps(steps) -> str:
     """Render steps field (string or list) → markdown blocks."""
     if isinstance(steps, str):
-        s = steps.strip()
+        s = resolve_path_placeholders(steps.strip())
         if s.startswith("`") and s.endswith("`") and len(s) > 2:
             return f"```bash\n{s[1:-1]}\n```"
         return escape_placeholders(s)
     parts = []
     for item in steps:
-        s = str(item).strip()
+        s = resolve_path_placeholders(str(item).strip())
         if s.startswith("`") and s.endswith("`") and len(s) > 2:
             parts.append(f"```bash\n{s[1:-1]}\n```")
         else:
@@ -138,7 +163,9 @@ def render_steps(steps) -> str:
 
 
 def render_checklist(items: list) -> str:
-    return "\n".join(f"- [ ] {escape_placeholders(str(i))}" for i in items)
+    return "\n".join(
+        f"- [ ] {escape_placeholders(resolve_path_placeholders(str(i)))}" for i in items
+    )
 
 
 def last_tested(entry) -> str:

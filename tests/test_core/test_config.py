@@ -76,6 +76,7 @@ from core.exceptions import ConfigError
 # Section 1 — _load_yaml() : file-reading primitives
 # ===========================================================================
 
+
 class TestLoadYaml:
     """_load_yaml reads from _CONFIG_DIR. We patch the directory to tmp_path
     so tests are hermetic and never touch the real config/ folder."""
@@ -83,6 +84,7 @@ class TestLoadYaml:
     def test_reads_valid_yaml_file(self, tmp_path: Path, monkeypatch):
         """Happy path: well-formed YAML returns the expected dict."""
         import core.config as cfg_module
+
         monkeypatch.setattr(cfg_module, "_CONFIG_DIR", tmp_path)
 
         (tmp_path / "sample.yaml").write_text(
@@ -97,15 +99,19 @@ class TestLoadYaml:
         _load_yaml must coerce that to {} so callers can unpack safely.
         """
         import core.config as cfg_module
+
         monkeypatch.setattr(cfg_module, "_CONFIG_DIR", tmp_path)
 
         (tmp_path / "empty.yaml").write_text("")
         result = cfg_module._load_yaml("empty.yaml")
         assert result == {}
 
-    def test_returns_empty_dict_for_comment_only_file(self, tmp_path: Path, monkeypatch):
+    def test_returns_empty_dict_for_comment_only_file(
+        self, tmp_path: Path, monkeypatch
+    ):
         """A file with only YAML comments is functionally empty."""
         import core.config as cfg_module
+
         monkeypatch.setattr(cfg_module, "_CONFIG_DIR", tmp_path)
 
         (tmp_path / "comments.yaml").write_text("# just a comment\n# another\n")
@@ -118,6 +124,7 @@ class TestLoadYaml:
         Must raise FileNotFoundError (load_config wraps this into ConfigError).
         """
         import core.config as cfg_module
+
         monkeypatch.setattr(cfg_module, "_CONFIG_DIR", tmp_path)
 
         with pytest.raises(FileNotFoundError, match="Config file missing"):
@@ -126,6 +133,7 @@ class TestLoadYaml:
     def test_error_message_names_the_missing_file(self, tmp_path: Path, monkeypatch):
         """The error message should tell the developer which file is absent."""
         import core.config as cfg_module
+
         monkeypatch.setattr(cfg_module, "_CONFIG_DIR", tmp_path)
 
         with pytest.raises(FileNotFoundError) as exc_info:
@@ -138,11 +146,10 @@ class TestLoadYaml:
         return a partial dict). load_config() will later wrap this into ConfigError.
         """
         import core.config as cfg_module
+
         monkeypatch.setattr(cfg_module, "_CONFIG_DIR", tmp_path)
 
-        (tmp_path / "broken.yaml").write_text(
-            "key: [unclosed bracket\n  sub: value\n"
-        )
+        (tmp_path / "broken.yaml").write_text("key: [unclosed bracket\n  sub: value\n")
         with pytest.raises(yaml.YAMLError):
             cfg_module._load_yaml("broken.yaml")
 
@@ -150,6 +157,7 @@ class TestLoadYaml:
 # ===========================================================================
 # Section 2 — ConfidenceBand : threshold model validation
 # ===========================================================================
+
 
 class TestConfidenceBand:
     """Pure model tests — no file I/O. Tests the Pydantic schema directly."""
@@ -214,7 +222,9 @@ class TestConfidenceBand:
         suggest >= auto is a logical contradiction (the suggest gate would be
         higher than the auto gate). Must be rejected at parse time.
         """
-        with pytest.raises(ValidationError, match="suggest.*must be strictly less than"):
+        with pytest.raises(
+            ValidationError, match="suggest.*must be strictly less than"
+        ):
             ConfidenceBand(auto=0.70, suggest=0.80)
 
     def test_rejects_suggest_equal_to_auto(self):
@@ -241,8 +251,8 @@ class TestConfidenceBand:
 # Section 3 — Thresholds : for_pipeline() routing logic
 # ===========================================================================
 
-class TestThresholds:
 
+class TestThresholds:
     def test_global_alias_parses_correctly(self):
         """
         'global' is a Python keyword, so the field is named global_ with an
@@ -269,12 +279,14 @@ class TestThresholds:
 
     def test_for_pipeline_returns_override_when_configured(self):
         """A named pipeline with its own band must return that band, not global."""
-        t = Thresholds(**{
-            "global": {"auto": 0.85, "suggest": 0.60},
-            "pipelines": {
-                "classify": {"auto": 0.92, "suggest": 0.72},
-            },
-        })
+        t = Thresholds(
+            **{
+                "global": {"auto": 0.85, "suggest": 0.60},
+                "pipelines": {
+                    "classify": {"auto": 0.92, "suggest": 0.72},
+                },
+            }
+        )
         band = t.for_pipeline("classify")
         assert band.auto == pytest.approx(0.92)
         assert band.suggest == pytest.approx(0.72)
@@ -284,12 +296,14 @@ class TestThresholds:
         Only the named pipeline uses its override. Others must still use global.
         Regression guard: we once returned the wrong band here.
         """
-        t = Thresholds(**{
-            "global": {"auto": 0.85, "suggest": 0.60},
-            "pipelines": {
-                "classify": {"auto": 0.92, "suggest": 0.72},
-            },
-        })
+        t = Thresholds(
+            **{
+                "global": {"auto": 0.85, "suggest": 0.60},
+                "pipelines": {
+                    "classify": {"auto": 0.92, "suggest": 0.72},
+                },
+            }
+        )
         band = t.for_pipeline("capture")
         assert band.auto == pytest.approx(0.85)
 
@@ -308,6 +322,7 @@ class TestThresholds:
 # ===========================================================================
 # Section 4 — VaultConfig : path property helpers
 # ===========================================================================
+
 
 class TestVaultConfig:
     """
@@ -379,7 +394,14 @@ class TestVaultConfig:
         """Default extension list contains exactly the six expected strings, all
         dot-prefixed and lowercase."""
         vc = VaultConfig(root=tmp_path)
-        assert vc.no_edit_extensions == [".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"]
+        assert vc.no_edit_extensions == [
+            ".pdf",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".webp",
+        ]
         assert len(vc.no_edit_extensions) == 6
         assert all(ext.startswith(".") for ext in vc.no_edit_extensions)
         assert all(ext == ext.lower() for ext in vc.no_edit_extensions)
@@ -403,7 +425,14 @@ class TestVaultConfig:
     def test_no_edit_extensions_absent_kwarg_uses_default(self, tmp_path):
         """Constructing without no_edit_extensions gives the Python default list."""
         vc = VaultConfig(root=tmp_path)  # no no_edit_extensions kwarg
-        assert vc.no_edit_extensions == [".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"]
+        assert vc.no_edit_extensions == [
+            ".pdf",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".webp",
+        ]
 
     # ── ai_output_dirs / ai_output_paths properties ───────────────────────────
 
@@ -430,6 +459,7 @@ class TestVaultConfig:
 # ===========================================================================
 # Section 5 — MainConfig : vault-root model_validator
 # ===========================================================================
+
 
 class TestMainConfig:
     """
@@ -501,6 +531,7 @@ class TestMainConfig:
 # Section 6 — ApiKeys : env-var reading and coercion
 # ===========================================================================
 
+
 class TestApiKeys:
     """
     ApiKeys reads from environment variables only — never YAML.
@@ -560,48 +591,56 @@ class TestApiKeys:
 # Section 7b — CaptureConfig
 # ===========================================================================
 
+
 class TestCaptureConfig:
     """CaptureConfig defaults and validation."""
 
     def test_default_cooldown_seconds_is_60(self):
         from core.config import CaptureConfig
+
         c = CaptureConfig()
         assert c.cooldown_seconds == 60
 
     def test_default_max_urls_per_note_is_3(self):
         from core.config import CaptureConfig
+
         c = CaptureConfig()
         assert c.max_urls_per_note == 3
 
     def test_cooldown_seconds_rejects_negative(self):
         from core.config import CaptureConfig
+
         with pytest.raises(ValidationError):
             CaptureConfig(cooldown_seconds=-1)
 
     def test_max_urls_per_note_rejects_negative(self):
         from core.config import CaptureConfig
+
         with pytest.raises(ValidationError):
             CaptureConfig(max_urls_per_note=-1)
 
     def test_default_binary_settle_seconds_is_5(self):
         from core.config import CaptureConfig
+
         c = CaptureConfig()
         assert c.binary_settle_seconds == 5.0
 
     def test_binary_settle_seconds_rejects_negative(self):
         from core.config import CaptureConfig
+
         with pytest.raises(ValidationError):
             CaptureConfig(binary_settle_seconds=-1.0)
 
     def test_main_config_has_capture_field(self, vault_dir: Path):
         cfg = MainConfig(vault={"root": str(vault_dir)})
         from core.config import CaptureConfig
+
         assert isinstance(cfg.capture, CaptureConfig)
         assert cfg.capture.cooldown_seconds == 60
         assert cfg.capture.max_urls_per_note == 3
 
-class TestRouting:
 
+class TestRouting:
     def test_empty_pipelines_dict_is_the_default(self):
         r = Routing()
         assert r.pipelines == {}
@@ -620,7 +659,6 @@ class TestRouting:
 
 
 class TestProvidersConfig:
-
     def test_default_classify_provider_is_claude(self):
         p = ProvidersConfig()
         assert p.classify == "claude"
@@ -648,7 +686,6 @@ class TestProvidersConfig:
 
 
 class TestClaudeConfig:
-
     def test_default_model_is_haiku(self):
         """Haiku is the fast/cheap default for most tasks."""
         c = ClaudeConfig()
@@ -673,7 +710,6 @@ class TestClaudeConfig:
 
 
 class TestOllamaConfig:
-
     def test_default_base_url(self):
         o = OllamaConfig()
         assert o.base_url == "http://localhost:11434"
@@ -693,7 +729,6 @@ class TestOllamaConfig:
 
 
 class TestMCPConfig:
-
     def test_default_port_is_3838(self):
         m = MCPConfig()
         assert m.port == 3838
@@ -709,7 +744,6 @@ class TestMCPConfig:
 
 
 class TestSelfLearningConfig:
-
     def test_enabled_by_default(self):
         s = SelfLearningConfig()
         assert s.enabled is True
@@ -740,39 +774,45 @@ class TestSelfLearningConfig:
 
 
 class TestClaudeCliConfig:
-
     def test_default_cli_path_is_claude(self):
         from core.config import ClaudeCliConfig
+
         c = ClaudeCliConfig()
         assert c.cli_path == "claude"
 
     def test_default_model_is_haiku(self):
         from core.config import ClaudeCliConfig
+
         c = ClaudeCliConfig()
         assert "haiku" in c.model.lower()
 
     def test_synthesis_model_is_sonnet(self):
         from core.config import ClaudeCliConfig
+
         c = ClaudeCliConfig()
         assert "sonnet" in c.synthesis_model.lower()
 
     def test_default_timeout_is_60(self):
         from core.config import ClaudeCliConfig
+
         c = ClaudeCliConfig()
         assert c.timeout == 60
 
     def test_default_max_tokens_is_1024(self):
         from core.config import ClaudeCliConfig
+
         c = ClaudeCliConfig()
         assert c.max_tokens == 1024
 
     def test_embedding_model_is_voyage(self):
         from core.config import ClaudeCliConfig
+
         c = ClaudeCliConfig()
         assert "voyage" in c.embedding_model.lower()
 
     def test_custom_cli_path(self):
         from core.config import ClaudeCliConfig
+
         c = ClaudeCliConfig(cli_path="/usr/local/bin/claude")
         assert c.cli_path == "/usr/local/bin/claude"
 
@@ -780,6 +820,7 @@ class TestClaudeCliConfig:
 # ===========================================================================
 # Section 8 — load_config() : full-stack integration
 # ===========================================================================
+
 
 class TestLoadConfig:
     """
@@ -792,9 +833,11 @@ class TestLoadConfig:
     def test_returns_config_object(self, monkeypatch, config_dir):
         """load_config() with valid files must return a Config, not raise."""
         import core.config as cfg_module
+
         monkeypatch.setattr(cfg_module, "_CONFIG_DIR", config_dir)
 
         from core.config import Config
+
         result = cfg_module.load_config()
         assert isinstance(result, Config)
 
@@ -804,6 +847,7 @@ class TestLoadConfig:
         the returned Config. This catches a bug where only one file is read.
         """
         import core.config as cfg_module
+
         monkeypatch.setattr(cfg_module, "_CONFIG_DIR", config_dir)
 
         cfg = cfg_module.load_config()
@@ -860,6 +904,7 @@ class TestLoadConfig:
         See module docstring for the required code change.
         """
         import core.config as cfg_module
+
         monkeypatch.setattr(cfg_module, "_CONFIG_DIR", tmp_path)
         # tmp_path has none of the three files
 
@@ -872,6 +917,7 @@ class TestLoadConfig:
         """Only config.yaml present — thresholds.yaml missing."""
         import yaml as _yaml
         import core.config as cfg_module
+
         monkeypatch.setattr(cfg_module, "_CONFIG_DIR", tmp_path)
 
         (tmp_path / "config.yaml").write_text(
@@ -888,6 +934,7 @@ class TestLoadConfig:
         """config.yaml and thresholds.yaml present — routing.yaml missing."""
         import yaml as _yaml
         import core.config as cfg_module
+
         monkeypatch.setattr(cfg_module, "_CONFIG_DIR", tmp_path)
 
         (tmp_path / "config.yaml").write_text(
@@ -911,45 +958,46 @@ class TestLoadConfig:
         """
         import yaml as _yaml
         import core.config as cfg_module
+
         monkeypatch.setattr(cfg_module, "_CONFIG_DIR", config_dir)
 
         # Overwrite thresholds.yaml with an invalid band
         bad_thresholds = config_dir / "thresholds.yaml"
         bad_thresholds.write_text(
-            _yaml.dump({
-                "global": {
-                    "auto": 0.60,    # ← suggest (0.80) > auto (0.60): invalid
-                    "suggest": 0.80,
-                },
-                "pipelines": {},
-            })
+            _yaml.dump(
+                {
+                    "global": {
+                        "auto": 0.60,  # ← suggest (0.80) > auto (0.60): invalid
+                        "suggest": 0.80,
+                    },
+                    "pipelines": {},
+                }
+            )
         )
         with pytest.raises(ConfigError, match="validation failed"):
             cfg_module.load_config()
 
-    def test_raises_config_error_for_invalid_provider(
-        self, monkeypatch, config_dir
-    ):
+    def test_raises_config_error_for_invalid_provider(self, monkeypatch, config_dir):
         """An unrecognised LLM provider in config.yaml must raise ConfigError."""
         import yaml as _yaml
         import core.config as cfg_module
+
         monkeypatch.setattr(cfg_module, "_CONFIG_DIR", config_dir)
 
         # Read, mutate, rewrite config.yaml
         with (config_dir / "config.yaml").open() as f:
             data = _yaml.safe_load(f)
-        data["providers"] = {"classify": "gemini"}     # not in Provider literal
+        data["providers"] = {"classify": "gemini"}  # not in Provider literal
         (config_dir / "config.yaml").write_text(_yaml.dump(data))
 
         with pytest.raises(ConfigError):
             cfg_module.load_config()
 
-    def test_raises_config_error_for_nonexistent_vault(
-        self, monkeypatch, config_dir
-    ):
+    def test_raises_config_error_for_nonexistent_vault(self, monkeypatch, config_dir):
         """Vault root that doesn't exist must raise ConfigError, not ValueError."""
         import yaml as _yaml
         import core.config as cfg_module
+
         monkeypatch.setattr(cfg_module, "_CONFIG_DIR", config_dir)
 
         with (config_dir / "config.yaml").open() as f:
@@ -966,15 +1014,15 @@ class TestLoadConfig:
         project errors with a single `except KMSError` guard.
         """
         from core.exceptions import KMSError
+
         assert issubclass(ConfigError, KMSError)
 
     # ── 8d  keys passthrough ─────────────────────────────────────────────────
 
-    def test_api_key_is_accessible_on_loaded_config(
-        self, monkeypatch, config_dir
-    ):
+    def test_api_key_is_accessible_on_loaded_config(self, monkeypatch, config_dir):
         """After load_config(), the API key from env must be on .keys."""
         import core.config as cfg_module
+
         monkeypatch.setattr(cfg_module, "_CONFIG_DIR", config_dir)
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-99")
 
@@ -994,9 +1042,9 @@ class TestLoadConfig:
 #     pytest -m "not smoke"
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.smoke
 class TestConfigSingleton:
-
     @pytest.fixture(autouse=True)
     def _import_singleton(self):
         """
@@ -1005,6 +1053,7 @@ class TestConfigSingleton:
         """
         try:
             from core.config import CONFIG as _cfg
+
             self.cfg = _cfg
         except (RuntimeError, Exception) as exc:
             pytest.skip(f"CONFIG singleton not loadable: {exc}")
@@ -1029,14 +1078,14 @@ class TestConfigSingleton:
         assert self.cfg.main.vault.root.is_dir()
 
     def test_env_is_dev_or_prod(self):
-        assert self.cfg.main.env in ("dev", "prod")
+        assert self.cfg.main.env in ("dev", "prod", "test")
 
     def test_default_provider_for_classify_is_valid(self):
         assert self.cfg.main.providers.classify in ("claude", "ollama")
 
     def test_routing_pipelines_is_dict(self):
         assert isinstance(self.cfg.routing.pipelines, dict)
-    
+
     def test_route_returns_auto_at_threshold(self):
         band = ConfidenceBand(auto=0.85, suggest=0.60)
         assert band.route(0.85) == RouteDecision.AUTO
