@@ -757,3 +757,386 @@ async def test_classify_step_registry_none_fallback(tmp_path: Path, monkeypatch)
     call_args = classify_mock.call_args
     dest_arg = call_args[0][1]  # second positional arg = destinations string
     assert "Uncategorized" in dest_arg or len(dest_arg) > 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 — AUTO move handoff
+# ---------------------------------------------------------------------------
+
+
+def _write_test_note(path: Path, body: str, actor: str = "ai") -> None:
+    """Write a real .md note file on disk via vault/writer.py."""
+    from vault.writer import write_note
+
+    result = write_note(path, body, NoteMetadata(), actor=actor)  # type: ignore[arg-type]
+    assert isinstance(result, Success), f"write_note failed: {result}"
+
+
+def _setup_project_dirs(vault_root: Path) -> Path:
+    """Create Projects/Alpha/ directory, return the project path."""
+    p = vault_root / "Projects" / "Alpha"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _setup_domain_dirs(vault_root: Path) -> Path:
+    """Create Domain/Finance/ directory, return the domain path."""
+    d = vault_root / "Domain" / "Finance"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+@pytest.mark.asyncio
+async def test_auto_md_moves_to_project_folder(
+    vault_root: Path, pipeline_ctx, monkeypatch
+):
+    """Loose inbox .md, AUTO with project=Alpha.
+
+    Verify: file physically exists at Projects/Alpha/<name>.md, not at inbox
+    path.  documents.vault_path is the new path.  No orphan row at old path.
+    """
+    from pipelines.capture import classify_step
+    from storage.documents import get_by_path
+
+    _setup_project_dirs(vault_root)
+    note_path = vault_root / "inbox" / "my-note.md"
+    _write_test_note(note_path, "## Hello\n\nTest body.")
+
+    _mock_classify(
+        monkeypatch,
+        Success(_make_classify_result(project="Alpha", confidence=0.95)),
+    )
+    _mock_audit_write(monkeypatch)
+    _patch_core_config(monkeypatch, vault_root)
+    ctx = pipeline_ctx
+
+    mr = _make_mr(note_path)
+    result = await classify_step(mr, ctx)
+
+    assert isinstance(result, Success)
+    updated_mr = result.value
+
+    # File moved to project root.
+    expected_dst = vault_root / "Projects" / "Alpha" / "my-note.md"
+    assert expected_dst.exists(), f"Expected {expected_dst} to exist"
+    assert not note_path.exists(), "Original inbox file must be gone"
+
+    # MetadataResult source_path updated.
+    assert updated_mr.raw.source_path == expected_dst
+
+    # DB: new path exists, old path gone.
+    new_row = get_by_path("Projects/Alpha/my-note.md", db_path=ctx.db_path)
+    assert isinstance(new_row, Success)
+    assert new_row.value is not None, "New row must exist"
+
+    old_row = get_by_path("inbox/my-note.md", db_path=ctx.db_path)
+    assert isinstance(old_row, Success)
+    assert old_row.value is None, "Old row must be gone"
+
+
+@pytest.mark.asyncio
+async def test_auto_md_moves_to_domain_folder(
+    vault_root: Path, pipeline_ctx, monkeypatch
+):
+    """Loose inbox .md, AUTO with project=None, primary_domain=Finance.
+
+    Verify: file at Domain/Finance/<name>.md.
+    """
+    from pipelines.capture import classify_step
+    from storage.documents import get_by_path
+
+    _setup_domain_dirs(vault_root)
+    note_path = vault_root / "inbox" / "domain-note.md"
+    _write_test_note(note_path, "## Domain note\n\nBody.")
+
+    _mock_classify(
+        monkeypatch,
+        Success(
+            _make_classify_result(
+                project=None, primary_domain="Finance", confidence=0.95
+            )
+        ),
+    )
+    _mock_audit_write(monkeypatch)
+    _patch_core_config(monkeypatch, vault_root)
+    ctx = pipeline_ctx
+
+    mr = _make_mr(note_path)
+    result = await classify_step(mr, ctx)
+
+    assert isinstance(result, Success)
+    updated_mr = result.value
+
+    expected_dst = vault_root / "Domain" / "Finance" / "domain-note.md"
+    assert expected_dst.exists(), f"Expected {expected_dst} to exist"
+    assert not note_path.exists()
+
+    assert updated_mr.raw.source_path == expected_dst
+
+    new_row = get_by_path("Domain/Finance/domain-note.md", db_path=ctx.db_path)
+    assert isinstance(new_row, Success)
+    assert new_row.value is not None
+
+
+@pytest.mark.asyncio
+async def test_auto_md_move_guard_registered(
+    vault_root: Path, pipeline_ctx, monkeypatch
+):
+    """After an AUTO .md move, verify move_guard.register was called with the
+    destination path before the move.
+    """
+    from pipelines.capture import classify_step
+    from vault.move_guard import MoveGuard, set_active
+
+    _setup_project_dirs(vault_root)
+    note_path = vault_root / "inbox" / "guard-test.md"
+    _write_test_note(note_path, "## Guard test\n\nBody.")
+
+    # Install a real MoveGuard so classify_step can register the destination.
+    guard = MoveGuard()
+    set_active(guard)
+
+    _mock_classify(
+        monkeypatch,
+        Success(_make_classify_result(project="Alpha", confidence=0.95)),
+    )
+    _mock_audit_write(monkeypatch)
+    _patch_core_config(monkeypatch, vault_root)
+    ctx = pipeline_ctx
+
+    mr = _make_mr(note_path)
+    result = await classify_step(mr, ctx)
+
+    assert isinstance(result, Success)
+    expected_dst = vault_root / "Projects" / "Alpha" / "guard-test.md"
+    assert expected_dst.exists()
+
+    # Verify move_guard registered the destination.
+    # check_and_consume removes the entry on first match — it should still be
+    # there since no watcher consumed it.
+    registered = guard.check_and_consume(expected_dst)
+    assert registered, "move_guard must have registered the destination path"
+
+    set_active(None)  # cleanup
+
+
+@pytest.mark.asyncio
+async def test_auto_md_replace_path_atomic(vault_root: Path, pipeline_ctx, monkeypatch):
+    """After the move, verify exactly 1 documents row exists for the note
+    (no duplicate at old + new path).
+    """
+    from pipelines.capture import classify_step
+    from storage.documents import get_by_path
+
+    _setup_project_dirs(vault_root)
+    note_path = vault_root / "inbox" / "atomic-test.md"
+    _write_test_note(note_path, "## Atomic\n\nBody.")
+
+    _mock_classify(
+        monkeypatch,
+        Success(_make_classify_result(project="Alpha", confidence=0.95)),
+    )
+    _mock_audit_write(monkeypatch)
+    _patch_core_config(monkeypatch, vault_root)
+    ctx = pipeline_ctx
+
+    mr = _make_mr(note_path)
+    result = await classify_step(mr, ctx)
+
+    assert isinstance(result, Success)
+
+    # Only 1 row: new path exists, old path does not.
+    new_row = get_by_path("Projects/Alpha/atomic-test.md", db_path=ctx.db_path)
+    assert isinstance(new_row, Success)
+    assert new_row.value is not None
+
+    old_row = get_by_path("inbox/atomic-test.md", db_path=ctx.db_path)
+    assert isinstance(old_row, Success)
+    assert old_row.value is None
+
+
+@pytest.mark.asyncio
+async def test_auto_binary_routes_through_store_nonmd(
+    vault_root: Path, pipeline_ctx, monkeypatch
+):
+    """Loose inbox PDF, AUTO with project=Alpha.
+
+    Verify classify_step sets target_type/target_name on MetadataResult.
+    Then verify store() passes them through to _store_nonmd.
+    """
+    from pipelines.capture import classify_step
+    from unittest.mock import patch
+
+    _setup_project_dirs(vault_root)
+    # No real binary needed — classify_step only checks mr.raw.is_md.
+    note_path = vault_root / "inbox" / "report.pdf"
+
+    _mock_classify(
+        monkeypatch,
+        Success(_make_classify_result(project="Alpha", confidence=0.95)),
+    )
+    _mock_audit_write(monkeypatch)
+    _patch_core_config(monkeypatch, vault_root)
+    ctx = pipeline_ctx
+
+    # Step 1: classify_step sets target_type/target_name.
+    mr = _make_mr(note_path, is_md=False)
+    result = await classify_step(mr, ctx)
+
+    assert isinstance(result, Success)
+    updated_mr = result.value
+    assert updated_mr.target_type == "project"
+    assert updated_mr.target_name == "Alpha"
+    assert updated_mr.ai_project == "Alpha"
+
+    # Step 2: Verify store() passes target_type/target_name to _store_nonmd.
+    async def _fake_store_nonmd(mr, note_meta, ctx, target_type=None, target_name=None):
+        return Success(
+            MagicMock(
+                vault_path="Projects/Alpha/attachment/.summaries/report.pdf.md",
+                absolute_path=MagicMock(),
+                content_hash="abc",
+                metadata=MagicMock(),
+            )
+        )
+
+    with patch(
+        "pipelines.capture._store_nonmd", side_effect=_fake_store_nonmd
+    ) as mock_sn:
+        from pipelines.capture import store
+
+        store_result = await store(updated_mr, ctx)
+        assert isinstance(store_result, Success)
+        mock_sn.assert_called_once()
+        call_kw = mock_sn.call_args.kwargs
+        assert call_kw["target_type"] == "project"
+        assert call_kw["target_name"] == "Alpha"
+
+
+@pytest.mark.asyncio
+async def test_auto_binary_batch_id_null(vault_root: Path, pipeline_ctx, monkeypatch):
+    """After an AUTO move to project root, verify batch_id on the documents
+    row is NULL.  (P2-CIC-07 / R3)
+
+    For md files, classify_step calls replace_path(batch_id=None).
+    Verify the DB row has NULL batch_id after the AUTO move.
+    """
+    from pipelines.capture import classify_step
+    from storage.documents import get_by_path
+
+    _setup_project_dirs(vault_root)
+    note_path = vault_root / "inbox" / "batchless-md.md"
+    _write_test_note(note_path, "## Batchless\n\nBody.")
+
+    _mock_classify(
+        monkeypatch,
+        Success(_make_classify_result(project="Alpha", confidence=0.95)),
+    )
+    _mock_audit_write(monkeypatch)
+    _patch_core_config(monkeypatch, vault_root)
+    ctx = pipeline_ctx
+
+    mr = _make_mr(note_path)
+    result = await classify_step(mr, ctx)
+
+    assert isinstance(result, Success)
+
+    # Verify DB row has NULL batch_id.
+    new_row = get_by_path("Projects/Alpha/batchless-md.md", db_path=ctx.db_path)
+    assert isinstance(new_row, Success)
+    assert new_row.value is not None
+    assert new_row.value.batch_id is None, (
+        f"Expected batch_id=NULL, got {new_row.value.batch_id}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_auto_human_locked_fallback(vault_root: Path, pipeline_ctx, monkeypatch):
+    """Loose inbox .md with updated_by_human=true.
+
+    AUTO triggered but move_note returns Failure(recoverable=False).
+    Verify: file stays in inbox, candidate fields written (SUGGEST-style),
+    no crash.  (R5)
+    """
+    from pipelines.capture import classify_step
+    from storage.documents import get_by_path
+
+    _setup_project_dirs(vault_root)
+    note_path = vault_root / "inbox" / "locked-note.md"
+    # Write with actor="human" so updated_by_human=true is set on disk.
+    _write_test_note(note_path, "## Locked\n\nBody.", actor="human")
+
+    _mock_classify(
+        monkeypatch,
+        Success(_make_classify_result(project="Alpha", confidence=0.95)),
+    )
+    _mock_audit_write(monkeypatch)
+    _patch_core_config(monkeypatch, vault_root)
+
+    # Mock write_note for candidate fallback (SUGGEST-style).
+    write_note_mock = _mock_write_note(monkeypatch)
+
+    ctx = pipeline_ctx
+    mr = _make_mr(note_path)
+    result = await classify_step(mr, ctx)
+
+    assert isinstance(result, Success)
+    # File must stay in inbox — move was blocked by human lock.
+    assert note_path.exists(), "Locked file must stay in inbox"
+    expected_dst = vault_root / "Projects" / "Alpha" / "locked-note.md"
+    assert not expected_dst.exists(), "Locked file must NOT be moved"
+
+    # Candidate fields written (SUGGEST-style fallback).
+    write_note_mock.assert_called_once()
+    written_meta = write_note_mock.call_args.args[2]
+    assert written_meta.status == "needs-review"
+    assert written_meta.suggested_project == "Alpha"
+    assert written_meta.suggested_primary_domain == "Finance"
+    # Reasoning includes the block reason.
+    assert "blocked" in written_meta.classify_reasoning.lower()
+
+    # No DB row at destination.
+    new_row = get_by_path("Projects/Alpha/locked-note.md", db_path=ctx.db_path)
+    assert isinstance(new_row, Success)
+    assert new_row.value is None
+
+
+@pytest.mark.asyncio
+async def test_auto_md_metadata_result_updated(
+    vault_root: Path, pipeline_ctx, monkeypatch
+):
+    """After an AUTO .md move, verify the MetadataResult returned has
+    raw.source_path pointing to the new location (via dataclasses.replace).
+    """
+    from pipelines.capture import classify_step
+
+    _setup_project_dirs(vault_root)
+    note_path = vault_root / "inbox" / "mr-update-test.md"
+    _write_test_note(note_path, "## MR Update\n\nBody.")
+
+    _mock_classify(
+        monkeypatch,
+        Success(_make_classify_result(project="Alpha", confidence=0.95)),
+    )
+    _mock_audit_write(monkeypatch)
+    _patch_core_config(monkeypatch, vault_root)
+    ctx = pipeline_ctx
+
+    mr = _make_mr(note_path)
+    result = await classify_step(mr, ctx)
+
+    assert isinstance(result, Success)
+    updated_mr = result.value
+
+    # raw.source_path must point to the new location.
+    expected_dst = vault_root / "Projects" / "Alpha" / "mr-update-test.md"
+    assert updated_mr.raw.source_path == expected_dst
+
+    # The file must exist at the new path.
+    assert expected_dst.exists()
+
+    # ai_project must be stamped.
+    assert updated_mr.ai_project == "Alpha"
+
+    # source_path in raw is a Path object (not a string).
+    assert isinstance(updated_mr.raw.source_path, Path)

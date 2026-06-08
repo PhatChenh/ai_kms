@@ -82,6 +82,8 @@ class MetadataResult:
     ai_tags: list[str]
     decision: AIDecision
     ai_project: str | None = None
+    target_type: str | None = None
+    target_name: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -422,6 +424,142 @@ def _write_classify_audit(
             pass
 
 
+def _classify_auto_md_move(
+    mr: MetadataResult,
+    cr: ClassifyResult,
+    ctx: PipelineContext,
+    source_id: str,
+) -> Result[MetadataResult]:
+    """Phase 6: AUTO move handoff for loose inbox .md files.
+
+    Moves the file to Projects/<A>/ or Domain/<D>/, updates the documents row,
+    and returns an updated MetadataResult whose raw.source_path points to the
+    new location so store() does an in-place write at the destination.
+
+    If move_note fails (e.g. human lock), falls back to SUGGEST-style candidate
+    fields and returns the original mr unchanged — file stays in inbox.
+    """
+    src = mr.raw.source_path
+    vault_cfg = ctx.config.vault
+
+    # Determine target directory.
+    if cr.project:
+        target_dir = vault_cfg.projects_path / cr.project
+    else:
+        target_dir = vault_cfg.domain_path / (cr.primary_domain or "")
+
+    # Ensure target directory exists.
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    # Pick a non-colliding destination filename.
+    dst = _find_rename_dst(target_dir, src.stem)
+    if dst is None:
+        logger.warning(
+            "classify_step.auto_move_collision",
+            src=str(src),
+            target_dir=str(target_dir),
+            reason="all 10 rename slots taken",
+        )
+        # Fall back to SUGGEST — candidate fields, file stays in inbox.
+        _write_classify_candidate(
+            src,
+            cr.project,
+            cr.primary_domain,
+            cr.confidence,
+            cr.reasoning + " (AUTO move skipped: destination collision)",
+        )
+        return Success(mr)
+
+    # Register destination with move guard so watcher doesn't re-home.
+    _g = get_active()
+    if _g is not None:
+        _g.register(dst)
+
+    # Move the note.
+    old_vault_path = to_vault_path(src)
+    match move_note(src, dst, actor="ai"):
+        case Failure(recoverable=False) as f:
+            # Human lock — file stays in inbox, SUGGEST-style fallback
+            logger.warning(
+                "classify_step.auto_move_human_locked",
+                src=str(src),
+                dst=str(dst),
+                error=f.error,
+            )
+            _write_classify_candidate(
+                src,
+                cr.project,
+                cr.primary_domain,
+                cr.confidence,
+                cr.reasoning + f" (AUTO move blocked: {f.error})",
+            )
+            return Success(mr)
+        case Failure(error=err):
+            # Other error — log, CLUELESS-style fallback
+            logger.error(
+                "classify_step.auto_move_failed",
+                src=str(src),
+                dst=str(dst),
+                error=err,
+            )
+            _write_classify_candidate(
+                src,
+                None,
+                None,
+                cr.confidence,
+                cr.reasoning + f" (AUTO move failed: {err})",
+            )
+            return Success(mr)
+        case Success(value=outcome):
+            pass
+
+    # Update documents row — batch_id=NULL per P2-CIC-07 / R3.
+    match documents.replace_path(
+        old_vault_path, outcome, db_path=ctx.db_path, batch_id=None
+    ):
+        case Failure(error=err):
+            # DB failed — try to roll back the move.
+            logger.error(
+                "classify_step.auto_move_replace_path_failed",
+                src=str(src),
+                dst=str(dst),
+                error=err,
+            )
+            match move_note(dst, src, actor="ai"):
+                case Failure(error=rollback_err):
+                    logger.error(
+                        "classify_step.auto_move_rollback_failed",
+                        src=str(src),
+                        dst=str(dst),
+                        original_error=err,
+                        rollback_error=rollback_err,
+                    )
+                case Success():
+                    pass
+            # Fall back to SUGGEST — candidate fields, file back in inbox.
+            _write_classify_candidate(
+                src,
+                cr.project,
+                cr.primary_domain,
+                cr.confidence,
+                cr.reasoning + f" (AUTO move failed: DB error)",
+            )
+            return Success(mr)
+        case Success():
+            pass
+
+    logger.info(
+        "classify_step.auto_move_complete",
+        old_path=str(src),
+        new_path=str(dst),
+        target=cr.project or cr.primary_domain,
+    )
+
+    # Update MetadataResult so store() operates on the new location.
+    new_raw = replace(mr.raw, source_path=dst)
+    return Success(replace(mr, raw=new_raw))
+
+
 async def classify_step(
     mr: MetadataResult, ctx: PipelineContext
 ) -> Result[MetadataResult]:
@@ -552,7 +690,21 @@ async def classify_step(
         _write_classify_audit(
             ctx, action, cr.confidence, cr.reasoning, source_id, "AUTO"
         )
-        return Success(updated_mr)
+
+        # Phase 6: AUTO move handoff
+        if mr.raw.is_md:
+            return _classify_auto_md_move(updated_mr, cr, ctx, source_id)
+        else:
+            # Binary: set target_type/target_name so store() → _store_nonmd routes it.
+            _target_type = "project" if cr.project else "domain"
+            _target_name = cr.project or cr.primary_domain
+            return Success(
+                replace(
+                    updated_mr,
+                    target_type=_target_type,
+                    target_name=_target_name,
+                )
+            )
 
     elif decision == RouteDecision.SUGGEST:
         # SUGGEST — write candidate fields, file stays (P2-CIC-02)
@@ -708,7 +860,13 @@ async def store(mr: MetadataResult, ctx: PipelineContext) -> Result[WriteOutcome
     if mr.raw.is_md:
         return await _store_md(mr, note_meta, ctx)
     else:
-        return await _store_nonmd(mr, note_meta, ctx)
+        return await _store_nonmd(
+            mr,
+            note_meta,
+            ctx,
+            target_type=mr.target_type,
+            target_name=mr.target_name,
+        )
 
 
 async def _store_md(
@@ -823,12 +981,9 @@ async def _store_nonmd(
 
     LOCATED: source path reveals project or domain → sibling written first, binary moved second
              (DECISION-025 sibling-first ordering).
-    CLUELESS: no path context → binary parked in inbox, pending-routing marker written for
-              Phase 2 Classify (DECISION-027).
-
-    target_type / target_name, when provided, override the inline path-derived
-    destination.  This lets Phase 2 Classify tell the filer "put this in
-    Projects/Alpha" without having to guess from the source path.
+    CLUELESS: no path context → binary stays in inbox, real-summary sibling written with
+              needs-review status and null suggested_* fields (Phase 7 / C7 replaces old
+              pending-routing placeholder).
     """
 
     src = mr.raw.source_path
@@ -980,8 +1135,10 @@ async def _store_nonmd(
                 return Success(sibling_outcome)
 
     else:
-        # CLUELESS path: no project/domain context (DECISION-027)
-        # Binary parked in inbox; pending-routing marker written for Phase 2 Classify.
+        # CLUELESS path: no project/domain context.
+        # classify_step has already run and determined CLUELESS; now write a
+        # real-summary marker with needs-review status (replaces old pending-routing
+        # placeholder — Phase 7 / C7).
         if vault_cfg.inbox_path in src.parents:
             final_src = src  # already in inbox — stays
         else:
@@ -1000,24 +1157,49 @@ async def _store_nonmd(
                 case Success():
                     final_src = inbox_dst
 
-        # Write pending-routing marker at inbox/.summaries/<filename>.md
+        # Handle missing binary (e.g., deleted after extraction — TD-026).
+        if not final_src.exists():
+            _source_hash = None
+            rich_body = (
+                f"## {mr.ai_title or final_src.stem}\n\n"
+                f"{mr.summary}\n\n"
+                f"_Warning: binary file not found at capture time._\n"
+            )
+        else:
+            # Generate rich summary body (same prompt as LOCATED path).
+            provider = get_provider("capture", ctx.config)
+            system, user = PROMPTS["summarize_attachment"].render(
+                file_type=suffix.lower(),
+                short_summary=mr.summary,
+                text=mr.raw.text,
+            )
+            match await provider.complete(system, user):
+                case Failure() as f:
+                    return f
+                case Success(value=resp):
+                    rich_body = resp.content.strip()
+
+            # Compute source_hash for idempotent re-entry guard.
+            _source_hash = hashlib.sha256(final_src.read_bytes()).hexdigest()
+
+        # Write needs-review marker at inbox/.summaries/<filename>.md
         summaries_dir = vault_cfg.inbox_path / vault_cfg.summaries_subdir
         summaries_dir.mkdir(parents=True, exist_ok=True)
         marker_path = summaries_dir / f"{final_src.name}.md"
         attachment_rel = to_vault_path(final_src)
         marker_meta = NoteMetadata(
             type="attachment-summary",
-            status="pending-routing",
+            status="needs-review",
             attachment_path=attachment_rel,
+            summary=mr.summary,
+            source_hash=_source_hash,
             tags=["type/attachment-summary"],
+            suggested_project=None,
+            suggested_primary_domain=None,
+            classify_confidence=0.0,
+            classify_reasoning="No project/domain context — manual review required.",
         )
-        marker_body = (
-            f"_Pending classification — binary at:_ `{attachment_rel}`\n\n"
-            "This marker was created by the capture pipeline without project/domain "
-            "context. Phase 2 (Classify) will replace this body with a full summary "
-            "and route the binary into a project or domain attachment folder.\n"
-        )
-        match write_note(marker_path, marker_body, marker_meta, actor="ai"):
+        match write_note(marker_path, rich_body, marker_meta, actor="ai"):
             case Failure() as f:
                 return f
             case Success(value=marker_outcome):
@@ -1027,7 +1209,7 @@ async def _store_nonmd(
         clueless_decision = AIDecision(
             action="capture:store",
             confidence=1.0,
-            reasoning="No project/domain context — parked for Phase 2 Classify",
+            reasoning="No project/domain context — needs manual review",
             source_ids=[to_vault_path(src)],
         )
         match audit.write(
@@ -1116,20 +1298,6 @@ async def capture_file(
                 "cooldown_seconds": cooldown,
             },
         )
-
-    # Early-exit guard for CLUELESS binaries already parked in inbox (DECISION-027).
-    # If inbox/.summaries/<filename>.md has status=pending-routing, skip re-processing.
-    if path.suffix.lower() != ".md":
-        vault_cfg = context.config.vault
-        marker = vault_cfg.inbox_path / vault_cfg.summaries_subdir / f"{path.name}.md"
-        if marker.exists():
-            match read_note(marker):
-                case Success(value=note) if note.metadata.status == "pending-routing":
-                    return Failure(
-                        error="pending-routing — binary already indexed; awaiting Phase 2 classify",
-                        recoverable=True,
-                        context={"path": str(path), "marker": str(marker)},
-                    )
 
     # Idempotent-capture guard: skip if file content is unchanged since last capture.
     # For .md files: compare body hash (same method as write_note) against DB content_hash.
@@ -1549,12 +1717,17 @@ async def _capture_folder_files(
 
     Failures (including FILE_LOST) are counted but never abort the loop. Returns
     Success of the successful WriteOutcomes.
+
+    Sets skip_classify=True on the per-file context — files captured under this
+    helper are already LOCATED (project/domain path) or AUTO-moved, so per-file
+    classify is unnecessary (C7 / P2-CIC-06).
     """
+    ctx_suppress = replace(ctx, skip_classify=True)
     outcomes: list[WriteOutcome] = []
     failures = 0
     for f in files:
         try:
-            result = await capture_file(f, ctx)
+            result = await capture_file(f, ctx_suppress)
         except Exception as exc:  # defensive: a file capture must not kill the batch
             failures += 1
             logger.warning("capture_folder.file_exception", path=str(f), error=str(exc))
@@ -1793,6 +1966,8 @@ async def capture_folder(
 
     # CLUELESS (or AUTO without a valid target): write per-file CLUELESS markers
     # through the existing capture pipeline, then record a CLUELESS batch.
+    # Per-file classify is suppressed — folder-level classify already ran and
+    # returned CLUELESS; re-running per-file is redundant (C7 / P2-CIC-06).
     batch_id = _insert_batch(
         folder_path.name,
         target_type,
@@ -1803,9 +1978,9 @@ async def capture_folder(
         ctx,
         folder_path=to_folder_path(folder_path, vault_cfg.root),
     )
-    ctx_with_batch = replace(ctx, batch_id=batch_id)
+    ctx_suppress = replace(ctx, batch_id=batch_id, skip_classify=True)
     for f in files:
-        match await capture_file(f, ctx_with_batch):
+        match await capture_file(f, ctx_suppress):
             case Failure(error=e):
                 logger.info("capture_folder.clueless_file_failed", path=str(f), error=e)
             case Success():
