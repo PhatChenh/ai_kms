@@ -36,20 +36,6 @@ def _make_old_file(path: Path, content: str = "Some content.") -> Path:
     return path
 
 
-def _classify_response(
-    target_type: str, target_name: str, confidence: float
-) -> Success:
-    """A Success(LLMResponse) carrying a classify_folder JSON verdict."""
-    payload = json.dumps(
-        {
-            "target_type": target_type,
-            "target_name": target_name,
-            "confidence": confidence,
-        }
-    )
-    return Success(LLMResponse(content=payload, model="test", usage={}))
-
-
 @pytest.fixture()
 def folder_ctx(pipeline_ctx):
     """pipeline_ctx with a real classify ConfidenceBand wired onto config.thresholds.
@@ -94,13 +80,38 @@ def _documents_rows(db_path: Path) -> list[dict]:
 async def test_inbox_auto_confidence_moves_folder_and_captures_files(
     folder_ctx, vault_root, monkeypatch
 ):
+    from unittest.mock import AsyncMock
+
     from pipelines.capture import capture_folder
+    from pipelines.classify import ClassifyResult
 
     folder = vault_root / "inbox" / "research-drop"
     _make_old_file(folder / "a.md", "# A\n\nbody a")
     _make_old_file(folder / "b.md", "# B\n\nbody b")
 
-    provider = _UnifiedProvider("project", "Alpha", 0.95)
+    # Mock classify() to return AUTO confidence (0.95) for project Alpha.
+    mock_classify = AsyncMock(
+        return_value=Success(
+            ClassifyResult(
+                project="Alpha",
+                domains=["finance"],
+                primary_domain="Finance",
+                confidence=0.95,
+                reasoning="Clear project match.",
+            )
+        )
+    )
+    monkeypatch.setattr("pipelines.capture.classify", mock_classify)
+
+    # Per-file capture needs get_provider (capture_file internals).
+    provider = AsyncMock()
+    provider.complete.return_value = Success(
+        LLMResponse(
+            content=json.dumps({"title": "T", "tags": ["test"]}),
+            model="t",
+            usage={},
+        )
+    )
     monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: provider)
 
     result = await capture_folder(folder, context=folder_ctx)
@@ -160,14 +171,27 @@ async def test_empty_folder_returns_empty_success(folder_ctx, vault_root, monkey
 async def test_inbox_suggest_confidence_no_folder_move(
     folder_ctx, vault_root, monkeypatch
 ):
+    from unittest.mock import AsyncMock
+
     from pipelines.capture import capture_folder
+    from pipelines.classify import ClassifyResult
 
     folder = vault_root / "inbox" / "maybe-drop"
     _make_old_file(folder / "a.md", "# A\n\nbody")
 
-    provider = AsyncMock()
-    provider.complete.return_value = _classify_response("domain", "Engineering", 0.75)
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: provider)
+    # classify returns confidence 0.75 → SUGGEST band
+    mock_classify = AsyncMock(
+        return_value=Success(
+            ClassifyResult(
+                project=None,
+                domains=["engineering"],
+                primary_domain="Engineering",
+                confidence=0.75,
+                reasoning="Likely Engineering domain.",
+            )
+        )
+    )
+    monkeypatch.setattr("pipelines.capture.classify", mock_classify)
 
     result = await capture_folder(folder, context=folder_ctx)
 
@@ -178,8 +202,8 @@ async def test_inbox_suggest_confidence_no_folder_move(
     rows = _batches_rows(folder_ctx.db_path)
     assert len(rows) == 1
     assert rows[0]["status"] == "PENDING_REVIEW"
-    # LLM called exactly once (classify only; no per-file capture).
-    assert provider.complete.await_count == 1
+    # classify() called exactly once; no per-file capture for SUGGEST.
+    mock_classify.assert_called_once()
 
 
 # ===========================================================================
@@ -189,12 +213,37 @@ async def test_inbox_suggest_confidence_no_folder_move(
 
 @pytest.mark.asyncio
 async def test_inbox_clueless_no_folder_move(folder_ctx, vault_root, monkeypatch):
+    from unittest.mock import AsyncMock
+
     from pipelines.capture import capture_folder
+    from pipelines.classify import ClassifyResult
 
     folder = vault_root / "inbox" / "mystery-drop"
     _make_old_file(folder / "a.md", "# A\n\nbody")
 
-    provider = _UnifiedProvider("project", "Alpha", 0.3)
+    # classify returns confidence 0.3 → CLUELESS band
+    mock_classify = AsyncMock(
+        return_value=Success(
+            ClassifyResult(
+                project=None,
+                domains=[],
+                primary_domain=None,
+                confidence=0.3,
+                reasoning="Cannot determine — too vague.",
+            )
+        )
+    )
+    monkeypatch.setattr("pipelines.capture.classify", mock_classify)
+
+    # Per-file capture needs get_provider for the CLUELESS path
+    provider = AsyncMock()
+    provider.complete.return_value = Success(
+        LLMResponse(
+            content=json.dumps({"title": "T", "tags": ["test"]}),
+            model="t",
+            usage={},
+        )
+    )
     monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: provider)
 
     result = await capture_folder(folder, context=folder_ctx)
@@ -364,32 +413,6 @@ async def test_single_file_capture_leaves_batch_id_null(
     )
 
 
-class _UnifiedProvider:
-    """Single provider whose first complete() call returns a classify verdict and
-    all subsequent calls return capture-pipeline JSON (usable as summary + metadata).
-
-    Sequence per folder run:
-      1. classify_folder        → classify JSON
-      2..n per-file capture      → summary / extract_metadata JSON
-    """
-
-    def __init__(self, target_type: str, target_name: str, confidence: float):
-        self._verdict = (target_type, target_name, confidence)
-        self._n = 0
-
-    async def complete(self, system, user):
-        self._n += 1
-        if self._n == 1:
-            return _classify_response(*self._verdict)
-        return Success(
-            LLMResponse(
-                content=json.dumps({"title": "Captured", "tags": ["test"]}),
-                model="test",
-                usage={},
-            )
-        )
-
-
 # ===========================================================================
 # TD-049 NFC Fix — folder_path NFC normalization
 # ===========================================================================
@@ -510,4 +533,357 @@ async def test_folder_path_nfc_matches_batch_lookup(
     assert second_doc[0]["batch_id"] == batch_id, (
         f"capture_file must stamp batch_id={batch_id} from existing batch, "
         f"got batch_id={second_doc[0]['batch_id']}"
+    )
+
+
+# ===========================================================================
+# Phase 9 — Folder Migration (unified classify engine)
+# ===========================================================================
+
+
+class TestFolderMigrationUnifiedEngine:
+    """P2-CIC Phase 9 — capture_folder Case A uses classify() not classify_folder."""
+
+    @pytest.mark.asyncio
+    async def test_folder_classify_uses_unified_engine(
+        self, folder_ctx, vault_root, monkeypatch
+    ):
+        """Drop a folder in inbox: classify() is called and returns ClassifyResult."""
+        from unittest.mock import AsyncMock
+
+        from pipelines.capture import capture_folder
+        from pipelines.classify import ClassifyResult
+
+        folder = vault_root / "inbox" / "migrate-test"
+        _make_old_file(folder / "a.md", "# A\n\nbody a")
+
+        mock_result = Success(
+            ClassifyResult(
+                project="Alpha",
+                domains=["finance"],
+                primary_domain="Finance",
+                confidence=0.95,
+                reasoning="Clear project match.",
+            )
+        )
+        mock_classify = AsyncMock(return_value=mock_result)
+        monkeypatch.setattr("pipelines.capture.classify", mock_classify)
+
+        result = await capture_folder(folder, context=folder_ctx)
+
+        # classify() was called (the unified engine), not the old folder prompt
+        mock_classify.assert_called_once()
+        call_args = mock_classify.call_args
+        # First positional arg = subject containing folder name
+        assert "migrate-test" in call_args[0][0]
+        # Second arg = valid_destinations (from _build_vault_context)
+        assert isinstance(call_args[0][1], str)
+        # Third arg = config
+        assert call_args[0][2] is folder_ctx.config
+
+        # Result is success
+        assert isinstance(result, Success)
+
+    @pytest.mark.asyncio
+    async def test_folder_classify_auto_routes_correctly(
+        self, folder_ctx, vault_root, monkeypatch
+    ):
+        """Folder classify AUTO: folder moves to Projects/<project>/ destination."""
+        from unittest.mock import AsyncMock
+
+        from pipelines.capture import capture_folder
+        from pipelines.classify import ClassifyResult
+
+        folder = vault_root / "inbox" / "auto-migrate"
+        _make_old_file(folder / "a.md", "# A\n\nbody a")
+
+        # classify returns project=Alpha, confidence 0.95 → AUTO band
+        mock_result = Success(
+            ClassifyResult(
+                project="Alpha",
+                domains=["finance"],
+                primary_domain="Finance",
+                confidence=0.95,
+                reasoning="Clear project Alpha match.",
+            )
+        )
+        mock_classify = AsyncMock(return_value=mock_result)
+        monkeypatch.setattr("pipelines.capture.classify", mock_classify)
+
+        # We also need get_provider for per-file capture (capture_file internals)
+        provider = AsyncMock()
+        provider.complete.return_value = Success(
+            LLMResponse(
+                content=json.dumps({"title": "T", "tags": ["test"]}),
+                model="t",
+                usage={},
+            )
+        )
+        monkeypatch.setattr(
+            "pipelines.capture.get_provider", lambda task, config: provider
+        )
+
+        result = await capture_folder(folder, context=folder_ctx)
+
+        assert isinstance(result, Success)
+        # Folder moved out of inbox
+        assert not folder.exists()
+        moved = vault_root / "Projects" / "auto-migrate"
+        assert moved.exists()
+
+        # Batch row exists with correct destination
+        rows = _batches_rows(folder_ctx.db_path)
+        assert len(rows) == 1
+        assert rows[0]["destination_type"] == "project"
+        assert rows[0]["destination_name"] == "Alpha"
+        assert rows[0]["confidence"] == 0.95
+
+    @pytest.mark.asyncio
+    async def test_folder_classify_suggest_unchanged(
+        self, folder_ctx, vault_root, monkeypatch
+    ):
+        """Folder classify SUGGEST: batch PENDING_REVIEW, no folder move."""
+        from unittest.mock import AsyncMock
+
+        from pipelines.capture import capture_folder
+        from pipelines.classify import ClassifyResult
+
+        folder = vault_root / "inbox" / "suggest-migrate"
+        _make_old_file(folder / "a.md", "# A\n\nbody a")
+
+        # classify returns confidence 0.75 → SUGGEST band
+        mock_result = Success(
+            ClassifyResult(
+                project="Alpha",
+                domains=["finance"],
+                primary_domain="Finance",
+                confidence=0.75,
+                reasoning="Likely Alpha but some ambiguity.",
+            )
+        )
+        mock_classify = AsyncMock(return_value=mock_result)
+        monkeypatch.setattr("pipelines.capture.classify", mock_classify)
+
+        result = await capture_folder(folder, context=folder_ctx)
+
+        assert isinstance(result, Success)
+        assert result.value == []
+        # Folder NOT moved
+        assert folder.exists()
+        rows = _batches_rows(folder_ctx.db_path)
+        assert len(rows) == 1
+        assert rows[0]["status"] == "PENDING_REVIEW"
+
+    @pytest.mark.asyncio
+    async def test_folder_classify_clueless_unchanged(
+        self, folder_ctx, vault_root, monkeypatch
+    ):
+        """Folder classify CLUELESS: per-file markers, folder stays, CLUELESS batch."""
+        from unittest.mock import AsyncMock
+
+        from pipelines.capture import capture_folder
+        from pipelines.classify import ClassifyResult
+
+        folder = vault_root / "inbox" / "clueless-migrate"
+        _make_old_file(folder / "a.md", "# A\n\nbody a")
+
+        # classify returns confidence 0.3 → CLUELESS band
+        mock_result = Success(
+            ClassifyResult(
+                project=None,
+                domains=[],
+                primary_domain=None,
+                confidence=0.3,
+                reasoning="Cannot determine — too vague.",
+            )
+        )
+        mock_classify = AsyncMock(return_value=mock_result)
+        monkeypatch.setattr("pipelines.capture.classify", mock_classify)
+
+        # Per-file capture needs get_provider
+        provider = AsyncMock()
+        provider.complete.return_value = Success(
+            LLMResponse(
+                content=json.dumps({"title": "T", "tags": ["test"]}),
+                model="t",
+                usage={},
+            )
+        )
+        monkeypatch.setattr(
+            "pipelines.capture.get_provider", lambda task, config: provider
+        )
+
+        result = await capture_folder(folder, context=folder_ctx)
+
+        assert isinstance(result, Success)
+        assert result.value == []
+        # Folder NOT moved
+        assert folder.exists()
+        rows = _batches_rows(folder_ctx.db_path)
+        assert len(rows) == 1
+        assert rows[0]["status"] == "CLUELESS"
+
+    @pytest.mark.asyncio
+    async def test_folder_classify_failure_treated_as_clueless(
+        self, folder_ctx, vault_root, monkeypatch
+    ):
+        """classify() returns Failure → treated as CLUELESS (confidence 0.0)."""
+        from unittest.mock import AsyncMock
+
+        from pipelines.capture import capture_folder
+
+        folder = vault_root / "inbox" / "failure-migrate"
+        _make_old_file(folder / "a.md", "# A\n\nbody a")
+
+        mock_classify = AsyncMock(
+            return_value=Failure(
+                error="API timeout",
+                recoverable=True,
+                context={},
+            )
+        )
+        monkeypatch.setattr("pipelines.capture.classify", mock_classify)
+
+        # Per-file capture needs get_provider (CLUELESS path runs capture_file)
+        provider = AsyncMock()
+        provider.complete.return_value = Success(
+            LLMResponse(
+                content=json.dumps({"title": "T", "tags": ["test"]}),
+                model="t",
+                usage={},
+            )
+        )
+        monkeypatch.setattr(
+            "pipelines.capture.get_provider", lambda task, config: provider
+        )
+
+        result = await capture_folder(folder, context=folder_ctx)
+
+        assert isinstance(result, Success)
+        assert result.value == []
+        # Folder NOT moved
+        assert folder.exists()
+        rows = _batches_rows(folder_ctx.db_path)
+        assert len(rows) == 1
+        assert rows[0]["status"] == "CLUELESS"
+        assert rows[0]["confidence"] == 0.0
+
+
+# ===========================================================================
+# Phase 9 — classify_folder.yaml removal verification
+# ===========================================================================
+
+
+class TestClassifyFolderYamlDeleted:
+    """P2-CIC Phase 9 — the old classify_folder.yaml prompt file is gone."""
+
+    def test_classify_folder_yaml_deleted(self):
+        """Verify prompts/classify_folder.yaml no longer exists."""
+        import importlib.resources
+
+        prompt_path = (
+            Path(__file__).parent.parent.parent
+            / "src"
+            / "prompts"
+            / "classify_folder.yaml"
+        )
+        assert not prompt_path.exists(), (
+            f"classify_folder.yaml still exists at {prompt_path}. "
+            f"Phase 9 migration should have deleted it."
+        )
+
+
+# ===========================================================================
+# Phase 7 (C7) — SUPPRESS per-file classify in folder capture paths
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_folder_clueless_loop_sets_suppress(folder_ctx, vault_root, monkeypatch):
+    """Folder CLUELESS: per-file capture uses skip_classify=True (C7/P2-CIC-06)."""
+    from unittest.mock import AsyncMock
+    from pipelines.capture import capture_folder
+    from pipelines.classify import ClassifyResult
+
+    folder = vault_root / "inbox" / "clueless-folder"
+    _make_old_file(folder / "a.md", "# A\n\nbody a")
+    _make_old_file(folder / "b.md", "# B\n\nbody b")
+
+    # classify returns CLUELESS
+    classify_calls = []
+
+    async def track_classify(*args, **kwargs):
+        classify_calls.append(args)
+        return Success(
+            ClassifyResult(
+                project=None,
+                domains=[],
+                primary_domain=None,
+                confidence=0.3,
+                reasoning="Too vague.",
+            )
+        )
+
+    monkeypatch.setattr("pipelines.capture.classify", track_classify)
+
+    # per-file capture needs get_provider for CLUELESS path
+    provider = AsyncMock()
+    provider.complete.return_value = Success(
+        LLMResponse(
+            content=json.dumps({"title": "T", "tags": ["test"]}),
+            model="t",
+            usage={},
+        )
+    )
+    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: provider)
+
+    result = await capture_folder(folder, context=folder_ctx)
+
+    assert isinstance(result, Success)
+    # classify must be called exactly once (folder classify only)
+    # If per-file classify were running, we would see 1 folder + 2 files = 3 calls
+    assert len(classify_calls) == 1, (
+        f"Expected 1 classify call (folder only), got {len(classify_calls)}. "
+        f"Per-file classify must be suppressed via skip_classify=True."
+    )
+
+
+@pytest.mark.asyncio
+async def test_capture_folder_files_sets_suppress(folder_ctx, vault_root, monkeypatch):
+    """_capture_folder_files sets skip_classify=True on per-file context (C7)."""
+    from pipelines.capture import _capture_folder_files
+    from core.pipeline import PipelineContext
+    from dataclasses import replace
+
+    project_dir = vault_root / "Projects" / "TestProject"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    _make_old_file(project_dir / "note.md", "# Note\n\nbody")
+
+    files = [project_dir / "note.md"]
+
+    # Track capture_file calls to inspect context
+    ctx_seen: list[PipelineContext] = []
+
+    async def track_capture_file(path, context):
+        ctx_seen.append(context)
+        from vault.writer import WriteOutcome
+        from vault.frontmatter import NoteMetadata
+
+        return Success(
+            WriteOutcome(
+                vault_path="test/vp",
+                absolute_path=path,
+                content_hash="abc",
+                metadata=NoteMetadata(),
+            )
+        )
+
+    monkeypatch.setattr("pipelines.capture.capture_file", track_capture_file)
+
+    ctx = replace(folder_ctx, batch_id=42)
+    await _capture_folder_files(project_dir, files, ctx)
+
+    assert len(ctx_seen) == 1, f"Expected 1 capture_file call, got {len(ctx_seen)}"
+    assert ctx_seen[0].skip_classify is True, (
+        f"_capture_folder_files must pass skip_classify=True to per-file context"
     )
