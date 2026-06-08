@@ -47,6 +47,24 @@ def build_subject(
     return subject
 
 
+def build_folder_subject(folder_name: str, file_manifest: str) -> str:
+    """Build a subject text block for folder classification.
+
+    Args:
+        folder_name: Name of the folder being classified.
+        file_manifest: Newline-separated list of filenames in the folder.
+
+    Returns:
+        Formatted string ready for insertion into the classify prompt template.
+        Truncated to _MAX_SUBJECT_LENGTH chars to protect the prompt token budget.
+    """
+    parts: list[str] = [f"Folder: {folder_name}", f"Files:\n{file_manifest}"]
+    subject = "\n".join(parts)
+    if len(subject) > _MAX_SUBJECT_LENGTH:
+        subject = subject[:_MAX_SUBJECT_LENGTH]
+    return subject
+
+
 @dataclass(frozen=True)
 class ClassifyResult:
     """Result from the classify() pure function.

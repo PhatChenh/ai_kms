@@ -98,7 +98,9 @@ def test_parse_metadata_json_missing_title_falls_back_to_stem_returns_success():
 def test_parse_metadata_json_bad_tags_coerced_to_empty_returns_success():
     from pipelines.capture import _parse_metadata_json
 
-    result = _parse_metadata_json('{"title": "T", "tags": "not-a-list"}', source_stem="s")
+    result = _parse_metadata_json(
+        '{"title": "T", "tags": "not-a-list"}', source_stem="s"
+    )
 
     assert isinstance(result, Success)
     assert result.value["tags"] == []
@@ -126,7 +128,9 @@ async def test_metadata_falls_back_and_writes_audit_row_on_unparseable_json(
     mock_provider.complete.return_value = Success(
         LLMResponse(content="not valid json {{{{ }", model="test", usage={})
     )
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     result = await metadata(sr, pipeline_ctx)
 
@@ -149,7 +153,7 @@ async def test_metadata_falls_back_and_writes_audit_row_on_unparseable_json(
 async def test_store_nonmd_clueless_inbox_missing_binary_writes_marker(
     vault_root, pipeline_ctx
 ):
-    """CLUELESS inbox: binary missing → pending-routing marker written (broken pointer, TD-026)."""
+    """CLUELESS inbox: binary missing → needs-review marker written, source_hash=None (TD-026, C7)."""
     from pipelines.capture import store
 
     pdf_file = vault_root / "inbox" / "ghost.pdf"
@@ -163,15 +167,21 @@ async def test_store_nonmd_clueless_inbox_missing_binary_writes_marker(
     # CLUELESS inbox: no move needed → marker written regardless (broken pointer is accepted)
     assert isinstance(result, Success)
     marker = vault_root / "inbox" / ".summaries" / "ghost.pdf.md"
-    assert marker.exists(), "Pending-routing marker must be written even for missing binary"
+    assert marker.exists(), (
+        "Needs-review marker must be written even for missing binary"
+    )
     from vault.reader import read_note
+
     note = read_note(marker)
     assert isinstance(note, Success)
-    assert note.value.metadata.status == "pending-routing"
+    assert note.value.metadata.status == "needs-review"
+    assert note.value.metadata.source_hash is None
 
 
 @pytest.mark.asyncio
-async def test_store_nonmd_located_happy_path_documents_row(vault_root, pipeline_ctx, monkeypatch):
+async def test_store_nonmd_located_happy_path_documents_row(
+    vault_root, pipeline_ctx, monkeypatch
+):
     """LOCATED project happy path: sibling at .summaries/, binary moved, documents row present."""
     from pipelines.capture import store
     from storage.documents import get_by_path
@@ -183,16 +193,20 @@ async def test_store_nonmd_located_happy_path_documents_row(vault_root, pipeline
     pdf_file.write_bytes(b"%PDF-1.4 content")
 
     mock_provider = AsyncMock()
-    mock_provider.complete.return_value = Success(LLMResponse(
-        content=(
-            "## What this file is\nA deck.\n\n"
-            "## Key content\nSlides.\n\n"
-            "## Key facts / findings\nTwo findings."
-        ),
-        model="test",
-        usage={},
-    ))
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    mock_provider.complete.return_value = Success(
+        LLMResponse(
+            content=(
+                "## What this file is\nA deck.\n\n"
+                "## Key content\nSlides.\n\n"
+                "## Key facts / findings\nTwo findings."
+            ),
+            model="test",
+            usage={},
+        )
+    )
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     raw = _make_raw(pdf_file, is_md=False, text="Deck content.")
     mr = _make_metadata_result(raw, ai_title="deck")
@@ -200,13 +214,17 @@ async def test_store_nonmd_located_happy_path_documents_row(vault_root, pipeline
     result = await store(mr, pipeline_ctx)
 
     assert isinstance(result, Success)
-    sibling = vault_root / "Projects" / "Alpha" / "attachment" / ".summaries" / "deck.pdf.md"
+    sibling = (
+        vault_root / "Projects" / "Alpha" / "attachment" / ".summaries" / "deck.pdf.md"
+    )
     assert sibling.exists()
     binary_dst = vault_root / "Projects" / "Alpha" / "attachment" / "deck.pdf"
     assert binary_dst.exists()
     assert not pdf_file.exists()
 
-    row = get_by_path("Projects/Alpha/attachment/.summaries/deck.pdf.md", db_path=pipeline_ctx.db_path)
+    row = get_by_path(
+        "Projects/Alpha/attachment/.summaries/deck.pdf.md", db_path=pipeline_ctx.db_path
+    )
     assert isinstance(row, Success)
     assert row.value is not None
 
@@ -215,14 +233,26 @@ async def test_store_nonmd_located_happy_path_documents_row(vault_root, pipeline
 async def test_store_nonmd_clueless_write_note_failure_returns_failure(
     vault_root, pipeline_ctx, monkeypatch
 ):
-    """CLUELESS path: if write_note (marker) fails → Failure; binary stays in inbox (sibling-first)."""
+    """CLUELESS path: if write_note (marker) fails → Failure; binary stays in inbox (sibling-first, C7)."""
     from pipelines.capture import store
+    from unittest.mock import AsyncMock
+    from core.result import Success as S
+    from llm.provider import LLMResponse
 
     pdf_file = vault_root / "inbox" / "write-fail.pdf"
-    pdf_file.write_bytes(b"%PDF content")
+    pdf_file.write_bytes(b"%PDF-1.4 content")
 
     raw = _make_raw(pdf_file, is_md=False, text="Extracted text.")
     mr = _make_metadata_result(raw, ai_title="write-fail")
+
+    # Stub LLM provider for summarise_attachment (called before write_note in C7 CLUELESS path)
+    mock_provider = AsyncMock()
+    mock_provider.complete.return_value = S(
+        LLMResponse(content="Rich summary body.", model="test", usage={})
+    )
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     monkeypatch.setattr(
         "pipelines.capture.write_note",
@@ -245,7 +275,9 @@ async def test_store_nonmd_clueless_write_note_failure_returns_failure(
 
 
 @pytest.mark.asyncio
-async def test_store_md_rename_happy_path_single_documents_row(vault_root, pipeline_ctx):
+async def test_store_md_rename_happy_path_single_documents_row(
+    vault_root, pipeline_ctx
+):
     """Rename happy path: only new vault_path in documents, old path gone."""
     from pipelines.capture import store
     from storage.documents import get_by_path
@@ -325,7 +357,9 @@ def test_capture_file_has_single_stability_gate_string():
 
 
 @pytest.mark.asyncio
-async def test_capture_file_cooldown_rejects_too_recent_file(vault_root, pipeline_ctx, monkeypatch):
+async def test_capture_file_cooldown_rejects_too_recent_file(
+    vault_root, pipeline_ctx, monkeypatch
+):
     """capture_file rejects file whose age < cooldown (recoverable Failure)."""
     from pipelines.capture import capture_file
 
@@ -364,13 +398,17 @@ async def test_capture_file_stale_file_with_explicit_context_proceeds(
     mock_provider = AsyncMock()
     mock_provider.complete.side_effect = [
         Success(LLMResponse(content="Summary.", model="test", usage={})),
-        Success(LLMResponse(
-            content='{"title": "stale", "tags": ["type/capture"]}',
-            model="test",
-            usage={},
-        )),
+        Success(
+            LLMResponse(
+                content='{"title": "stale", "tags": ["type/capture"]}',
+                model="test",
+                usage={},
+            )
+        ),
     ]
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     result = await capture_file(md_file, context=pipeline_ctx)
 
@@ -454,8 +492,11 @@ def test_replace_path_returns_failure_on_db_error(tmp_path, monkeypatch):
     )
 
     class _BrokenConn:
-        def __enter__(self): raise sqlite3.OperationalError("db locked")
-        def __exit__(self, *a): pass
+        def __enter__(self):
+            raise sqlite3.OperationalError("db locked")
+
+        def __exit__(self, *a):
+            pass
 
     monkeypatch.setattr(docs_mod, "get_connection", lambda *_a, **_kw: _BrokenConn())
 

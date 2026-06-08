@@ -1448,6 +1448,132 @@ async def test_idempotent_located_binary_matching_hash_skipped(
 
 
 # ===========================================================================
+# Phase 7 (C7) — Idempotent re-entry with needs-review status
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_unchanged_needs_review_note_idempotent(
+    vault_root, pipeline_ctx, monkeypatch
+):
+    """MD with needs-review status, unchanged → idempotent guard SKIPS, no classify call (C7)."""
+    from pipelines.capture import capture_file
+    from vault.writer import WriteOutcome, write_note
+    from vault.frontmatter import NoteMetadata
+    from vault.reader import read_note
+    import storage.documents as docs_mod
+    from unittest.mock import MagicMock
+    from storage.audit_log import query
+
+    md_file = vault_root / "inbox" / "needs-review-note.md"
+    md_file.write_text("# Needs Review\n\nUnchanged body.", encoding="utf-8")
+
+    # Write with needs-review status (simulating previous SUGGEST capture)
+    meta = NoteMetadata(type="note", status="needs-review")
+    write_note(md_file, "Unchanged body.", meta, actor="ai")
+    note_result = read_note(md_file)
+    assert isinstance(note_result, Success)
+    note = note_result.value
+
+    upsert_outcome = WriteOutcome(
+        vault_path="inbox/needs-review-note.md",
+        absolute_path=md_file,
+        content_hash=note.content_hash,
+        metadata=note.metadata,
+    )
+    docs_mod.upsert(upsert_outcome, db_path=pipeline_ctx.db_path)
+
+    mtime = md_file.stat().st_mtime
+    monkeypatch.setattr("pipelines.capture.time", MagicMock(time=lambda: mtime + 120))
+
+    run_pipeline_called = []
+
+    async def mock_run_pipeline(*args, **kwargs):
+        run_pipeline_called.append(True)
+        return Failure(error="should not be called", recoverable=False, context={})
+
+    monkeypatch.setattr("pipelines.capture.run_pipeline", mock_run_pipeline)
+
+    result = await capture_file(md_file, context=pipeline_ctx)
+
+    assert isinstance(result, Success)
+    assert len(run_pipeline_called) == 0, (
+        "idempotent guard must skip pipeline when content hash matches"
+    )
+
+    # Verify exactly 1 SKIPPED audit row, no classify-stage audit rows
+    entries = query(pipeline="capture", db_path=pipeline_ctx.db_path)
+    assert isinstance(entries, Success)
+    skipped = [e for e in entries.value if e.outcome == "SKIPPED"]
+    assert len(skipped) == 1, f"Expected 1 SKIPPED, got {len(skipped)}"
+    classify_rows = [e for e in entries.value if e.stage == "classify"]
+    assert len(classify_rows) == 0, (
+        f"No classify audit rows expected, got {len(classify_rows)}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_unchanged_needs_review_binary_idempotent(
+    vault_root, pipeline_ctx, monkeypatch
+):
+    """Binary with needs-review sibling, matching source_hash → SKIPPED, no classify call (C7)."""
+    from pipelines.capture import capture_file
+    from vault.writer import write_note
+    from vault.frontmatter import NoteMetadata
+    from unittest.mock import MagicMock
+    from storage.audit_log import query
+    import hashlib
+
+    binary_bytes = b"Needs review binary content"
+    binary_file = vault_root / "inbox" / "needs-review.pdf"
+    binary_file.write_bytes(binary_bytes)
+
+    source_hash = hashlib.sha256(binary_bytes).hexdigest()
+    summaries_dir = vault_root / "inbox" / ".summaries"
+    summaries_dir.mkdir(parents=True, exist_ok=True)
+    sibling_path = summaries_dir / "needs-review.pdf.md"
+
+    sibling_meta = NoteMetadata(
+        type="attachment-summary",
+        status="needs-review",
+        attachment_path="inbox/needs-review.pdf",
+        source_hash=source_hash,
+        suggested_project="Alpha",
+        suggested_primary_domain="Finance",
+        classify_confidence=0.7,
+        classify_reasoning="Suggested during previous capture.",
+        tags=["type/attachment-summary"],
+    )
+    write_note(
+        sibling_path, "Existing needs-review sibling body.", sibling_meta, actor="ai"
+    )
+
+    mtime = binary_file.stat().st_mtime
+    monkeypatch.setattr("pipelines.capture.time", MagicMock(time=lambda: mtime + 120))
+
+    run_pipeline_called = []
+
+    async def mock_run_pipeline(*args, **kwargs):
+        run_pipeline_called.append(True)
+        return Failure(error="should not be called", recoverable=False, context={})
+
+    monkeypatch.setattr("pipelines.capture.run_pipeline", mock_run_pipeline)
+
+    result = await capture_file(binary_file, context=pipeline_ctx)
+
+    assert isinstance(result, Success)
+    assert len(run_pipeline_called) == 0, (
+        "pipeline must NOT run when source_hash matches"
+    )
+    assert result.value.vault_path == "inbox/.summaries/needs-review.pdf.md"
+
+    entries = query(pipeline="capture", db_path=pipeline_ctx.db_path)
+    assert isinstance(entries, Success)
+    skipped = [e for e in entries.value if e.outcome == "SKIPPED"]
+    assert len(skipped) == 1
+
+
+# ===========================================================================
 # TestStoreNonmdLocatedBranch — Phase 4 T3: resolve_placement integration
 # ===========================================================================
 

@@ -24,10 +24,10 @@ def _copy_pdf(dst: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_scan_capture_pdf_in_inbox_creates_pending_routing_marker(
+async def test_scan_capture_pdf_in_inbox_creates_needs_review_marker(
     vault_root, db_path, pipeline_ctx, monkeypatch
 ):
-    """scan_capture with PDF in inbox/ → CLUELESS: pending-routing marker at inbox/.summaries/."""
+    """scan_capture with PDF in inbox/ → CLUELESS: needs-review marker at inbox/.summaries/ (C7)."""
     from pipelines.capture import scan_capture
     from vault.writer import WriteOutcome
     from llm.provider import LLMResponse
@@ -41,22 +41,29 @@ async def test_scan_capture_pdf_in_inbox_creates_pending_routing_marker(
     mock_provider = AsyncMock()
     mock_provider.complete.side_effect = [
         Success(LLMResponse(content="Summary of report.", model="test", usage={})),
-        Success(LLMResponse(
-            content='{"title": "Annual Report", "tags": ["type/report"]}',
-            model="test",
-            usage={},
-        )),
+        Success(
+            LLMResponse(
+                content='{"title": "Annual Report", "tags": ["type/report"]}',
+                model="test",
+                usage={},
+            )
+        ),
+        Success(
+            LLMResponse(content="Rich summary for binary.", model="test", usage={})
+        ),
     ]
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     result = await scan_capture(root=vault_root, db_path=db_path)
 
     assert isinstance(result, Success)
     assert len(result.value) == 1
     assert isinstance(result.value[0], WriteOutcome)
-    # Pending-routing marker at inbox/.summaries/ (CLUELESS path)
+    # needs-review marker at inbox/.summaries/ (CLUELESS path, C7)
     marker = vault_root / "inbox" / ".summaries" / "kqzxvbn.pdf.md"
-    assert marker.exists(), f"Expected pending-routing marker at {marker}"
+    assert marker.exists(), f"Expected needs-review marker at {marker}"
     # Binary stays in inbox (not moved)
     assert pdf_file.exists(), "Binary must stay in inbox for CLUELESS path"
 
@@ -119,20 +126,29 @@ async def test_scan_capture_pdf_and_md_both_processed(
     mock_provider.complete.side_effect = [
         # md_file: summarize + metadata
         Success(LLMResponse(content="Note summary.", model="test", usage={})),
-        Success(LLMResponse(
-            content='{"title": "my-note", "tags": ["type/capture"]}',
-            model="test",
-            usage={},
-        )),
-        # pdf_file: summarize + metadata
+        Success(
+            LLMResponse(
+                content='{"title": "my-note", "tags": ["type/capture"]}',
+                model="test",
+                usage={},
+            )
+        ),
+        # pdf_file: summarize + metadata + summarise_attachment (CLUELESS, C7)
         Success(LLMResponse(content="Report summary.", model="test", usage={})),
-        Success(LLMResponse(
-            content='{"title": "Annual Report", "tags": ["type/report"]}',
-            model="test",
-            usage={},
-        )),
+        Success(
+            LLMResponse(
+                content='{"title": "Annual Report", "tags": ["type/report"]}',
+                model="test",
+                usage={},
+            )
+        ),
+        Success(
+            LLMResponse(content="Rich summary for report.pdf.", model="test", usage={})
+        ),
     ]
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     result = await scan_capture(root=vault_root, db_path=db_path)
 
@@ -170,13 +186,21 @@ async def test_scan_capture_nonmd_unsupported_ext_logs_warning_continues(
     mock_provider = AsyncMock()
     mock_provider.complete.side_effect = [
         Success(LLMResponse(content="PDF summary.", model="test", usage={})),
-        Success(LLMResponse(
-            content='{"title": "valid-pdf", "tags": ["type/report"]}',
-            model="test",
-            usage={},
-        )),
+        Success(
+            LLMResponse(
+                content='{"title": "valid-pdf", "tags": ["type/report"]}',
+                model="test",
+                usage={},
+            )
+        ),
+        # summarise_attachment for CLUELESS path (C7)
+        Success(
+            LLMResponse(content="Rich summary for valid.pdf.", model="test", usage={})
+        ),
     ]
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     result = await scan_capture(root=vault_root, db_path=db_path)
 
@@ -207,12 +231,15 @@ async def test_scan_capture_skips_summaries_in_modified_loop(
     summaries_dir = vault_root / "Projects" / "Alpha" / "attachment" / ".summaries"
     summaries_dir.mkdir(parents=True, exist_ok=True)
     sibling = summaries_dir / "report.md"
-    sibling.write_text("# Summary of report.pdf\n\nAI-generated summary.", encoding="utf-8")
+    sibling.write_text(
+        "# Summary of report.pdf\n\nAI-generated summary.", encoding="utf-8"
+    )
     sibling_vp = "Projects/Alpha/attachment/.summaries/report.md"
 
     # Insert DB row with a DIFFERENT content_hash — makes it appear as "modified"
     import hashlib
     import sqlite3
+
     old_hash = hashlib.sha256(b"old content").hexdigest()
     conn = sqlite3.connect(str(db_path))
     conn.execute("PRAGMA foreign_keys=ON")
@@ -265,15 +292,19 @@ class TestScanCaptureMisplacedMd:
         def fake_move_note(src, dst, actor):
             move_calls.append((str(src), str(dst), actor))
             from core.result import Success
+
             return Success(None)
 
         monkeypatch.setattr("pipelines.capture.move_note", fake_move_note)
 
         def fake_delete_by_path(vault_path, db_path=None):
             from core.result import Success
+
             return Success(0)
 
-        monkeypatch.setattr("pipelines.capture.documents.delete_by_path", fake_delete_by_path)
+        monkeypatch.setattr(
+            "pipelines.capture.documents.delete_by_path", fake_delete_by_path
+        )
 
         capture_called: list[Path] = []
 
@@ -285,6 +316,7 @@ class TestScanCaptureMisplacedMd:
 
         def fake_audit_write(*args, **kwargs):
             from core.result import Success
+
             return Success(None)
 
         monkeypatch.setattr("pipelines.capture.audit.write", fake_audit_write)
@@ -314,15 +346,19 @@ class TestScanCaptureMisplacedMd:
         def fake_move_note(src, dst, actor):
             move_calls.append((str(src), str(dst), actor))
             from core.result import Success
+
             return Success(None)
 
         monkeypatch.setattr("pipelines.capture.move_note", fake_move_note)
 
         def fake_delete_by_path(vault_path, db_path=None):
             from core.result import Success
+
             return Success(0)
 
-        monkeypatch.setattr("pipelines.capture.documents.delete_by_path", fake_delete_by_path)
+        monkeypatch.setattr(
+            "pipelines.capture.documents.delete_by_path", fake_delete_by_path
+        )
 
         capture_called: list[Path] = []
 
@@ -334,6 +370,7 @@ class TestScanCaptureMisplacedMd:
 
         def fake_audit_write(*args, **kwargs):
             from core.result import Success
+
             return Success(None)
 
         monkeypatch.setattr("pipelines.capture.audit.write", fake_audit_write)
@@ -365,15 +402,19 @@ class TestScanCaptureMisplacedMd:
         def fake_move_note(src, dst, actor):
             move_calls.append((str(src), str(dst), actor))
             from core.result import Success
+
             return Success(None)
 
         monkeypatch.setattr("pipelines.capture.move_note", fake_move_note)
 
         def fake_delete_by_path(vault_path, db_path=None):
             from core.result import Success
+
             return Success(0)
 
-        monkeypatch.setattr("pipelines.capture.documents.delete_by_path", fake_delete_by_path)
+        monkeypatch.setattr(
+            "pipelines.capture.documents.delete_by_path", fake_delete_by_path
+        )
 
         capture_called: list[Path] = []
 
@@ -385,6 +426,7 @@ class TestScanCaptureMisplacedMd:
 
         def fake_audit_write(*args, **kwargs):
             from core.result import Success
+
             return Success(None)
 
         monkeypatch.setattr("pipelines.capture.audit.write", fake_audit_write)
@@ -409,15 +451,19 @@ class TestScanCaptureMisplacedMd:
 
         def fake_move_note(src, dst, actor):
             from core.result import Success
+
             return Success(None)
 
         monkeypatch.setattr("pipelines.capture.move_note", fake_move_note)
 
         def fake_delete_by_path(vault_path, db_path=None):
             from core.result import Success
+
             return Success(0)
 
-        monkeypatch.setattr("pipelines.capture.documents.delete_by_path", fake_delete_by_path)
+        monkeypatch.setattr(
+            "pipelines.capture.documents.delete_by_path", fake_delete_by_path
+        )
 
         capture_called: list[Path] = []
 
@@ -432,6 +478,7 @@ class TestScanCaptureMisplacedMd:
         def fake_audit_write(decision, pipeline, stage, outcome, db_path=None):
             audit_calls.append((decision.action, outcome, stage))
             from core.result import Success
+
             return Success(None)
 
         monkeypatch.setattr("pipelines.capture.audit.write", fake_audit_write)
@@ -456,6 +503,7 @@ class TestScanCaptureMisplacedMd:
 
         def fake_move_note(src, dst, actor):
             from core.result import Success
+
             return Success(None)
 
         monkeypatch.setattr("pipelines.capture.move_note", fake_move_note)
@@ -465,9 +513,12 @@ class TestScanCaptureMisplacedMd:
         def fake_delete_by_path(vault_path, db_path=None):
             delete_calls.append(vault_path)
             from core.result import Success
+
             return Success(0)
 
-        monkeypatch.setattr("pipelines.capture.documents.delete_by_path", fake_delete_by_path)
+        monkeypatch.setattr(
+            "pipelines.capture.documents.delete_by_path", fake_delete_by_path
+        )
 
         async def fake_capture_file(path, context=None):
             return Success(MagicMock())
@@ -476,6 +527,7 @@ class TestScanCaptureMisplacedMd:
 
         def fake_audit_write(*args, **kwargs):
             from core.result import Success
+
             return Success(None)
 
         monkeypatch.setattr("pipelines.capture.audit.write", fake_audit_write)
@@ -506,15 +558,19 @@ class TestScanCaptureMisplacedMd:
         def fake_move_note(src, dst, actor):
             move_calls.append((str(src), str(dst), actor))
             from core.result import Success
+
             return Success(None)
 
         monkeypatch.setattr("pipelines.capture.move_note", fake_move_note)
 
         def fake_delete_by_path(vault_path, db_path=None):
             from core.result import Success
+
             return Success(0)
 
-        monkeypatch.setattr("pipelines.capture.documents.delete_by_path", fake_delete_by_path)
+        monkeypatch.setattr(
+            "pipelines.capture.documents.delete_by_path", fake_delete_by_path
+        )
 
         capture_called: list[Path] = []
 
@@ -526,6 +582,7 @@ class TestScanCaptureMisplacedMd:
 
         def fake_audit_write(*args, **kwargs):
             from core.result import Success
+
             return Success(None)
 
         monkeypatch.setattr("pipelines.capture.audit.write", fake_audit_write)
@@ -557,9 +614,12 @@ class TestScanCaptureMisplacedMd:
 
         def fake_delete_by_path(vault_path, db_path=None):
             from core.result import Success
+
             return Success(0)
 
-        monkeypatch.setattr("pipelines.capture.documents.delete_by_path", fake_delete_by_path)
+        monkeypatch.setattr(
+            "pipelines.capture.documents.delete_by_path", fake_delete_by_path
+        )
 
         capture_called: list[Path] = []
 
@@ -571,6 +631,7 @@ class TestScanCaptureMisplacedMd:
 
         def fake_audit_write(*args, **kwargs):
             from core.result import Success
+
             return Success(None)
 
         monkeypatch.setattr("pipelines.capture.audit.write", fake_audit_write)

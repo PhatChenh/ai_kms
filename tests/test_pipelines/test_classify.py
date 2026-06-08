@@ -7,7 +7,12 @@ import pytest
 
 from core.result import Failure, Success
 from llm.provider import LLMResponse
-from pipelines.classify import ClassifyResult, build_subject, classify
+from pipelines.classify import (
+    ClassifyResult,
+    build_folder_subject,
+    build_subject,
+    classify,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +189,61 @@ class TestBuildSubject:
             tags=["finance"],
         )
         assert len(result) < 4000  # substantially shorter than 6000
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 (CIC) tests — build_folder_subject() pure function
+# ---------------------------------------------------------------------------
+
+
+class TestBuildFolderSubject:
+    """P2-CIC Phase 9 — build_folder_subject normalises a folder into one classify input block."""
+
+    def test_contains_folder_name_and_file_manifest(self):
+        """Output contains both the folder name and the file list."""
+        result = build_folder_subject(
+            folder_name="Q3 Reports",
+            file_manifest="report.pdf\nsummary.md",
+        )
+        assert "Q3 Reports" in result
+        assert "report.pdf" in result
+        assert "summary.md" in result
+
+    def test_folder_name_appears_first(self):
+        """Folder name line appears before the file list."""
+        result = build_folder_subject(
+            folder_name="Q3 Reports",
+            file_manifest="report.pdf\nsummary.md",
+        )
+        assert result.startswith("Folder: Q3 Reports")
+
+    def test_empty_file_manifest(self):
+        """Empty file list — no crash, folder name still present."""
+        result = build_folder_subject(
+            folder_name="Empty Folder",
+            file_manifest="",
+        )
+        assert "Empty Folder" in result
+        # No crash means test passes
+
+    def test_single_file(self):
+        """Single file — no trailing artifacts."""
+        result = build_folder_subject(
+            folder_name="Solo",
+            file_manifest="only.txt",
+        )
+        assert "Solo" in result
+        assert "only.txt" in result
+
+    def test_truncation_long_manifest(self):
+        """Very long file manifest is truncated to _MAX_SUBJECT_LENGTH."""
+        long_manifest = "\n".join(f"file_{i:04d}.pdf" for i in range(500))
+        result = build_folder_subject(
+            folder_name="Huge Folder",
+            file_manifest=long_manifest,
+        )
+        # 3000-char limit from classify module
+        assert len(result) <= 3100  # small buffer for folder name prefix
 
 
 # ---------------------------------------------------------------------------
