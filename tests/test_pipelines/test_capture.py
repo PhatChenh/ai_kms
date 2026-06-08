@@ -1448,6 +1448,132 @@ async def test_idempotent_located_binary_matching_hash_skipped(
 
 
 # ===========================================================================
+# Phase 7 (C7) — Idempotent re-entry with needs-review status
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_unchanged_needs_review_note_idempotent(
+    vault_root, pipeline_ctx, monkeypatch
+):
+    """MD with needs-review status, unchanged → idempotent guard SKIPS, no classify call (C7)."""
+    from pipelines.capture import capture_file
+    from vault.writer import WriteOutcome, write_note
+    from vault.frontmatter import NoteMetadata
+    from vault.reader import read_note
+    import storage.documents as docs_mod
+    from unittest.mock import MagicMock
+    from storage.audit_log import query
+
+    md_file = vault_root / "inbox" / "needs-review-note.md"
+    md_file.write_text("# Needs Review\n\nUnchanged body.", encoding="utf-8")
+
+    # Write with needs-review status (simulating previous SUGGEST capture)
+    meta = NoteMetadata(type="note", status="needs-review")
+    write_note(md_file, "Unchanged body.", meta, actor="ai")
+    note_result = read_note(md_file)
+    assert isinstance(note_result, Success)
+    note = note_result.value
+
+    upsert_outcome = WriteOutcome(
+        vault_path="inbox/needs-review-note.md",
+        absolute_path=md_file,
+        content_hash=note.content_hash,
+        metadata=note.metadata,
+    )
+    docs_mod.upsert(upsert_outcome, db_path=pipeline_ctx.db_path)
+
+    mtime = md_file.stat().st_mtime
+    monkeypatch.setattr("pipelines.capture.time", MagicMock(time=lambda: mtime + 120))
+
+    run_pipeline_called = []
+
+    async def mock_run_pipeline(*args, **kwargs):
+        run_pipeline_called.append(True)
+        return Failure(error="should not be called", recoverable=False, context={})
+
+    monkeypatch.setattr("pipelines.capture.run_pipeline", mock_run_pipeline)
+
+    result = await capture_file(md_file, context=pipeline_ctx)
+
+    assert isinstance(result, Success)
+    assert len(run_pipeline_called) == 0, (
+        "idempotent guard must skip pipeline when content hash matches"
+    )
+
+    # Verify exactly 1 SKIPPED audit row, no classify-stage audit rows
+    entries = query(pipeline="capture", db_path=pipeline_ctx.db_path)
+    assert isinstance(entries, Success)
+    skipped = [e for e in entries.value if e.outcome == "SKIPPED"]
+    assert len(skipped) == 1, f"Expected 1 SKIPPED, got {len(skipped)}"
+    classify_rows = [e for e in entries.value if e.stage == "classify"]
+    assert len(classify_rows) == 0, (
+        f"No classify audit rows expected, got {len(classify_rows)}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_unchanged_needs_review_binary_idempotent(
+    vault_root, pipeline_ctx, monkeypatch
+):
+    """Binary with needs-review sibling, matching source_hash → SKIPPED, no classify call (C7)."""
+    from pipelines.capture import capture_file
+    from vault.writer import write_note
+    from vault.frontmatter import NoteMetadata
+    from unittest.mock import MagicMock
+    from storage.audit_log import query
+    import hashlib
+
+    binary_bytes = b"Needs review binary content"
+    binary_file = vault_root / "inbox" / "needs-review.pdf"
+    binary_file.write_bytes(binary_bytes)
+
+    source_hash = hashlib.sha256(binary_bytes).hexdigest()
+    summaries_dir = vault_root / "inbox" / ".summaries"
+    summaries_dir.mkdir(parents=True, exist_ok=True)
+    sibling_path = summaries_dir / "needs-review.pdf.md"
+
+    sibling_meta = NoteMetadata(
+        type="attachment-summary",
+        status="needs-review",
+        attachment_path="inbox/needs-review.pdf",
+        source_hash=source_hash,
+        suggested_project="Alpha",
+        suggested_primary_domain="Finance",
+        classify_confidence=0.7,
+        classify_reasoning="Suggested during previous capture.",
+        tags=["type/attachment-summary"],
+    )
+    write_note(
+        sibling_path, "Existing needs-review sibling body.", sibling_meta, actor="ai"
+    )
+
+    mtime = binary_file.stat().st_mtime
+    monkeypatch.setattr("pipelines.capture.time", MagicMock(time=lambda: mtime + 120))
+
+    run_pipeline_called = []
+
+    async def mock_run_pipeline(*args, **kwargs):
+        run_pipeline_called.append(True)
+        return Failure(error="should not be called", recoverable=False, context={})
+
+    monkeypatch.setattr("pipelines.capture.run_pipeline", mock_run_pipeline)
+
+    result = await capture_file(binary_file, context=pipeline_ctx)
+
+    assert isinstance(result, Success)
+    assert len(run_pipeline_called) == 0, (
+        "pipeline must NOT run when source_hash matches"
+    )
+    assert result.value.vault_path == "inbox/.summaries/needs-review.pdf.md"
+
+    entries = query(pipeline="capture", db_path=pipeline_ctx.db_path)
+    assert isinstance(entries, Success)
+    skipped = [e for e in entries.value if e.outcome == "SKIPPED"]
+    assert len(skipped) == 1
+
+
+# ===========================================================================
 # TestStoreNonmdLocatedBranch — Phase 4 T3: resolve_placement integration
 # ===========================================================================
 
@@ -2195,6 +2321,245 @@ class TestStoreNonmdLocatedBranch:
         mock_move.assert_called_once()
         move_dst = mock_move.call_args[0][1]
         assert move_dst.parent == inbox
+
+    # -- Phase 4: Filer refactors — optional target_type / target_name params ---
+
+    @pytest.mark.asyncio
+    async def test_store_nonmd_default_params_unchanged(self, tmp_path, monkeypatch):
+        """Regression: when new params are NOT provided, path-derived destination is used."""
+        from core.config import VaultConfig
+        from vault.paths import Placement
+
+        vault_root = tmp_path / "vault"
+        proj_dir = vault_root / "Projects" / "Beta" / "attachment"
+        proj_dir.mkdir(parents=True, exist_ok=True)
+        vault_cfg = VaultConfig(root=vault_root)
+
+        src = proj_dir / "report.docx"
+        src.write_bytes(b"test")
+
+        placement = Placement(
+            final_dir=proj_dir,
+            sibling_dir=proj_dir / vault_cfg.summaries_subdir,
+            needs_move=False,
+        )
+        mocks = self._setup_common_patches(monkeypatch, placement, vault_cfg)
+
+        ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
+        mr = self._make_metadata_result(src)
+        from vault.frontmatter import NoteMetadata
+
+        note_meta = NoteMetadata(summary="test", tags=[])
+
+        monkeypatch.setattr(
+            "pipelines.capture._audit_rename_gate", lambda *a, **kw: None
+        )
+        monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
+
+        from pipelines.capture import _store_nonmd
+
+        result = await _store_nonmd(mr, note_meta, ctx)
+
+        assert result.is_success(), f"Expected Success, got {result}"
+        # Default path: no external target → resolve_placement derives from src
+        # sibling should be in Beta's attachment/.summaries/
+        sibling_call = mocks["write_note"].call_args
+        sibling_path = sibling_call[0][0]
+        assert "Beta" in str(sibling_path), (
+            f"Expected sibling in Beta project, got {sibling_path}"
+        )
+        assert sibling_path.parent.name == vault_cfg.summaries_subdir
+        # move_attachment must NOT be called (needs_move=False)
+        mocks["move_attachment"].assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_store_nonmd_with_external_target(self, tmp_path, monkeypatch):
+        """External target_type="project", target_name="Alpha" → binary in Projects/Alpha/attachment/."""
+        from core.config import VaultConfig
+        from vault.paths import Placement
+
+        vault_root = tmp_path / "vault"
+        # Create target directories
+        proj_dir = vault_root / "Projects" / "Alpha"
+        proj_dir.mkdir(parents=True, exist_ok=True)
+        att_dir = proj_dir / "attachment"
+        att_dir.mkdir(parents=True, exist_ok=True)
+        inbox = vault_root / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        vault_cfg = VaultConfig(root=vault_root)
+
+        # Binary starts in inbox (no path context)
+        src = inbox / "mystery.docx"
+        src.write_bytes(b"test binary content")
+
+        placement = Placement(
+            final_dir=att_dir,
+            sibling_dir=att_dir / vault_cfg.summaries_subdir,
+            needs_move=True,  # binary will move from inbox to attachment
+        )
+        mocks = self._setup_common_patches(monkeypatch, placement, vault_cfg)
+
+        ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
+        mr = self._make_metadata_result(src)
+        from vault.frontmatter import NoteMetadata
+
+        note_meta = NoteMetadata(summary="test", tags=[])
+
+        monkeypatch.setattr(
+            "pipelines.capture._audit_rename_gate", lambda *a, **kw: None
+        )
+        monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
+
+        from pipelines.capture import _store_nonmd
+
+        result = await _store_nonmd(
+            mr, note_meta, ctx, target_type="project", target_name="Alpha"
+        )
+
+        assert result.is_success(), f"Expected Success, got {result}"
+        # Binary should end up in Projects/Alpha/attachment/
+        sibling_call = mocks["write_note"].call_args
+        sibling_path = sibling_call[0][0]
+        assert "Alpha" in str(sibling_path), (
+            f"Expected sibling in Alpha project, got {sibling_path}"
+        )
+        assert "attachment" in str(sibling_path), (
+            f"Expected sibling under attachment/, got {sibling_path}"
+        )
+        # move_attachment must be called (needs_move=True)
+        mocks["move_attachment"].assert_called_once()
+        move_dst = mocks["move_attachment"].call_args[0][1]
+        assert move_dst.parent == att_dir, (
+            f"Expected binary in {att_dir}, got {move_dst.parent}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_store_nonmd_external_target_overrides_path(
+        self, tmp_path, monkeypatch
+    ):
+        """Binary in inbox/ + external target=domain/Finance → Domain/Finance/attachment/, NOT inbox."""
+        from core.config import VaultConfig
+        from vault.paths import Placement
+
+        vault_root = tmp_path / "vault"
+        inbox = vault_root / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        domain_dir = vault_root / "Domain" / "Finance"
+        domain_dir.mkdir(parents=True, exist_ok=True)
+        att_dir = domain_dir / "attachment"
+        att_dir.mkdir(parents=True, exist_ok=True)
+        vault_cfg = VaultConfig(root=vault_root)
+
+        src = inbox / "report.docx"
+        src.write_bytes(b"test binary content")
+
+        placement = Placement(
+            final_dir=att_dir,
+            sibling_dir=att_dir / vault_cfg.summaries_subdir,
+            needs_move=True,
+        )
+        mocks = self._setup_common_patches(monkeypatch, placement, vault_cfg)
+
+        ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
+        mr = self._make_metadata_result(src)
+        from vault.frontmatter import NoteMetadata
+
+        note_meta = NoteMetadata(summary="test", tags=[])
+
+        monkeypatch.setattr(
+            "pipelines.capture._audit_rename_gate", lambda *a, **kw: None
+        )
+        monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
+
+        from pipelines.capture import _store_nonmd
+
+        result = await _store_nonmd(
+            mr, note_meta, ctx, target_type="domain", target_name="Finance"
+        )
+
+        assert result.is_success(), f"Expected Success, got {result}"
+        # Binary should go to Domain/Finance/attachment/, NOT inbox
+        move_dst = mocks["move_attachment"].call_args[0][1]
+        assert "Domain" in str(move_dst), (
+            f"Expected binary under Domain/, got {move_dst}"
+        )
+        assert "Finance" in str(move_dst), f"Expected binary in Finance, got {move_dst}"
+        assert "inbox" not in str(move_dst), (
+            f"Binary must NOT stay in inbox, got {move_dst}"
+        )
+        # Sibling should be in Domain/Finance/attachment/.summaries/
+        sibling_call = mocks["write_note"].call_args
+        sibling_path = sibling_call[0][0]
+        assert "Domain" in str(sibling_path), (
+            f"Expected sibling under Domain/, got {sibling_path}"
+        )
+        assert "Finance" in str(sibling_path), (
+            f"Expected sibling in Finance, got {sibling_path}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_store_nonmd_external_target_sibling_db_row(
+        self, tmp_path, monkeypatch
+    ):
+        """External target → documents.upsert receives sibling outcome with correct paths."""
+        from core.config import VaultConfig
+        from vault.paths import Placement
+
+        vault_root = tmp_path / "vault"
+        proj_dir = vault_root / "Projects" / "Gamma"
+        proj_dir.mkdir(parents=True, exist_ok=True)
+        att_dir = proj_dir / "attachment"
+        att_dir.mkdir(parents=True, exist_ok=True)
+        inbox = vault_root / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        vault_cfg = VaultConfig(root=vault_root)
+
+        src = inbox / "budget.xlsx"
+        src.write_bytes(b"budget data")
+
+        placement = Placement(
+            final_dir=att_dir,
+            sibling_dir=att_dir / vault_cfg.summaries_subdir,
+            needs_move=True,
+        )
+        mocks = self._setup_common_patches(monkeypatch, placement, vault_cfg)
+
+        ctx = self._make_pipeline_ctx(tmp_path, vault_cfg)
+        mr = self._make_metadata_result(src, suffix=".xlsx")
+        from vault.frontmatter import NoteMetadata
+
+        note_meta = NoteMetadata(summary="test", tags=[])
+
+        monkeypatch.setattr(
+            "pipelines.capture._audit_rename_gate", lambda *a, **kw: None
+        )
+        monkeypatch.setattr("pipelines.capture._audit_file_lost", lambda *a, **kw: None)
+
+        from pipelines.capture import _store_nonmd
+
+        result = await _store_nonmd(
+            mr, note_meta, ctx, target_type="project", target_name="Gamma"
+        )
+
+        assert result.is_success(), f"Expected Success, got {result}"
+        # Verify documents.upsert was called with sibling outcome
+        mocks["documents"].upsert.assert_called_once()
+        upsert_args = mocks["documents"].upsert.call_args
+        outcome = upsert_args[0][0]  # first positional arg
+        from vault.writer import WriteOutcome
+
+        assert isinstance(outcome, WriteOutcome)
+        # vault_path should be the sibling .md path (from write_note mock)
+        assert outcome.vault_path is not None
+        # The sibling path should reference the target project
+        sibling_call = mocks["write_note"].call_args
+        actual_sibling_path = sibling_call[0][0]
+        assert "Gamma" in str(actual_sibling_path), (
+            f"Expected sibling in Gamma project, got {actual_sibling_path}"
+        )
+        assert "attachment" in str(actual_sibling_path), (
+            f"Expected sibling under attachment/, got {actual_sibling_path}"
+        )
 
 
 # ===========================================================================

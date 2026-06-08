@@ -136,7 +136,9 @@ async def test_store_md_rename_collision_tries_suffix(vault_root, pipeline_ctx):
 
 
 @pytest.mark.asyncio
-async def test_store_md_all_suffix_slots_taken_falls_back_inplace(vault_root, pipeline_ctx):
+async def test_store_md_all_suffix_slots_taken_falls_back_inplace(
+    vault_root, pipeline_ctx
+):
     from pipelines.capture import store
 
     md_file = vault_root / "inbox" / "original.md"
@@ -144,7 +146,9 @@ async def test_store_md_all_suffix_slots_taken_falls_back_inplace(vault_root, pi
 
     # Block all 10 slots: New Title.md, New Title-1.md ... New Title-9.md
     for i in range(10):
-        target = vault_root / "inbox" / ("New Title.md" if i == 0 else f"New Title-{i}.md")
+        target = (
+            vault_root / "inbox" / ("New Title.md" if i == 0 else f"New Title-{i}.md")
+        )
         target.write_text("# Existing\n\nBody.", encoding="utf-8")
 
     raw = _make_raw(md_file)
@@ -160,14 +164,28 @@ async def test_store_md_all_suffix_slots_taken_falls_back_inplace(vault_root, pi
 
 # ===========================================================================
 # store — non-md CLUELESS path (inbox drop)
-# Binary stays in inbox/; pending-routing marker written to inbox/.summaries/
+# Binary stays in inbox/; needs-review marker written to inbox/.summaries/
 # ===========================================================================
 
 
 @pytest.mark.asyncio
-async def test_store_nonmd_clueless_inbox_binary_stays_pending_marker(vault_root, pipeline_ctx):
-    """PDF dropped in inbox → CLUELESS: binary stays, pending-routing sibling at inbox/.summaries/."""
+async def test_store_nonmd_clueless_inbox_binary_stays_needs_review(
+    vault_root, pipeline_ctx, monkeypatch
+):
+    """PDF dropped in inbox → CLUELESS: binary stays, needs-review sibling at inbox/.summaries/ (C7)."""
     from pipelines.capture import store
+    from unittest.mock import AsyncMock
+    from core.result import Success as S
+    from llm.provider import LLMResponse
+
+    # Stub summarise_attachment LLM call
+    mock_provider = AsyncMock()
+    mock_provider.complete.return_value = S(
+        LLMResponse(content="Rich summary body.", model="test", usage={})
+    )
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     pdf_file = vault_root / "inbox" / "report.pdf"
     pdf_file.write_bytes(b"%PDF-1.4 content")
@@ -180,17 +198,25 @@ async def test_store_nonmd_clueless_inbox_binary_stays_pending_marker(vault_root
     assert isinstance(result, Success)
     # Binary stays in inbox/
     assert pdf_file.exists(), "Binary should NOT be moved — stays in inbox/"
-    # Pending-routing marker at inbox/.summaries/report.pdf.md
+    # needs-review marker at inbox/.summaries/report.pdf.md
     marker = vault_root / "inbox" / ".summaries" / "report.pdf.md"
-    assert marker.exists(), f"Expected pending-routing marker at {marker}"
-    # Marker frontmatter: status=pending-routing, attachment_path set, type=attachment-summary
+    assert marker.exists(), f"Expected needs-review marker at {marker}"
+    # Marker frontmatter: status=needs-review, attachment_path set, type=attachment-summary
     from vault.reader import read_note
+
     note = read_note(marker)
     assert isinstance(note, Success)
     meta = note.value.metadata
-    assert meta.status == "pending-routing"
+    assert meta.status == "needs-review"
     assert meta.attachment_path == "inbox/report.pdf"
     assert meta.type == "attachment-summary"
+    # source_hash set (idempotent re-entry)
+    assert meta.source_hash is not None
+    # Suggested fields are null
+    assert meta.suggested_project is None
+    assert meta.suggested_primary_domain is None
+    # Body is rich summary, NOT placeholder
+    assert "Rich summary body." in note.value.content
     # No sibling written in inbox/ root (only in .summaries/)
     root_sibling = vault_root / "inbox" / "report.md"
     assert not root_sibling.exists()
@@ -198,14 +224,27 @@ async def test_store_nonmd_clueless_inbox_binary_stays_pending_marker(vault_root
 
 # ===========================================================================
 # store — non-md CLUELESS path (outside inbox: Briefings/ stray drop)
-# Binary moves to inbox/; pending-routing marker at inbox/.summaries/
+# Binary moves to inbox/; needs-review marker at inbox/.summaries/
 # ===========================================================================
 
 
 @pytest.mark.asyncio
-async def test_store_nonmd_clueless_outside_inbox_moves_binary_to_inbox(vault_root, pipeline_ctx):
-    """PDF dropped in Briefings/ → CLUELESS: binary moved to inbox/, pending-routing marker."""
+async def test_store_nonmd_clueless_outside_inbox_moves_binary_to_inbox(
+    vault_root, pipeline_ctx, monkeypatch
+):
+    """PDF dropped in Briefings/ → CLUELESS: binary moved to inbox/, needs-review marker (C7)."""
     from pipelines.capture import store
+    from unittest.mock import AsyncMock
+    from core.result import Success as S
+    from llm.provider import LLMResponse
+
+    mock_provider = AsyncMock()
+    mock_provider.complete.return_value = S(
+        LLMResponse(content="Rich summary for stray.", model="test", usage={})
+    )
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     briefings_dir = vault_root / "Briefings"
     pdf_file = briefings_dir / "stray.pdf"
@@ -221,13 +260,14 @@ async def test_store_nonmd_clueless_outside_inbox_moves_binary_to_inbox(vault_ro
     inbox_binary = vault_root / "inbox" / "stray.pdf"
     assert inbox_binary.exists(), f"Expected binary at {inbox_binary}"
     assert not pdf_file.exists(), "Original should be gone"
-    # Pending-routing marker at inbox/.summaries/stray.pdf.md
+    # needs-review marker at inbox/.summaries/stray.pdf.md
     marker = vault_root / "inbox" / ".summaries" / "stray.pdf.md"
-    assert marker.exists(), f"Expected pending-routing marker at {marker}"
+    assert marker.exists(), f"Expected needs-review marker at {marker}"
     from vault.reader import read_note
+
     note = read_note(marker)
     assert isinstance(note, Success)
-    assert note.value.metadata.status == "pending-routing"
+    assert note.value.metadata.status == "needs-review"
 
 
 # ===========================================================================
@@ -237,9 +277,24 @@ async def test_store_nonmd_clueless_outside_inbox_moves_binary_to_inbox(vault_ro
 
 
 @pytest.mark.asyncio
-async def test_store_nonmd_clueless_projects_root_drop(vault_root, pipeline_ctx):
-    """PDF dropped directly in Projects/ root (no sub-project) → CLUELESS."""
+async def test_store_nonmd_clueless_projects_root_drop(
+    vault_root, pipeline_ctx, monkeypatch
+):
+    """PDF dropped directly in Projects/ root (no sub-project) → CLUELESS (C7)."""
     from pipelines.capture import store
+    from unittest.mock import AsyncMock
+    from core.result import Success as S
+    from llm.provider import LLMResponse
+
+    mock_provider = AsyncMock()
+    mock_provider.complete.return_value = S(
+        LLMResponse(
+            content="Rich summary for projects root drop.", model="test", usage={}
+        )
+    )
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     pdf_file = vault_root / "Projects" / "stray.pdf"
     pdf_file.write_bytes(b"%PDF projects root content")
@@ -251,11 +306,12 @@ async def test_store_nonmd_clueless_projects_root_drop(vault_root, pipeline_ctx)
 
     assert isinstance(result, Success)
     marker = vault_root / "inbox" / ".summaries" / "stray.pdf.md"
-    assert marker.exists(), f"Expected pending-routing marker at {marker}"
+    assert marker.exists(), f"Expected needs-review marker at {marker}"
     from vault.reader import read_note
+
     note = read_note(marker)
     assert isinstance(note, Success)
-    assert note.value.metadata.status == "pending-routing"
+    assert note.value.metadata.status == "needs-review"
 
 
 # ===========================================================================
@@ -265,7 +321,9 @@ async def test_store_nonmd_clueless_projects_root_drop(vault_root, pipeline_ctx)
 
 
 @pytest.mark.asyncio
-async def test_store_nonmd_located_project_needs_move(vault_root, pipeline_ctx, monkeypatch):
+async def test_store_nonmd_located_project_needs_move(
+    vault_root, pipeline_ctx, monkeypatch
+):
     """PDF in Projects/Strategy/report.pdf → LOCATED: sibling first, binary moved to attachment/."""
     from pipelines.capture import store
     from llm.provider import LLMResponse
@@ -277,16 +335,20 @@ async def test_store_nonmd_located_project_needs_move(vault_root, pipeline_ctx, 
     pdf_file.write_bytes(b"%PDF strategy report")
 
     mock_provider = AsyncMock()
-    mock_provider.complete.return_value = Success(LLMResponse(
-        content=(
-            "## What this file is\nA strategy report.\n\n"
-            "## Key content\nQ1 results.\n\n"
-            "## Key facts / findings\nRevenue up 10%."
-        ),
-        model="test",
-        usage={},
-    ))
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    mock_provider.complete.return_value = Success(
+        LLMResponse(
+            content=(
+                "## What this file is\nA strategy report.\n\n"
+                "## Key content\nQ1 results.\n\n"
+                "## Key facts / findings\nRevenue up 10%."
+            ),
+            model="test",
+            usage={},
+        )
+    )
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     raw = _make_raw(pdf_file, is_md=False, text="Strategy report content.")
     mr = _make_metadata_result(raw, ai_title="report", vault_root=vault_root)
@@ -295,7 +357,14 @@ async def test_store_nonmd_located_project_needs_move(vault_root, pipeline_ctx, 
 
     assert isinstance(result, Success)
     # Sibling at Projects/Strategy/attachment/.summaries/report.pdf.md
-    sibling = vault_root / "Projects" / "Strategy" / "attachment" / ".summaries" / "report.pdf.md"
+    sibling = (
+        vault_root
+        / "Projects"
+        / "Strategy"
+        / "attachment"
+        / ".summaries"
+        / "report.pdf.md"
+    )
     assert sibling.exists(), f"Expected sibling at {sibling}"
     # Binary moved to Projects/Strategy/attachment/report.pdf
     binary_dst = vault_root / "Projects" / "Strategy" / "attachment" / "report.pdf"
@@ -303,9 +372,12 @@ async def test_store_nonmd_located_project_needs_move(vault_root, pipeline_ctx, 
     assert not pdf_file.exists(), "Original should be gone"
     # attachment_path frontmatter = vault-relative binary path
     from vault.reader import read_note
+
     note = read_note(sibling)
     assert isinstance(note, Success)
-    assert note.value.metadata.attachment_path == "Projects/Strategy/attachment/report.pdf"
+    assert (
+        note.value.metadata.attachment_path == "Projects/Strategy/attachment/report.pdf"
+    )
     assert note.value.metadata.source_file is None
 
 
@@ -316,7 +388,9 @@ async def test_store_nonmd_located_project_needs_move(vault_root, pipeline_ctx, 
 
 
 @pytest.mark.asyncio
-async def test_store_nonmd_located_project_no_move_sibling_only(vault_root, pipeline_ctx, monkeypatch):
+async def test_store_nonmd_located_project_no_move_sibling_only(
+    vault_root, pipeline_ctx, monkeypatch
+):
     """PDF already in Projects/A/attachment/ → LOCATED needs_move=False: sibling written, no move."""
     from pipelines.capture import store
     from unittest.mock import AsyncMock
@@ -328,16 +402,20 @@ async def test_store_nonmd_located_project_no_move_sibling_only(vault_root, pipe
     pdf_file.write_bytes(b"%PDF data content")
 
     mock_provider = AsyncMock()
-    mock_provider.complete.return_value = Success(LLMResponse(
-        content=(
-            "## What this file is\nData file.\n\n"
-            "## Key content\nNumbers.\n\n"
-            "## Key facts / findings\nKey metric: 42."
-        ),
-        model="test",
-        usage={},
-    ))
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    mock_provider.complete.return_value = Success(
+        LLMResponse(
+            content=(
+                "## What this file is\nData file.\n\n"
+                "## Key content\nNumbers.\n\n"
+                "## Key facts / findings\nKey metric: 42."
+            ),
+            model="test",
+            usage={},
+        )
+    )
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     raw = _make_raw(pdf_file, is_md=False, text="Data content.")
     mr = _make_metadata_result(raw, ai_title="data", vault_root=vault_root)
@@ -352,6 +430,7 @@ async def test_store_nonmd_located_project_no_move_sibling_only(vault_root, pipe
     assert pdf_file.exists(), "Binary must not move (already at destination)"
     # attachment_path points to binary's vault-relative path
     from vault.reader import read_note
+
     note = read_note(sibling)
     assert isinstance(note, Success)
     assert note.value.metadata.attachment_path == "Projects/Alpha/attachment/data.pdf"
@@ -375,16 +454,20 @@ async def test_store_nonmd_located_domain(vault_root, pipeline_ctx, monkeypatch)
     pdf_file.write_bytes(b"%PDF budget")
 
     mock_provider = AsyncMock()
-    mock_provider.complete.return_value = Success(LLMResponse(
-        content=(
-            "## What this file is\nBudget report.\n\n"
-            "## Key content\nQ4 numbers.\n\n"
-            "## Key facts / findings\nUnder budget by 5%."
-        ),
-        model="test",
-        usage={},
-    ))
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    mock_provider.complete.return_value = Success(
+        LLMResponse(
+            content=(
+                "## What this file is\nBudget report.\n\n"
+                "## Key content\nQ4 numbers.\n\n"
+                "## Key facts / findings\nUnder budget by 5%."
+            ),
+            model="test",
+            usage={},
+        )
+    )
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     raw = _make_raw(pdf_file, is_md=False, text="Budget content.")
     mr = _make_metadata_result(raw, ai_title="budget", vault_root=vault_root)
@@ -392,7 +475,14 @@ async def test_store_nonmd_located_domain(vault_root, pipeline_ctx, monkeypatch)
     result = await store(mr, pipeline_ctx)
 
     assert isinstance(result, Success)
-    sibling = vault_root / "Domain" / "Finance" / "attachment" / ".summaries" / "budget.pdf.md"
+    sibling = (
+        vault_root
+        / "Domain"
+        / "Finance"
+        / "attachment"
+        / ".summaries"
+        / "budget.pdf.md"
+    )
     assert sibling.exists(), f"Expected sibling at {sibling}"
     binary_dst = vault_root / "Domain" / "Finance" / "attachment" / "budget.pdf"
     assert binary_dst.exists(), f"Expected binary at {binary_dst}"
@@ -405,7 +495,9 @@ async def test_store_nonmd_located_domain(vault_root, pipeline_ctx, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_store_nonmd_located_sibling_body_has_three_sections(vault_root, pipeline_ctx, monkeypatch):
+async def test_store_nonmd_located_sibling_body_has_three_sections(
+    vault_root, pipeline_ctx, monkeypatch
+):
     """LOCATED sibling body (from summarize_attachment) has all 3 required markdown sections."""
     from pipelines.capture import store
     from unittest.mock import AsyncMock
@@ -417,16 +509,20 @@ async def test_store_nonmd_located_sibling_body_has_three_sections(vault_root, p
     pdf_file.write_bytes(b"%PDF notes")
 
     mock_provider = AsyncMock()
-    mock_provider.complete.return_value = Success(LLMResponse(
-        content=(
-            "## What this file is\nMeeting notes.\n\n"
-            "## Key content\nAction items listed.\n\n"
-            "## Key facts / findings\nThree open issues."
-        ),
-        model="test",
-        usage={},
-    ))
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    mock_provider.complete.return_value = Success(
+        LLMResponse(
+            content=(
+                "## What this file is\nMeeting notes.\n\n"
+                "## Key content\nAction items listed.\n\n"
+                "## Key facts / findings\nThree open issues."
+            ),
+            model="test",
+            usage={},
+        )
+    )
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     raw = _make_raw(pdf_file, is_md=False, text="Notes content.")
     mr = _make_metadata_result(raw, ai_title="notes", vault_root=vault_root)
@@ -448,35 +544,79 @@ async def test_store_nonmd_located_sibling_body_has_three_sections(vault_root, p
 
 
 @pytest.mark.asyncio
-async def test_capture_file_skips_pending_routing_binary(vault_root, pipeline_ctx, monkeypatch):
-    """capture_file returns recoverable Failure early when inbox/.summaries/<filename>.md has status=pending-routing."""
+async def test_pending_routing_guard_removed(vault_root, pipeline_ctx, monkeypatch):
+    """Pending-routing marker no longer blocks re-capture — pipeline runs normally (C7)."""
     from pipelines.capture import capture_file
     from vault.frontmatter import NoteMetadata
+    from unittest.mock import AsyncMock
+    from core.result import Success as S
+    from llm.provider import LLMResponse
+    from pipelines.classify import ClassifyResult
 
-    # Binary exists in inbox (so cooldown check doesn't blow up)
+    # Binary exists in inbox (copy fixture PDF with extractable text)
     pdf_file = vault_root / "inbox" / "parked.pdf"
-    pdf_file.write_bytes(b"%PDF content")
+    import shutil
 
-    # Pre-create pending-routing marker
+    _FIXTURE_PDF = Path(__file__).parent.parent / "fixtures" / "sample_text.pdf"
+    shutil.copy(_FIXTURE_PDF, pdf_file)
+
+    # Pre-create pending-routing marker (as if written by old Phase 2 code)
     summaries_dir = vault_root / "inbox" / ".summaries"
     summaries_dir.mkdir(parents=True, exist_ok=True)
     marker = summaries_dir / "parked.pdf.md"
     from vault.frontmatter import dumps
+
     marker.write_text(
-        dumps(NoteMetadata(status="pending-routing", type="attachment-summary"), ""),
+        dumps(
+            NoteMetadata(
+                status="pending-routing",
+                type="attachment-summary",
+                attachment_path="inbox/parked.pdf",
+            ),
+            "",
+        ),
         encoding="utf-8",
     )
 
-    # Cooldown: make file appear old enough to pass stability gate
+    # Past cooldown
     mtime = pdf_file.stat().st_mtime
     monkeypatch.setattr("pipelines.capture.time", MagicMock(time=lambda: mtime + 120))
 
+    # Track classify() calls — must be called now (old guard would have blocked)
+    classify_calls: list = []
+
+    async def track_classify(*args, **kwargs):
+        classify_calls.append(args)
+        return S(
+            ClassifyResult(
+                project=None,
+                domains=[],
+                primary_domain=None,
+                confidence=0.3,
+                reasoning="Test — removed guard",
+            )
+        )
+
+    monkeypatch.setattr("pipelines.capture.classify", track_classify)
+
+    # Mock LLM provider for summarize/metadata/summarize_attachment stages
+    mock_provider = AsyncMock()
+    mock_provider.complete.return_value = S(
+        LLMResponse(
+            content='{"title": "Test", "tags": ["type/report"]}', model="t", usage={}
+        )
+    )
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
+
     result = await capture_file(pdf_file, context=pipeline_ctx)
 
-    # Must return recoverable Failure (silent skip — Phase 2 Classify will handle it)
-    assert isinstance(result, Failure)
-    assert result.recoverable is True
-    assert "pending-routing" in result.error
+    # The pipeline runs (old guard would have returned Failure)
+    # classify_step must have called classify() — old guard blocked before pipeline
+    assert len(classify_calls) >= 1, (
+        "classify must be called — old pending-routing guard is removed"
+    )
 
 
 # ===========================================================================
@@ -485,7 +625,9 @@ async def test_capture_file_skips_pending_routing_binary(vault_root, pipeline_ct
 
 
 @pytest.mark.asyncio
-async def test_capture_file_rejects_too_recent_file(vault_root, pipeline_ctx, monkeypatch):
+async def test_capture_file_rejects_too_recent_file(
+    vault_root, pipeline_ctx, monkeypatch
+):
     from pipelines.capture import capture_file
 
     md_file = vault_root / "inbox" / "fresh.md"
@@ -506,7 +648,9 @@ async def test_capture_file_rejects_too_recent_file(vault_root, pipeline_ctx, mo
 
 
 @pytest.mark.asyncio
-async def test_capture_file_accepts_old_enough_file(vault_root, pipeline_ctx, monkeypatch):
+async def test_capture_file_accepts_old_enough_file(
+    vault_root, pipeline_ctx, monkeypatch
+):
     from pipelines.capture import capture_file
     from llm.provider import LLMResponse
 
@@ -523,13 +667,17 @@ async def test_capture_file_accepts_old_enough_file(vault_root, pipeline_ctx, mo
     mock_provider = AsyncMock()
     mock_provider.complete.side_effect = [
         Success(LLMResponse(content="Summary.", model="test", usage={})),
-        Success(LLMResponse(
-            content='{"title": "old-note", "type": "note", "tags": ["test"]}',
-            model="test",
-            usage={},
-        )),
+        Success(
+            LLMResponse(
+                content='{"title": "old-note", "type": "note", "tags": ["test"]}',
+                model="test",
+                usage={},
+            )
+        ),
     ]
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     result = await capture_file(md_file, context=pipeline_ctx)
 
@@ -559,13 +707,17 @@ async def test_scan_capture_inbox_drop_returns_success(
     mock_provider = AsyncMock()
     mock_provider.complete.side_effect = [
         Success(LLMResponse(content="Summary.", model="test", usage={})),
-        Success(LLMResponse(
-            content='{"title": "scan-note", "tags": ["type/capture"]}',
-            model="test",
-            usage={},
-        )),
+        Success(
+            LLMResponse(
+                content='{"title": "scan-note", "tags": ["type/capture"]}',
+                model="test",
+                usage={},
+            )
+        ),
     ]
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     result = await scan_capture(root=vault_root, db_path=db_path)
 
@@ -594,13 +746,17 @@ async def test_scan_capture_non_inbox_drop_returns_success(
     mock_provider = AsyncMock()
     mock_provider.complete.side_effect = [
         Success(LLMResponse(content="Summary.", model="test", usage={})),
-        Success(LLMResponse(
-            content='{"title": "project-note", "tags": ["type/capture"]}',
-            model="test",
-            usage={},
-        )),
+        Success(
+            LLMResponse(
+                content='{"title": "project-note", "tags": ["type/capture"]}',
+                model="test",
+                usage={},
+            )
+        ),
     ]
-    monkeypatch.setattr("pipelines.capture.get_provider", lambda task, config: mock_provider)
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
 
     result = await scan_capture(root=vault_root, db_path=db_path)
 
@@ -704,3 +860,59 @@ async def test_scan_capture_does_not_recapture_modified_files(
 
     assert isinstance(result, Success)
     assert result.value == []  # modified → not in added → not re-captured
+
+
+# ===========================================================================
+# Phase 7 (C7) — CLUELESS binary marker superseded
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_clueless_binary_marker_superseded(vault_root, pipeline_ctx, monkeypatch):
+    """CLUELESS binary sibling has real summary body, needs-review status, NOT old placeholder (C7)."""
+    from pipelines.capture import store
+    from vault.reader import read_note
+    from unittest.mock import AsyncMock
+    from core.result import Success as S
+    from llm.provider import LLMResponse
+
+    pdf_file = vault_root / "inbox" / "clueless.pdf"
+    pdf_file.write_bytes(b"%PDF clueless binary")
+
+    raw = _make_raw(pdf_file, is_md=False, text="Extracted text for clueless test.")
+    mr = _make_metadata_result(raw, ai_title="clueless", vault_root=vault_root)
+
+    # Stub summarise_attachment LLM call (Stage 3 of CLUELESS path)
+    mock_provider = AsyncMock()
+    mock_provider.complete.return_value = S(
+        LLMResponse(content="Rich summary for clueless binary.", model="test", usage={})
+    )
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda task, config: mock_provider
+    )
+
+    result = await store(mr, pipeline_ctx)
+
+    assert isinstance(result, Success)
+    marker = vault_root / "inbox" / ".summaries" / "clueless.pdf.md"
+    assert marker.exists(), f"Expected marker at {marker}"
+
+    note_result = read_note(marker)
+    assert isinstance(note_result, Success)
+    meta = note_result.value.metadata
+
+    # Status must be needs-review, NOT pending-routing
+    assert meta.status == "needs-review", f"Expected needs-review, got {meta.status}"
+    # Suggested fields are null (no project/domain context)
+    assert meta.suggested_project is None
+    assert meta.suggested_primary_domain is None
+    # source_hash must be set for idempotent re-entry
+    assert meta.source_hash is not None
+    # Body must NOT contain old placeholder text
+    body = note_result.value.content
+    assert "_Pending classification" not in body, (
+        "Old placeholder body must be superseded by real summary"
+    )
+    assert "Rich summary for clueless binary." in body, (
+        "Body should contain the real summary from summarise_attachment"
+    )
