@@ -365,6 +365,28 @@ Note: `MetadataResult.ai_domain` is **kept** as internal pipeline state — `app
 
 ---
 
+### TD-048 · classify() returns Failure(recoverable=True) but no retry loop exists in pipelines/
+**Status:** OPEN
+**Phase:** Phase 2 (classify pipeline)
+**Risk if triggered early:** If the classify pipeline is built without a retry loop, a transient LLM glitch causes the whole classification to fail with no recovery — the note stays stranded in the inbox with no classification, and no signal that a retry would fix it.
+**What:** `classify()` (the pure function in `pipelines/classify.py`) returns `Failure(recoverable=True)` for three cases: provider error, malformed JSON, invalid `target_type`. The `recoverable=True` flag signals that the caller may retry with the same inputs. However, no retry infrastructure exists anywhere in `pipelines/` — no retry count, no backoff, no retry queue. The flag is technically correct but functionally meaningless until the pipeline that calls `classify()` implements a retry loop.
+**Why deferred:** The retry loop is the classify pipeline's responsibility, not `classify()`'s. The classify pipeline is the next component to build (separate spec). Logging here so the pipeline spec author sees this as a required element, not an optional enhancement.
+**Unblock condition:** When writing the classify pipeline spec, require a bounded retry loop (e.g., max 3 attempts with exponential backoff) around the `classify()` call for `Failure(recoverable=True)`. The loop must also handle the case where all retries are exhausted (fall back to inbox with a CLUELESS-style marker or a human-review queue).
+**Source:** Design doc `docs/1_design/phase2/classify.md` §Decisions locked — "TD-pending: Classify returns Failure(recoverable=True) but the pipeline has no retry loop yet". Surfaced during spec writing 2026-06-08.
+
+---
+
+### TD-049 · folder_path NFC mismatch between capture_folder batch insert and capture_file batch lookup
+**Status:** OPEN
+**Phase:** Phase 2 (classify-inline-capture) — verify at research step
+**Risk if triggered early:** For a non-ASCII folder name stored on disk in decomposed (NFD) form, `capture_folder`'s batch insert and `capture_file`'s batch lookup produce different `folder_path` strings → `find_by_folder_path` misses → a second `batches` row is created → files inside get a `batch_id` that does not match the folder's batch row. Breaks batch grouping (Phase 8 Briefing groups by batch). ASCII folder names unaffected.
+**What:** `capture_folder` writes `batches.folder_path` via `str(folder_path.relative_to(vault_cfg.root).as_posix())` with **no NFC normalization** (`src/pipelines/capture.py:1556` and the other `_insert_batch` call sites in `capture_folder`). `capture_file`'s batch-stamp pre-step looks up the same folder via `unicodedata.normalize("NFC", str(path.parent.relative_to(root).as_posix()))` (`src/pipelines/capture.py:948`). The two strings diverge whenever the folder name contains decomposed unicode.
+**Why deferred:** Pre-existing latent inconsistency; low frequency (only non-ASCII decomposed folder names). Surfaced 2026-06-08 while confirming the "suppress per-file classify on folder-invoked capture" decision in the classify-inline-capture design — the suppress case relies on the folder's `batch_id` reaching each file's row. Folded into that feature's research/spec.
+**Unblock condition:** NFC-normalize `folder_path` on BOTH the write path (`capture_folder` `_insert_batch` call sites) and the read path (`capture_file`, already NFC), ideally via one shared helper so they can never drift. Verify at the research step of the classify-inline-capture feature.
+**Source:** classify-inline-capture design 2026-06-08 — design doc `docs/1_design/phase2/classify-inline-capture.md` Risk R6.
+
+---
+
 ## Archive
 
 ### TD-001 · core/pipeline.py

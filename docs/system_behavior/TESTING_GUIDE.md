@@ -1,7 +1,7 @@
 # AI-KMS Testing Guide
 _For non-technical testers. No coding required for Smoke and Phase checks._
 _Auto-generated from `behavior_inventory.yaml`. Fill in **Current result** fields after testing. All other content is regenerated — do not edit._
-_Last generated: 2026-06-07_
+_Last generated: 2026-06-08_
 
 ---
 
@@ -351,7 +351,7 @@ uv run kms watch
 In Terminal 2, copy the staging file to inbox/ and wait ~10 seconds:
 
 ```bash
-cp /Users/phatchenh/ai_kms_test_vault/auto-capture-test.md /Users/phatchenh/ai_kms_test_vault/actual_test_vault/inbox/
+cp /tmp/auto-capture-test.md /tmp/ai_kms_test_vault/inbox/
 ```
 
 **Check:**
@@ -573,7 +573,7 @@ uv run kms reconcile
 Verify sibling deleted from disk (should return nothing):
 
 ```bash
-ls /Users/phatchenh/ai_kms_test_vault/actual_test_vault/Projects/Alpha/attachment/.summaries/deleted-file.pdf.md 2>&1
+ls /tmp/ai_kms_test_vault/Projects/Alpha/attachment/.summaries/deleted-file.pdf.md 2>&1
 ```
 
 Verify DB row removed (expected: 0):
@@ -606,7 +606,7 @@ bash docs/system_behavior/setup_test_vault.sh P15-REC-05
 **Step 1 — capture the file to seed a batch_id:**
 
 ```bash
-uv run kms capture /Users/phatchenh/ai_kms_test_vault/actual_test_vault/Projects/Alpha/note-batch-test.md
+uv run kms capture /tmp/ai_kms_test_vault/Projects/Alpha/note-batch-test.md
 ```
 
 **Step 2 — verify batch_id is set:**
@@ -620,7 +620,7 @@ Confirm batch_id column shows a non-NULL integer.
 **Step 3 — move the file to a different project:**
 
 ```bash
-mkdir -p /Users/phatchenh/ai_kms_test_vault/actual_test_vault/Projects/Beta && mv /Users/phatchenh/ai_kms_test_vault/actual_test_vault/Projects/Alpha/note-batch-test.md /Users/phatchenh/ai_kms_test_vault/actual_test_vault/Projects/Beta/note-batch-test.md
+mkdir -p /tmp/ai_kms_test_vault/Projects/Beta && mv /tmp/ai_kms_test_vault/Projects/Alpha/note-batch-test.md /tmp/ai_kms_test_vault/Projects/Beta/note-batch-test.md
 ```
 
 **Step 4 — run reconcile:**
@@ -1595,7 +1595,7 @@ uv run kms watch
 In Terminal 2, drop file and wait for pipeline to start (but not finish), then touch it:
 
 ```bash
-cp tests/fixtures/sample.md /Users/phatchenh/ai_kms_test_vault/actual_test_vault/inbox/ && sleep 5 && touch /Users/phatchenh/ai_kms_test_vault/actual_test_vault/inbox/sample.md
+cp tests/fixtures/sample.md /tmp/ai_kms_test_vault/inbox/ && sleep 5 && touch /tmp/ai_kms_test_vault/inbox/sample.md
 ```
 
 In Terminal 2, check logs for the skip marker and verify only one capture fired:

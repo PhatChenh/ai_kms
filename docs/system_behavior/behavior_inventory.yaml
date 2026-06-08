@@ -1609,3 +1609,573 @@
   pytest_ref: null
   status: planned
   retired: null
+
+# ═══════════════════════════════════════════════════════════════
+# ID prefix: P2-CPROMPT
+# Design doc: docs/2_specs/classify-prompt-mini.md
+# ═══════════════════════════════════════════════════════════════
+
+- id: P2-CPROMPT-01
+  behavior: "Classify prompt returns valid JSON with target_type, target_name, confidence, and reasoning fields"
+  tier: smoke
+  phase: 2
+  origin: design
+  granularity: outcome
+  trigger: "kms classify <file> or direct Classify pipeline call with real LLM"
+  fixtures:
+    - inbox/sample-note.md
+  steps:
+    - "Place a note in inbox/ with title, summary, and tags already set."
+    - "Call the Classify pipeline with a valid valid_destinations string."
+    - "Inspect the raw LLM response."
+  expected:
+    - "Response is valid JSON — no markdown fences, no prose"
+    - "JSON contains exactly: target_type, target_name, confidence, reasoning"
+    - "target_type is either 'domain' or 'project'"
+    - "confidence is a float between 0.0 and 1.0"
+    - "reasoning is a non-empty string"
+  spec_ref: "docs/2_specs/classify-prompt-mini.md §Done when #3"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-CPROMPT-02
+  behavior: "Classify prompt routes active-work notes to a project and general-knowledge notes to a domain"
+  tier: smoke
+  phase: 2
+  origin: design
+  granularity: outcome
+  trigger: "kms classify <file> with two distinct note types and a vault with both project and domain destinations"
+  fixtures:
+    - inbox/meeting-notes.md
+    - inbox/industry-report.md
+    - Projects/Alpha/CLAUDE.md
+    - Domain/Finance/placeholder.md
+  steps:
+    - "Classify a note whose summary describes active project work (e.g. meeting notes, deliverable)."
+    - "Classify a note whose summary describes general reference material (e.g. industry report, background research)."
+  expected:
+    - "Active-work note: target_type='project'"
+    - "General-knowledge note: target_type='domain'"
+  spec_ref: "docs/2_specs/classify-prompt-mini.md §Done when #4"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-CPROMPT-03
+  behavior: "Classify prompt never returns target_name='Uncategorized' — routes to actual project name within that group"
+  tier: smoke
+  phase: 2
+  origin: design
+  granularity: outcome
+  trigger: "kms classify <file> when valid_destinations contains an Uncategorized group with one or more projects"
+  fixtures:
+    - inbox/sample-note.md
+  steps:
+    - "Build a valid_destinations string that includes an Uncategorized group containing 'OrphanProject'."
+    - "Classify a note that best matches OrphanProject."
+    - "Inspect target_name in the response."
+  expected:
+    - "target_name is 'OrphanProject', not 'Uncategorized'"
+    - "target_type is 'project'"
+  spec_ref: "docs/2_specs/classify-prompt-mini.md §Done when #6"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-CPROMPT-04
+  behavior: "Classify prompt returns low confidence rather than a forced answer when no destination fits well"
+  tier: smoke
+  phase: 2
+  origin: design
+  granularity: outcome
+  trigger: "kms classify <file> with a note whose content has no clear match in valid_destinations"
+  fixtures:
+    - inbox/ambiguous-note.md
+  steps:
+    - "Classify a note whose summary is vague or covers a topic absent from valid_destinations."
+    - "Inspect confidence in the response."
+  expected:
+    - "confidence is below 0.7"
+    - "target_name is still populated (best guess, not null)"
+  spec_ref: "docs/2_specs/classify-prompt-mini.md §Done when #5"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-CL-01
+  behavior: "classify() returns Success(ClassifyResult) with all four fields when AI returns valid JSON"
+  tier: unit
+  phase: 2
+  origin: design
+  granularity: outcome
+  trigger: "classify() called with valid title, summary, tags, valid_destinations and AI returns valid JSON"
+  fixtures:
+    - inbox/sample-note.md
+  steps:
+    - "Call classify() with a note's title, summary, tags, and a formatted destinations string."
+    - "Mock the AI provider to return valid JSON with target_type, target_name, confidence, reasoning."
+    - "Inspect the return value."
+  expected:
+    - "Returns Success(ClassifyResult)"
+    - "ClassifyResult.target_type is 'project' or 'domain'"
+    - "ClassifyResult.target_name is a non-empty string"
+    - "ClassifyResult.confidence is a float between 0.0 and 1.0"
+    - "ClassifyResult.reasoning is a non-empty string"
+  spec_ref: "docs/1_design/phase2/classify.md §P2-CL-01"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-CL-02
+  behavior: "classify() returns Failure(recoverable=True) when AI returns malformed JSON"
+  tier: unit
+  phase: 2
+  origin: design
+  granularity: outcome
+  trigger: "classify() called and AI returns a response that is not valid JSON"
+  fixtures: []
+  steps:
+    - "Call classify() with valid inputs."
+    - "Mock the AI provider to return a plain-text string (not JSON)."
+    - "Inspect the return value."
+  expected:
+    - "Returns Failure"
+    - "Failure.recoverable is True"
+    - "No exception raised"
+  spec_ref: "docs/1_design/phase2/classify.md §P2-CL-02"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-CL-03
+  behavior: "classify() returns Failure(recoverable=True) when JSON is valid but target_type is not 'project' or 'domain'"
+  tier: unit
+  phase: 2
+  origin: design
+  granularity: outcome
+  trigger: "classify() called and AI returns JSON with an invalid target_type value"
+  fixtures: []
+  steps:
+    - "Call classify() with valid inputs."
+    - "Mock the AI provider to return JSON where target_type is 'folder' or missing."
+    - "Inspect the return value."
+  expected:
+    - "Returns Failure"
+    - "Failure.recoverable is True"
+    - "No exception raised"
+  spec_ref: "docs/1_design/phase2/classify.md §P2-CL-03"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-CL-04
+  behavior: "classify() never raises an exception and never returns None"
+  tier: unit
+  phase: 2
+  origin: design
+  granularity: outcome
+  trigger: "classify() called under any failure condition (AI failure, bad JSON, network error)"
+  fixtures: []
+  steps:
+    - "Call classify() with valid inputs."
+    - "Mock the AI provider to raise an exception."
+    - "Inspect the return value."
+  expected:
+    - "Returns Failure — no exception propagates to the caller"
+    - "Return value is never None"
+  spec_ref: "docs/1_design/phase2/classify.md §P2-CL-04"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-CL-05
+  behavior: "classify() loads prompt from prompts/classify.yaml — no prompt string in Python code"
+  tier: unit
+  phase: 2
+  origin: design
+  granularity: outcome
+  trigger: "Code review: inspect pipelines/classify.py for any hardcoded prompt strings"
+  fixtures: []
+  steps:
+    - "Read src/pipelines/classify.py (or wherever classify() lives)."
+    - "Search for any string literals that look like AI instructions."
+  expected:
+    - "No prompt string found in Python source"
+    - "Prompt is loaded via PROMPTS['classify'] from prompt_loader"
+  spec_ref: "docs/1_design/phase2/classify.md §P2-CL-05"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-CL-06
+  behavior: "classify() calls the AI via llm/provider.py get_provider() — no direct AI library import"
+  tier: unit
+  phase: 2
+  origin: design
+  granularity: outcome
+  trigger: "Code review: inspect classify() implementation for direct anthropic or openai imports"
+  fixtures: []
+  steps:
+    - "Read src/pipelines/classify.py (or wherever classify() lives)."
+    - "Check imports for anthropic, openai, or other AI library direct calls."
+  expected:
+    - "No direct AI library import in classify() module"
+    - "AI call goes through get_provider() from llm/provider.py"
+  spec_ref: "docs/1_design/phase2/classify.md §P2-CL-06"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+# ═══════════════════════════════════════════════════════════════
+# PHASE 2-CIC — Classify Inline in Single-File Capture
+# ID prefix: P2-CIC (Classify-In-Capture)
+# Design doc: docs/1_design/phase2/classify-inline-capture.md
+# ═══════════════════════════════════════════════════════════════
+
+- id: P2-CIC-01
+  behavior: "Loose inbox .md note with a confident destination is moved into the project/domain folder DERIVED from its assigned tags+project (AUTO)"
+  tier: phase
+  phase: 2
+  origin: design
+  granularity: outcome
+  trigger: "kms capture <inbox/note.md>"
+  fixtures:
+    - inbox/p2cic-01-clear-project-note.md
+  steps:
+    - "Place a note in inbox/ whose content clearly belongs to an existing project (e.g. meeting notes for Projects/Alpha)."
+    - "Ensure Projects/Alpha/ exists with a CLAUDE.md domain tag."
+    - "`uv run kms capture inbox/p2cic-01-clear-project-note.md`"
+  expected:
+    - "Note is GONE from inbox/ (moved to the DERIVED folder, e.g. Projects/Alpha/p2cic-01-clear-project-note.md)"
+    - "Frontmatter has project: Alpha AND the destination folder matches that project field (location derived from the field, not picked independently)"
+    - "No status: needs-review field (AUTO acted, not suggested)"
+  spec_ref: "docs/1_design/phase2/classify-inline-capture.md §Routing model"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-CIC-02
+  behavior: "Loose inbox note with a medium-confidence destination stays in inbox with suggested destination recorded (SUGGEST)"
+  tier: phase
+  phase: 2
+  origin: design
+  granularity: outcome
+  trigger: "kms capture <inbox/note.md>"
+  fixtures:
+    - inbox/p2cic-02-ambiguous-note.md
+  steps:
+    - "Place a note in inbox/ whose content plausibly fits a destination but is not clear-cut."
+    - "`uv run kms capture inbox/p2cic-02-ambiguous-note.md`"
+  expected:
+    - "Note STAYS at inbox/p2cic-02-ambiguous-note.md (not moved)"
+    - "Frontmatter records a suggested destination (e.g. status: needs-review plus a suggested-destination field)"
+    - "Frontmatter records the AI confidence and one-sentence reasoning"
+  spec_ref: "docs/1_design/phase2/classify-inline-capture.md §Success criteria"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-CIC-03
+  behavior: "Loose inbox note the AI cannot place stays in inbox marked stuck (CLUELESS)"
+  tier: phase
+  phase: 2
+  origin: design
+  granularity: outcome
+  trigger: "kms capture <inbox/note.md>"
+  fixtures:
+    - inbox/p2cic-03-no-match-note.md
+  steps:
+    - "Place a note in inbox/ whose topic matches no existing project or domain."
+    - "`uv run kms capture inbox/p2cic-03-no-match-note.md`"
+  expected:
+    - "Note STAYS at inbox/p2cic-03-no-match-note.md (not moved)"
+    - "Frontmatter records that the AI was stuck (low/no candidate) with its reasoning"
+    - "No destination move occurred"
+  spec_ref: "docs/1_design/phase2/classify-inline-capture.md §Success criteria"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-CIC-04
+  behavior: "A file dropped directly into a project/domain folder is filed by location WITHOUT any AI classify call"
+  tier: phase
+  phase: 2
+  origin: design
+  granularity: outcome
+  trigger: "kms capture <Projects/Alpha/note.md>"
+  fixtures:
+    - Projects/Alpha/p2cic-04-located-note.md
+  steps:
+    - "Place a note directly inside Projects/Alpha/."
+    - "`uv run kms capture Projects/Alpha/p2cic-04-located-note.md`"
+  expected:
+    - "Note stays in Projects/Alpha/ (location wins; no move)"
+    - "Frontmatter has project: Alpha"
+    - "No suggested-destination / needs-review fields written (classify was skipped)"
+  spec_ref: "docs/1_design/phase2/classify-inline-capture.md §Success criteria (LOCATED symmetry)"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-CIC-05
+  behavior: "Loose inbox PDF gets a rich attachment summary AND is classified at drop time (two AI calls; pending-routing marker retired)"
+  tier: phase
+  phase: 2
+  origin: design
+  granularity: outcome
+  trigger: "kms capture <inbox/report.pdf>"
+  fixtures:
+    - inbox/p2cic-05-clear-project-report.pdf
+  steps:
+    - "Place a PDF in inbox/ whose content clearly belongs to an existing project."
+    - "`uv run kms capture inbox/p2cic-05-clear-project-report.pdf`"
+  expected:
+    - "Sibling .md has a real summary (NOT the one-line pending-routing placeholder)"
+    - "On AUTO: binary moved to the chosen folder's attachment/, sibling moved alongside, both findable"
+    - "On SUGGEST/CLUELESS: binary stays in inbox; sibling records the suggested destination or stuck state"
+  spec_ref: "docs/1_design/phase2/classify-inline-capture.md §Success criteria"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-CIC-06
+  behavior: "Every classify outcome (AUTO/SUGGEST/CLUELESS) writes exactly one decision-log audit row"
+  tier: full
+  phase: 2
+  origin: design
+  granularity: mechanism
+  trigger: "kms capture <inbox/note.md>"
+  fixtures:
+    - inbox/p2cic-06-audit-note.md
+  steps:
+    - "`uv run kms capture inbox/p2cic-06-audit-note.md`"
+    - "`sqlite3 data/kb.db \"SELECT pipeline, stage, outcome, reasoning, source_ids FROM audit_log WHERE stage='classify' ORDER BY rowid DESC LIMIT 3\"`"
+  expected:
+    - "An audit_log row exists with pipeline=capture, stage=classify"
+    - "outcome is one of AUTO | SUGGEST | CLUELESS"
+    - "reasoning is non-empty; source_ids contains the note's vault path"
+  spec_ref: "CONSTRAINTS.md C-13 'audit log non-negotiable'"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-CIC-07
+  behavior: "A classify AUTO-move to a project/domain root leaves batch_id NULL; index location stays consistent"
+  tier: full
+  phase: 2
+  origin: design
+  granularity: mechanism
+  trigger: "kms capture <inbox/note.md> (AUTO routes to Projects/Alpha root)"
+  fixtures:
+    - inbox/p2cic-07-batch-note.md
+  steps:
+    - "Capture a loose inbox note that AUTO-routes to a project ROOT (e.g. Projects/Alpha/)."
+    - "`sqlite3 data/kb.db \"SELECT vault_path, batch_id FROM documents WHERE vault_path LIKE '%p2cic-07-batch-note%'\"`"
+  expected:
+    - "documents.vault_path equals the new in-folder path (e.g. Projects/Alpha/p2cic-07-batch-note.md) — matches disk"
+    - "batch_id is NULL (a tree root is not a batch-worthy subfolder)"
+    - "Exactly one documents row exists for the note (no orphan row at the old inbox path)"
+  spec_ref: "docs/1_design/phase2/classify-inline-capture.md §Risks R2/R3"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-CIC-08
+  behavior: "A classify AUTO-move under the running watcher does not double-fire re-home or create a duplicate row"
+  tier: full
+  phase: 2
+  origin: design
+  granularity: mechanism
+  trigger: "kms watch + a loose inbox file that classify AUTO-routes"
+  fixtures: []
+  steps:
+    - "Start kms watch."
+    - "Drop a loose inbox file whose content clearly belongs to a project, wait for capture to AUTO-route it."
+    - "`sqlite3 data/kb.db \"SELECT count(*), vault_path FROM documents WHERE vault_path LIKE '%<that-file>%' GROUP BY vault_path\"`"
+  expected:
+    - "Exactly one documents row, pointing at the new destination path"
+    - "Watcher re-home was suppressed for the pipeline-initiated move (log shows rehome_skip reason=pipeline_initiated)"
+    - "No second move back to inbox; the file stays at its classified destination"
+  spec_ref: "docs/1_design/phase2/classify-inline-capture.md §Risks R1/R4"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-CIC-09
+  behavior: "A file captured as part of a dropped folder is fully captured but NOT individually re-classified (SUPPRESS — the folder is the routing unit)"
+  tier: full
+  phase: 2
+  origin: design
+  granularity: mechanism
+  trigger: "kms watch / capture_folder on a folder dropped in inbox/"
+  fixtures: []
+  steps:
+    - "Drop a folder containing 2-3 loose files into inbox/ (a folder the system routes or marks CLUELESS)."
+    - "Let the folder capture flow process it (watcher stable-folder event, or capture_folder)."
+    - "`sqlite3 data/kb.db \"SELECT count(*) FROM audit_log WHERE stage='classify'\"` and inspect each file's frontmatter."
+  expected:
+    - "Each file inside the folder is summarized + frontmatter-stamped + batch-stamped (full capture ran)"
+    - "NO file inside the folder carries suggested_type / suggested_name / classify_confidence / status: needs-review from an individual classify call"
+    - "No per-file stage='classify' audit row is written for the folder's files (the folder verdict is the only classify decision)"
+  spec_ref: "docs/2_specs/phase2/classify-inline-capture.md §Component 3 (SUPPRESS); locked Decision 3"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-CIC-10
+  behavior: "A single file dropped in a project/domain folder is still summarized + frontmatter-stamped; only the classify step and the move are skipped (LOCATED is NOT a no-op)"
+  tier: phase
+  phase: 2
+  origin: design
+  granularity: outcome
+  trigger: "kms capture <Projects/Alpha/note.md>"
+  fixtures:
+    - Projects/Alpha/p2cic-10-located-summary-note.md
+  steps:
+    - "Place a note directly inside Projects/Alpha/ with body content worth summarizing."
+    - "`uv run kms capture Projects/Alpha/p2cic-10-located-summary-note.md`"
+  expected:
+    - "Note stays in Projects/Alpha/ (no move)"
+    - "Frontmatter has a real AI summary and project: Alpha (earlier capture stages ran)"
+    - "No suggested-destination / classify_confidence / needs-review fields (classify step was skipped)"
+    - "No stage='classify' audit row for this file (LOCATED — no classify AI call)"
+  spec_ref: "docs/2_specs/phase2/classify-inline-capture.md §Feature overview (LOCATED); locked Decision 4"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-CIC-11
+  behavior: "When the AI assigns a project, the note moves to that Project folder even though it also carries domain tags (project beats domain — precedence)"
+  tier: phase
+  phase: 2
+  origin: design
+  granularity: outcome
+  trigger: "kms capture <inbox/note.md>"
+  fixtures:
+    - inbox/p2cic-11-project-and-domain-note.md
+  steps:
+    - "Place a loose inbox note that clearly belongs to an existing project AND carries one or more domain tags (e.g. a deliverable for Projects/Alpha that is also about domain/Finance)."
+    - "Ensure both Projects/Alpha/ and Domain/Finance/ exist."
+    - "`uv run kms capture inbox/p2cic-11-project-and-domain-note.md`"
+  expected:
+    - "Note moves to Projects/Alpha/ (the Project root), NOT Domain/Finance/ — project field wins over the domain tag"
+    - "Frontmatter still carries the domain/Finance tag (tags are not stripped; only the move follows precedence)"
+    - "Frontmatter project: Alpha"
+  spec_ref: "docs/1_design/phase2/classify-inline-capture.md §Routing model (precedence)"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-CIC-12
+  behavior: "A loose note with NO project and MULTIPLE domain tags moves to the AI's designated PRIMARY domain folder while keeping all its domain tags"
+  tier: phase
+  phase: 2
+  origin: design
+  granularity: outcome
+  trigger: "kms capture <inbox/note.md>"
+  fixtures:
+    - inbox/p2cic-12-multi-domain-note.md
+  steps:
+    - "Place a loose inbox note that spans two existing domains (e.g. tagged domain/Finance and domain/Legal) and ties to no specific project."
+    - "Ensure Domain/Finance/ and Domain/Legal/ both exist."
+    - "`uv run kms capture inbox/p2cic-12-multi-domain-note.md`"
+  expected:
+    - "Note moves to exactly ONE domain folder — the AI's designated primary (e.g. Domain/Finance/), not both"
+    - "Frontmatter still lists BOTH domain tags (domain/Finance AND domain/Legal) — only the move uses the primary"
+    - "Frontmatter records no project (no project field set)"
+  spec_ref: "docs/1_design/phase2/classify-inline-capture.md §Routing model (primary domain)"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-CIC-13
+  behavior: "Structural consistency: an AUTO-filed note's on-disk folder always matches its stamped project/primary-domain (no free pick that could disagree)"
+  tier: full
+  phase: 2
+  origin: design
+  granularity: mechanism
+  trigger: "kms capture <inbox/note.md> (any AUTO route)"
+  fixtures:
+    - inbox/p2cic-13-consistency-note.md
+  steps:
+    - "Capture any loose inbox note that AUTO-routes."
+    - "`sqlite3 data/kb.db \"SELECT vault_path, project FROM documents WHERE vault_path LIKE '%p2cic-13-consistency-note%'\"` and read the note's frontmatter."
+    - "Compare the folder portion of vault_path against the stamped project (or primary domain) field."
+  expected:
+    - "If a project is stamped, vault_path is under Projects/<that project>/"
+    - "If no project but a primary domain, vault_path is under Domain/<that primary domain>/"
+    - "The folder NEVER points at a project/domain the frontmatter does not name (derived, not free pick)"
+  spec_ref: "docs/1_design/phase2/classify-inline-capture.md §Routing model (structural consistency)"
+  human_reviewed: no
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
