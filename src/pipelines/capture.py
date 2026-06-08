@@ -424,6 +424,17 @@ def _write_classify_audit(
             pass
 
 
+def _auto_action(cr: ClassifyResult) -> str:
+    """Audit action label for an AUTO classify outcome."""
+    kind = "project" if cr.project else "domain"
+    return f"classify:{kind}/{cr.project or cr.primary_domain}"
+
+
+def _suggest_action(cr: ClassifyResult) -> str:
+    """Audit action label for a SUGGEST classify outcome."""
+    return f"classify:suggest/{cr.project or cr.primary_domain}"
+
+
 def _classify_auto_md_move(
     mr: MetadataResult,
     cr: ClassifyResult,
@@ -461,12 +472,12 @@ def _classify_auto_md_move(
             reason="all 10 rename slots taken",
         )
         # Fall back to SUGGEST — candidate fields, file stays in inbox.
+        reason = cr.reasoning + " (AUTO move skipped: destination collision)"
         _write_classify_candidate(
-            src,
-            cr.project,
-            cr.primary_domain,
-            cr.confidence,
-            cr.reasoning + " (AUTO move skipped: destination collision)",
+            src, cr.project, cr.primary_domain, cr.confidence, reason
+        )
+        _write_classify_audit(
+            ctx, _suggest_action(cr), cr.confidence, reason, source_id, "SUGGEST"
         )
         return Success(mr)
 
@@ -486,12 +497,12 @@ def _classify_auto_md_move(
                 dst=str(dst),
                 error=f.error,
             )
+            reason = cr.reasoning + f" (AUTO move blocked: {f.error})"
             _write_classify_candidate(
-                src,
-                cr.project,
-                cr.primary_domain,
-                cr.confidence,
-                cr.reasoning + f" (AUTO move blocked: {f.error})",
+                src, cr.project, cr.primary_domain, cr.confidence, reason
+            )
+            _write_classify_audit(
+                ctx, _suggest_action(cr), cr.confidence, reason, source_id, "SUGGEST"
             )
             return Success(mr)
         case Failure(error=err):
@@ -502,12 +513,10 @@ def _classify_auto_md_move(
                 dst=str(dst),
                 error=err,
             )
-            _write_classify_candidate(
-                src,
-                None,
-                None,
-                cr.confidence,
-                cr.reasoning + f" (AUTO move failed: {err})",
+            reason = cr.reasoning + f" (AUTO move failed: {err})"
+            _write_classify_candidate(src, None, None, cr.confidence, reason)
+            _write_classify_audit(
+                ctx, "classify:clueless", cr.confidence, reason, source_id, "CLUELESS"
             )
             return Success(mr)
         case Success(value=outcome):
@@ -537,12 +546,12 @@ def _classify_auto_md_move(
                 case Success():
                     pass
             # Fall back to SUGGEST — candidate fields, file back in inbox.
+            reason = cr.reasoning + " (AUTO move failed: DB error)"
             _write_classify_candidate(
-                src,
-                cr.project,
-                cr.primary_domain,
-                cr.confidence,
-                cr.reasoning + f" (AUTO move failed: DB error)",
+                src, cr.project, cr.primary_domain, cr.confidence, reason
+            )
+            _write_classify_audit(
+                ctx, _suggest_action(cr), cr.confidence, reason, source_id, "SUGGEST"
             )
             return Success(mr)
         case Success():
@@ -553,6 +562,13 @@ def _classify_auto_md_move(
         old_path=str(src),
         new_path=str(dst),
         target=cr.project or cr.primary_domain,
+    )
+
+    # Write the AUTO audit row only after the move + DB swap both succeeded.
+    # (Fallback branches above record SUGGEST/CLUELESS instead, so the audit
+    # log never claims AUTO for a file that stayed in inbox.)
+    _write_classify_audit(
+        ctx, _auto_action(cr), cr.confidence, cr.reasoning, source_id, "AUTO"
     )
 
     # Update MetadataResult so store() operates on the new location.
@@ -576,8 +592,6 @@ async def classify_step(
     Retry: up to 3 attempts with 1 s base exponential backoff.
     Unrecoverable failures skip retry and fall through to CLUELESS.
     """
-    import asyncio
-
     # SUPPRESS passthrough (P2-CIC-06)
     if ctx.skip_classify:
         return Success(mr)
@@ -683,19 +697,18 @@ async def classify_step(
             ai_tags=new_tags,
         )
 
-        action = (
-            f"classify:{'project' if cr.project else 'domain'}/"
-            f"{cr.project or cr.primary_domain}"
-        )
-        _write_classify_audit(
-            ctx, action, cr.confidence, cr.reasoning, source_id, "AUTO"
-        )
-
-        # Phase 6: AUTO move handoff
+        # Phase 6: AUTO move handoff.
+        # The AUTO audit row is written by _classify_auto_md_move only after the
+        # move + DB swap succeed; its fallbacks write SUGGEST/CLUELESS instead.
         if mr.raw.is_md:
             return _classify_auto_md_move(updated_mr, cr, ctx, source_id)
         else:
-            # Binary: set target_type/target_name so store() → _store_nonmd routes it.
+            # Binary: set target_type/target_name so store() → _store_nonmd
+            # routes it. The classify decision is final here (store writes its
+            # own LOCATED row on the actual move), so record AUTO now.
+            _write_classify_audit(
+                ctx, _auto_action(cr), cr.confidence, cr.reasoning, source_id, "AUTO"
+            )
             _target_type = "project" if cr.project else "domain"
             _target_name = cr.project or cr.primary_domain
             return Success(
@@ -1042,10 +1055,8 @@ async def _store_nonmd(
                     recoverable=False,
                     context={"stem": sanitized_stem, "suffix": suffix},
                 )
-            sibling_stem = sanitized_stem
         else:
             attachment_dst = src  # binary already at final destination
-            sibling_stem = src.stem
 
         # Step 3: Rich sibling body via summarize_attachment prompt
         provider = get_provider("capture", ctx.config)

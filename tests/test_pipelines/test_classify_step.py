@@ -230,32 +230,30 @@ async def test_classify_step_located_domain_passthrough(tmp_path: Path, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_classify_step_inbox_auto_project(tmp_path: Path, monkeypatch):
+async def test_classify_step_inbox_auto_project(
+    vault_root: Path, pipeline_ctx, monkeypatch
+):
     """Loose inbox .md, AI returns project=Alpha, confidence=0.9.
 
-    Verify: ai_project set, domain tags include domain/finance, no
-    suggested_* fields, one AUTO audit row.
+    Verify: ai_project set, domain tags include domain/finance, the file is
+    actually moved to Projects/Alpha/, and exactly one AUTO audit row is
+    written (only after the move + DB swap succeed).
     """
-    (tmp_path / "inbox").mkdir(parents=True, exist_ok=True)
-    note_path = tmp_path / "inbox" / "note.md"
-    mr = _make_mr(note_path)
+    from pipelines.capture import classify_step
 
-    _patch_core_config(monkeypatch, tmp_path)
-
-    ctx = PipelineContext(
-        config=_make_config_mock(tmp_path),
-        correlation_id="test-cid",
-    )
-    ctx.db_path = tmp_path / "test.db"
+    _setup_project_dirs(vault_root)
+    note_path = vault_root / "inbox" / "note.md"
+    _write_test_note(note_path, "## Hello\n\nBody.")
 
     classify_mock = _mock_classify(
         monkeypatch,
         Success(_make_classify_result(project="Alpha", confidence=0.9)),
     )
     audit_mock = _mock_audit_write(monkeypatch)
+    _patch_core_config(monkeypatch, vault_root)
+    ctx = pipeline_ctx
 
-    from pipelines.capture import classify_step
-
+    mr = _make_mr(note_path)
     result = await classify_step(mr, ctx)
 
     assert isinstance(result, Success)
@@ -264,7 +262,11 @@ async def test_classify_step_inbox_auto_project(tmp_path: Path, monkeypatch):
     assert "domain/finance" in updated_mr.ai_tags
     classify_mock.assert_called_once()
 
-    # Verify one AUTO audit row
+    # File physically moved to the project root.
+    assert (vault_root / "Projects" / "Alpha" / "note.md").exists()
+    assert not note_path.exists()
+
+    # Exactly one AUTO audit row, written only after the move succeeded.
     audit_mock.assert_called_once()
     call_kwargs = audit_mock.call_args.kwargs
     assert call_kwargs["outcome"] == "AUTO"
@@ -278,28 +280,25 @@ async def test_classify_step_inbox_auto_project(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_classify_step_inbox_auto_domain_only(tmp_path: Path, monkeypatch):
+async def test_classify_step_inbox_auto_domain_only(
+    vault_root: Path, pipeline_ctx, monkeypatch
+):
     """AI returns project=None, primary_domain=Finance, confidence=0.9 -> AUTO domain."""
-    (tmp_path / "inbox").mkdir(parents=True, exist_ok=True)
-    note_path = tmp_path / "inbox" / "note.md"
-    mr = _make_mr(note_path)
+    from pipelines.capture import classify_step
 
-    _patch_core_config(monkeypatch, tmp_path)
-
-    ctx = PipelineContext(
-        config=_make_config_mock(tmp_path),
-        correlation_id="test-cid",
-    )
-    ctx.db_path = tmp_path / "test.db"
+    _setup_domain_dirs(vault_root)
+    note_path = vault_root / "inbox" / "note.md"
+    _write_test_note(note_path, "## Hello\n\nBody.")
 
     _mock_classify(
         monkeypatch,
         Success(_make_classify_result(project=None, confidence=0.9)),
     )
     audit_mock = _mock_audit_write(monkeypatch)
+    _patch_core_config(monkeypatch, vault_root)
+    ctx = pipeline_ctx
 
-    from pipelines.capture import classify_step
-
+    mr = _make_mr(note_path)
     result = await classify_step(mr, ctx)
 
     assert isinstance(result, Success)
@@ -307,6 +306,10 @@ async def test_classify_step_inbox_auto_domain_only(tmp_path: Path, monkeypatch)
     assert updated_mr.ai_project is None
     assert updated_mr.ai_domain == "Finance"
     assert "domain/finance" in updated_mr.ai_tags
+
+    # File physically moved to the domain root.
+    assert (vault_root / "Domain" / "Finance" / "note.md").exists()
+    assert not note_path.exists()
 
     audit_mock.assert_called_once()
     assert audit_mock.call_args.kwargs["outcome"] == "AUTO"
@@ -486,22 +489,19 @@ async def test_classify_step_no_project_no_domain_is_clueless(
 
 
 @pytest.mark.asyncio
-async def test_classify_step_project_beats_domain(tmp_path: Path, monkeypatch):
+async def test_classify_step_project_beats_domain(
+    vault_root: Path, pipeline_ctx, monkeypatch
+):
     """AI returns project=Alpha, primary_domain=Finance -> ai_project set, domain tags added.
 
     P2-CIC-11: project assignment takes priority over domain routing.
     """
-    (tmp_path / "inbox").mkdir(parents=True, exist_ok=True)
-    note_path = tmp_path / "inbox" / "note.md"
-    mr = _make_mr(note_path)
+    from pipelines.capture import classify_step
 
-    _patch_core_config(monkeypatch, tmp_path)
-
-    ctx = PipelineContext(
-        config=_make_config_mock(tmp_path),
-        correlation_id="test-cid",
-    )
-    ctx.db_path = tmp_path / "test.db"
+    _setup_project_dirs(vault_root)
+    _setup_domain_dirs(vault_root)
+    note_path = vault_root / "inbox" / "note.md"
+    _write_test_note(note_path, "## Hello\n\nBody.")
 
     _mock_classify(
         monkeypatch,
@@ -515,15 +515,20 @@ async def test_classify_step_project_beats_domain(tmp_path: Path, monkeypatch):
         ),
     )
     audit_mock = _mock_audit_write(monkeypatch)
+    _patch_core_config(monkeypatch, vault_root)
+    ctx = pipeline_ctx
 
-    from pipelines.capture import classify_step
-
+    mr = _make_mr(note_path)
     result = await classify_step(mr, ctx)
 
     assert isinstance(result, Success)
     updated_mr = result.value
     assert updated_mr.ai_project == "Alpha"
     assert "domain/finance" in updated_mr.ai_tags
+
+    # Project wins over domain: file goes to Projects/Alpha/, not Domain/Finance/.
+    assert (vault_root / "Projects" / "Alpha" / "note.md").exists()
+    assert not (vault_root / "Domain" / "Finance" / "note.md").exists()
 
     audit_mock.assert_called_once()
     assert audit_mock.call_args.kwargs["outcome"] == "AUTO"
@@ -535,22 +540,18 @@ async def test_classify_step_project_beats_domain(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_classify_step_multi_domain_primary_routing(tmp_path: Path, monkeypatch):
+async def test_classify_step_multi_domain_primary_routing(
+    vault_root: Path, pipeline_ctx, monkeypatch
+):
     """AI returns project=None, domains=["finance","legal"], primary_domain=Finance.
 
     P2-CIC-12: destination is Domain/Finance/, all domain tags kept.
     """
-    (tmp_path / "inbox").mkdir(parents=True, exist_ok=True)
-    note_path = tmp_path / "inbox" / "note.md"
-    mr = _make_mr(note_path)
+    from pipelines.capture import classify_step
 
-    _patch_core_config(monkeypatch, tmp_path)
-
-    ctx = PipelineContext(
-        config=_make_config_mock(tmp_path),
-        correlation_id="test-cid",
-    )
-    ctx.db_path = tmp_path / "test.db"
+    _setup_domain_dirs(vault_root)
+    note_path = vault_root / "inbox" / "note.md"
+    _write_test_note(note_path, "## Hello\n\nBody.")
 
     _mock_classify(
         monkeypatch,
@@ -564,9 +565,10 @@ async def test_classify_step_multi_domain_primary_routing(tmp_path: Path, monkey
         ),
     )
     audit_mock = _mock_audit_write(monkeypatch)
+    _patch_core_config(monkeypatch, vault_root)
+    ctx = pipeline_ctx
 
-    from pipelines.capture import classify_step
-
+    mr = _make_mr(note_path)
     result = await classify_step(mr, ctx)
 
     assert isinstance(result, Success)
@@ -575,6 +577,10 @@ async def test_classify_step_multi_domain_primary_routing(tmp_path: Path, monkey
     assert updated_mr.ai_domain == "Finance"
     assert "domain/finance" in updated_mr.ai_tags
     assert "domain/legal" in updated_mr.ai_tags
+
+    # Primary domain drives routing: file goes to Domain/Finance/.
+    assert (vault_root / "Domain" / "Finance" / "note.md").exists()
+    assert not note_path.exists()
 
     audit_mock.assert_called_once()
     assert audit_mock.call_args.kwargs["outcome"] == "AUTO"
@@ -1014,6 +1020,93 @@ async def test_auto_binary_routes_through_store_nonmd(
 
 
 @pytest.mark.asyncio
+async def test_auto_binary_end_to_end_placement(
+    vault_root: Path, pipeline_ctx, monkeypatch
+):
+    """Real loose binary AUTO: classify_step → store → _store_nonmd places it.
+
+    Drives a real PDF through classify_step (sets the AUTO target) then the
+    real store() → _store_nonmd with NO mocks on the filer.  Asserts on-disk
+    placement + the sibling DB row.  Closes the P2-CIC-05 gap left by the
+    param-passthrough-only test (#3) — only the LLM summarize call is stubbed.
+    """
+    from llm.provider import LLMResponse
+    from pipelines.capture import classify_step, store
+    from storage.documents import get_by_path
+    from vault.reader import read_note
+
+    import shutil
+
+    _setup_project_dirs(vault_root)
+    binary_path = vault_root / "inbox" / "report.pdf"
+    fixture_pdf = Path(__file__).parent.parent / "fixtures" / "sample_text.pdf"
+    shutil.copy(fixture_pdf, binary_path)
+
+    _mock_classify(
+        monkeypatch,
+        Success(_make_classify_result(project="Alpha", confidence=0.95)),
+    )
+    _mock_audit_write(monkeypatch)
+    _patch_core_config(monkeypatch, vault_root)
+
+    # Stub only the LLM (summarize_attachment) — the filer runs for real.
+    class _StubProvider:
+        async def complete(self, system, user):
+            return Success(
+                LLMResponse(content="Rich attachment summary.", model="test", usage={})
+            )
+
+    monkeypatch.setattr(
+        "pipelines.capture.get_provider", lambda *a, **kw: _StubProvider()
+    )
+
+    ctx = pipeline_ctx
+    mr = _make_mr(binary_path, is_md=False)
+
+    # Stage 5.5: classify sets the AUTO target.
+    classified = await classify_step(mr, ctx)
+    assert isinstance(classified, Success)
+    assert classified.value.target_type == "project"
+    assert classified.value.target_name == "Alpha"
+
+    # Stage 6: real store → real _store_nonmd places the binary.
+    stored = await store(classified.value, ctx)
+    assert isinstance(stored, Success), f"store failed: {stored}"
+
+    # Binary physically lands in the project attachment dir; inbox copy gone.
+    expected_binary = vault_root / "Projects" / "Alpha" / "attachment" / "report.pdf"
+    assert expected_binary.exists(), f"Expected binary at {expected_binary}"
+    assert not binary_path.exists(), "Binary must not remain in inbox"
+
+    # Sibling .md lands in attachment/.summaries/ named <full filename>.md.
+    expected_sibling = (
+        vault_root
+        / "Projects"
+        / "Alpha"
+        / "attachment"
+        / ".summaries"
+        / "report.pdf.md"
+    )
+    assert expected_sibling.exists(), f"Expected sibling at {expected_sibling}"
+
+    # DB row is keyed on the sibling vault_path.
+    sibling_vault_path = "Projects/Alpha/attachment/.summaries/report.pdf.md"
+    row = get_by_path(sibling_vault_path, db_path=ctx.db_path)
+    assert isinstance(row, Success)
+    assert row.value is not None, "Sibling DB row must exist"
+
+    # Sibling frontmatter: attachment_path → the binary, type preserved.
+    match read_note(expected_sibling):
+        case Success(note):
+            assert (
+                note.metadata.attachment_path == "Projects/Alpha/attachment/report.pdf"
+            )
+            assert note.metadata.type == "attachment-summary"
+        case _:
+            raise AssertionError("sibling note must be readable")
+
+
+@pytest.mark.asyncio
 async def test_auto_binary_batch_id_null(vault_root: Path, pipeline_ctx, monkeypatch):
     """After an AUTO move to project root, verify batch_id on the documents
     row is NULL.  (P2-CIC-07 / R3)
@@ -1070,7 +1163,7 @@ async def test_auto_human_locked_fallback(vault_root: Path, pipeline_ctx, monkey
         monkeypatch,
         Success(_make_classify_result(project="Alpha", confidence=0.95)),
     )
-    _mock_audit_write(monkeypatch)
+    audit_mock = _mock_audit_write(monkeypatch)
     _patch_core_config(monkeypatch, vault_root)
 
     # Mock write_note for candidate fallback (SUGGEST-style).
@@ -1095,8 +1188,62 @@ async def test_auto_human_locked_fallback(vault_root: Path, pipeline_ctx, monkey
     # Reasoning includes the block reason.
     assert "blocked" in written_meta.classify_reasoning.lower()
 
+    # Audit must record SUGGEST, NOT AUTO — the file stayed in inbox, so an
+    # AUTO row would make the briefing report it as auto-filed (the #1 fix).
+    audit_mock.assert_called_once()
+    assert audit_mock.call_args.kwargs["outcome"] == "SUGGEST"
+
     # No DB row at destination.
     new_row = get_by_path("Projects/Alpha/locked-note.md", db_path=ctx.db_path)
+    assert isinstance(new_row, Success)
+    assert new_row.value is None
+
+
+@pytest.mark.asyncio
+async def test_auto_md_db_error_writes_suggest_audit(
+    vault_root: Path, pipeline_ctx, monkeypatch
+):
+    """AUTO .md move succeeds on disk but documents.replace_path fails.
+
+    Verify: the move is rolled back (file back in inbox), candidate fields
+    written, and the audit records SUGGEST — never AUTO. (#1 fix)
+    """
+    from pipelines.capture import classify_step
+    from storage.documents import get_by_path
+
+    _setup_project_dirs(vault_root)
+    note_path = vault_root / "inbox" / "db-error-note.md"
+    _write_test_note(note_path, "## DB error\n\nBody.")
+
+    _mock_classify(
+        monkeypatch,
+        Success(_make_classify_result(project="Alpha", confidence=0.95)),
+    )
+    audit_mock = _mock_audit_write(monkeypatch)
+    _patch_core_config(monkeypatch, vault_root)
+
+    # Force the DB swap to fail so the AUTO move rolls back.
+    monkeypatch.setattr(
+        "pipelines.capture.documents.replace_path",
+        lambda *a, **kw: Failure(error="boom", recoverable=True, context={}),
+    )
+
+    ctx = pipeline_ctx
+    mr = _make_mr(note_path)
+    result = await classify_step(mr, ctx)
+
+    assert isinstance(result, Success)
+
+    # Move rolled back — file is back in inbox, not at the destination.
+    assert note_path.exists(), "File must be rolled back to inbox on DB failure"
+    assert not (vault_root / "Projects" / "Alpha" / "db-error-note.md").exists()
+
+    # Audit must record SUGGEST, not AUTO.
+    audit_mock.assert_called_once()
+    assert audit_mock.call_args.kwargs["outcome"] == "SUGGEST"
+
+    # No DB row at destination.
+    new_row = get_by_path("Projects/Alpha/db-error-note.md", db_path=ctx.db_path)
     assert isinstance(new_row, Success)
     assert new_row.value is None
 

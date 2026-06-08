@@ -591,3 +591,60 @@ class TestClassify:
         assert result.value.domains == []
         assert result.value.primary_domain is None
         assert result.value.confidence == 0.3
+
+    @pytest.mark.asyncio
+    async def test_classify_rejects_substring_project(self, monkeypatch):
+        """A project name that is only a SUBSTRING of a valid name is rejected.
+
+        "Alph" is a substring of the valid destination "Alpha" but is not an
+        exact destination name — validation must use exact membership, not a
+        substring `in` test.
+        """
+        json_substr_project = (
+            '{"project": "Alph", "domains": ["finance"], '
+            '"primary_domain": "Finance", "confidence": 0.8, '
+            '"reasoning": "Substring of a real project."}'
+        )
+        mock_provider = _make_mock_provider(
+            Success(LLMResponse(content=json_substr_project, model="test", usage={}))
+        )
+        _patch_get_provider(monkeypatch, mock_provider)
+
+        result = await classify(
+            subject="Title: Note\nSummary: Some note\nTags: finance",
+            valid_destinations=VALID_DESTINATIONS,
+            config=_make_config(),
+        )
+
+        assert isinstance(result, Failure)
+        assert result.recoverable is True
+        assert "Alph" in result.error
+        assert "destination" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_classify_rejects_substring_primary_domain(self, monkeypatch):
+        """A primary_domain that is only a SUBSTRING of a valid name is rejected.
+
+        "inance" is a substring of the valid destination "Finance" but is not
+        an exact destination name.
+        """
+        json_substr_domain = (
+            '{"project": "Alpha", "domains": ["finance"], '
+            '"primary_domain": "inance", "confidence": 0.8, '
+            '"reasoning": "Substring of a real domain."}'
+        )
+        mock_provider = _make_mock_provider(
+            Success(LLMResponse(content=json_substr_domain, model="test", usage={}))
+        )
+        _patch_get_provider(monkeypatch, mock_provider)
+
+        result = await classify(
+            subject="Title: Note\nSummary: Some note\nTags: finance",
+            valid_destinations=VALID_DESTINATIONS,
+            config=_make_config(),
+        )
+
+        assert isinstance(result, Failure)
+        assert result.recoverable is True
+        assert "inance" in result.error
+        assert "destination" in result.error.lower()
