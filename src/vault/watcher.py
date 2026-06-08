@@ -34,18 +34,25 @@ from core.audit import write as audit_write
 from core.confidence import AIDecision
 from core.logging_setup import new_correlation_id
 from core.result import Failure, Success
-from storage.documents import delete_by_path, get_by_path, rename as rename_doc
+from storage.documents import (
+    delete_by_path,
+    get_by_path,
+    rename as rename_doc,
+    update_batch_id,
+)
 from vault.indexer import IGNORE_DIRS
 from vault.paths import (
     _is_ai_output,
     _is_in_managed_attachment,
     _is_misplaced,
     _location_context,
+    is_batch_subfolder,
     resolve_placement,
 )
 from vault.reader import read_note
 from vault.move_guard import MoveGuard
 from vault.writer import move_attachment, move_note, write_note
+import storage.batches as batches
 
 if TYPE_CHECKING:
     from core.config import VaultConfig
@@ -120,6 +127,7 @@ class _VaultEventHandler(FileSystemEventHandler):
         move_guard: MoveGuard | None = None,
         binary_settle_seconds: float = 5.0,
         registry: "LiveRegistry | None" = None,
+        db_path: Path | None = None,
     ) -> None:
         super().__init__()
         self._root = root
@@ -134,6 +142,7 @@ class _VaultEventHandler(FileSystemEventHandler):
         self._move_guard = move_guard
         self._binary_settle_seconds = binary_settle_seconds
         self._registry = registry
+        self._db_path = db_path
         # key: str(path) → (active timer, callable, args)
         self._timers: dict[str, tuple[threading.Timer, Callable, tuple]] = {}
         self._lock = threading.Lock()
@@ -891,6 +900,58 @@ class _VaultEventHandler(FileSystemEventHandler):
                     )
                 case Success():
                     pass
+
+            # Sub-step g2 — stamp batch_id on documents row (TD-041 watcher fix)
+            # Deterministic path math; no AI decision; no audit row required (C-13 N/A).
+            if is_batch_subfolder(dst.parent, self._vault_config):
+                _folder_vp = unicodedata.normalize(
+                    "NFC",
+                    str(dst.parent.relative_to(self._root).as_posix()),
+                )
+                _batch_id: int | None = None
+                match batches.find_by_folder_path(_folder_vp, db_path=self._db_path):
+                    case Success(value=None):
+                        match batches.insert(
+                            folder_name=dst.parent.name,
+                            destination_type=loc_type,
+                            destination_name=loc_name,
+                            confidence=1.0,
+                            status="ROUTING",
+                            file_count=1,
+                            folder_path=_folder_vp,
+                            db_path=self._db_path,
+                        ):
+                            case Success(value=_bid):
+                                _batch_id = _bid
+                            case Failure(error=_berr):
+                                _log.warning(
+                                    "watcher.binary_rehome_batch_insert_failed dst=%s error=%s",
+                                    dst,
+                                    _berr,
+                                )
+                    case Success(value=_existing_bid):
+                        _batch_id = _existing_bid
+                    case Failure(error=_berr):
+                        _log.warning(
+                            "watcher.binary_rehome_batch_lookup_failed dst=%s error=%s",
+                            dst,
+                            _berr,
+                        )
+                if _batch_id is not None:
+                    match update_batch_id(new_sibling_vp, _batch_id, self._db_path):
+                        case Success(value=0):
+                            _log.warning(
+                                "watcher.binary_rehome_batch_id_update_no_row sibling=%s",
+                                new_sibling_vp,
+                            )
+                        case Failure(error=_berr):
+                            _log.warning(
+                                "watcher.binary_rehome_batch_id_update_failed sibling=%s error=%s",
+                                new_sibling_vp,
+                                _berr,
+                            )
+                        case Success():
+                            pass
 
             # Sub-step h — write audit row
             is_no_edit = dst.suffix.lower() in self._vault_config.no_edit_extensions

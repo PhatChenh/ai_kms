@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 # Placement — frozen result of resolve_placement
 # ---------------------------------------------------------------------------
 
+
 @dataclasses.dataclass(frozen=True)
 class Placement:
     """Where a captured binary should live.
@@ -53,6 +54,7 @@ class Placement:
 # ---------------------------------------------------------------------------
 # resolve_placement — pure path arithmetic
 # ---------------------------------------------------------------------------
+
 
 def resolve_placement(
     file_path: Path,
@@ -304,6 +306,60 @@ def _location_context(
     return (None, None)
 
 
+#: Folder names that are system-managed and should never be treated as
+#: batch-worthy subfolders, regardless of their position in the vault.
+_BATCH_SUBFOLDER_BLOCKLIST: frozenset[str] = frozenset(
+    {"attachment", ".summaries", "Archive"}
+)
+
+
+def is_batch_subfolder(path: Path, vault_cfg: "VaultConfig") -> bool:
+    """Return True if *path* is a named subfolder that warrants a batch record.
+
+    A batch-worthy subfolder is any named directory inside inbox/, Projects/<A>/,
+    or Domain/<D>/ that is NOT:
+      - the root of those trees (must be at least one level deeper), OR
+      - a system-managed folder: attachment/, .summaries/, or Archive/.
+
+    Both capture_file() and _handle_binary_move() call this function so the
+    batch-worthiness rule is defined in exactly one place.
+
+    Pure path arithmetic — no filesystem I/O, no CONFIG import, no side effects.
+
+    Args:
+        path:      Absolute path to the directory being tested.
+        vault_cfg: VaultConfig with projects_path, domain_path, inbox_path.
+
+    Returns:
+        True if path should receive a batch record; False otherwise.
+    """
+    # Blocklist: system-managed folder names are never batch-worthy.
+    if path.name in _BATCH_SUBFOLDER_BLOCKLIST:
+        return False
+
+    loc_type, _ = _location_context(path, vault_cfg)
+
+    if loc_type == "inbox":
+        # Any subfolder of inbox/ qualifies — depth >= 1 is guaranteed because
+        # _location_context returns ("inbox", None) for inbox/ itself too, so we
+        # must check that path is not inbox/ root.
+        return path != vault_cfg.inbox_path
+
+    if loc_type in ("project", "domain"):
+        # Must be at least two parts deep relative to the tree root
+        # (i.e., Projects/<A>/subdir, not just Projects/<A>).
+        root = (
+            vault_cfg.projects_path if loc_type == "project" else vault_cfg.domain_path
+        )
+        try:
+            rel = path.relative_to(root)
+            return len(rel.parts) >= 2
+        except ValueError:
+            return False
+
+    return False
+
+
 def load_valid_domains(vault_root: Path) -> frozenset[str]:
     """Return folder names directly under vault_root/Domain/ as the valid domain set.
 
@@ -318,7 +374,8 @@ def load_valid_domains(vault_root: Path) -> frozenset[str]:
     if not domain_dir.is_dir():
         return frozenset()
     return frozenset(
-        p.name for p in domain_dir.iterdir()
+        p.name
+        for p in domain_dir.iterdir()
         if p.is_dir() and not p.name.startswith(".")
     )
 
@@ -335,6 +392,7 @@ def to_vault_path(absolute: Path) -> str:
         SQLite storage on macOS (which uses NFD internally for filenames).
     """
     from core.config import CONFIG
+
     rel = absolute.relative_to(CONFIG.main.vault.root).as_posix()
     return unicodedata.normalize("NFC", rel)
 
@@ -342,6 +400,7 @@ def to_vault_path(absolute: Path) -> str:
 def project_dir(name: str) -> Path:
     """Return Projects/<name>/ and ensure it exists."""
     from core.config import CONFIG
+
     d = CONFIG.main.vault.projects_path / name
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -350,6 +409,7 @@ def project_dir(name: str) -> Path:
 def project_materials(name: str) -> Path:
     """Return Projects/<name>/materials/ and ensure it exists."""
     from core.config import CONFIG
+
     d = CONFIG.main.vault.projects_path / name / "materials"
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -363,6 +423,7 @@ def project_index(name: str) -> Path:
 def domain_dir(name: str) -> Path:
     """Return Domain/<name>/ and ensure it exists."""
     from core.config import CONFIG
+
     d = CONFIG.main.vault.domain_path / name
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -371,6 +432,7 @@ def domain_dir(name: str) -> Path:
 def domain_notes(name: str) -> Path:
     """Return Domain/<name>/notes/ and ensure it exists."""
     from core.config import CONFIG
+
     d = CONFIG.main.vault.domain_path / name / "notes"
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -384,6 +446,7 @@ def domain_index(name: str) -> Path:
 def project_attachment(name: str) -> Path:
     """Return Projects/<name>/<attachment_dir>/ and ensure it exists."""
     from core.config import CONFIG
+
     d = CONFIG.main.vault.projects_path / name / CONFIG.main.vault.attachment_dir
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -392,6 +455,7 @@ def project_attachment(name: str) -> Path:
 def project_summaries(name: str) -> Path:
     """Return Projects/<name>/<attachment_dir>/<summaries_subdir>/ and ensure it exists."""
     from core.config import CONFIG
+
     d = (
         CONFIG.main.vault.projects_path
         / name
@@ -405,6 +469,7 @@ def project_summaries(name: str) -> Path:
 def domain_attachment(name: str) -> Path:
     """Return Domain/<name>/<attachment_dir>/ and ensure it exists."""
     from core.config import CONFIG
+
     d = CONFIG.main.vault.domain_path / name / CONFIG.main.vault.attachment_dir
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -413,6 +478,7 @@ def domain_attachment(name: str) -> Path:
 def domain_summaries(name: str) -> Path:
     """Return Domain/<name>/<attachment_dir>/<summaries_subdir>/ and ensure it exists."""
     from core.config import CONFIG
+
     d = (
         CONFIG.main.vault.domain_path
         / name
@@ -441,6 +507,7 @@ def domain_archive(name: str, vault_config: VaultConfig) -> Path:
 def documentation(project: str) -> Path:
     """Return Documentation/<project>.md path; ensure parent dir exists. Does not create the file."""
     from core.config import CONFIG
+
     parent = CONFIG.main.vault.documentation_path
     parent.mkdir(parents=True, exist_ok=True)
     return parent / f"{project}.md"
@@ -449,6 +516,7 @@ def documentation(project: str) -> Path:
 def briefings_for(d: date) -> Path:
     """Return Briefings/<YYYY>/<MM>_<DD>.md for date d; ensure year dir exists."""
     from core.config import CONFIG
+
     year_dir = CONFIG.main.vault.briefings_path / str(d.year)
     year_dir.mkdir(parents=True, exist_ok=True)
     return year_dir / f"{d.month:02d}_{d.day:02d}.md"
@@ -462,6 +530,7 @@ def briefings_today() -> Path:
 def synthesis_week(d: date) -> Path:
     """Return Synthesis/<YYYY>-W<WW>.md for the ISO week containing d; ensure Synthesis dir exists."""
     from core.config import CONFIG
+
     iso_year, iso_week, _ = d.isocalendar()
     parent = CONFIG.main.vault.synthesis_path
     parent.mkdir(parents=True, exist_ok=True)

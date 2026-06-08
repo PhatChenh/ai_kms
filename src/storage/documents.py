@@ -313,3 +313,37 @@ def rename(old: str, new: str, db_path: Path | None = None) -> Result[int]:
             recoverable=False,
             context={"old": old, "new": new, "op": "rename"},
         )
+
+
+def update_batch_id(
+    vault_path: str,
+    batch_id: int,
+    db_path: Path | None = None,
+) -> Result[int]:
+    """Set batch_id on the documents row for vault_path.
+
+    Used by the watcher when a file moves into a batch-worthy subfolder,
+    to avoid a full re-capture (deterministic path math, not an AI decision).
+
+    Args:
+        vault_path: POSIX vault-relative path of the document to update.
+        batch_id:   FK to batches.id to stamp on the row.
+        db_path:    Override DB path.
+
+    Returns:
+        Success(rowcount) — 1 if updated, 0 if no row matched.
+        Failure(recoverable=False) on sqlite3.Error.
+    """
+    try:
+        with get_connection(db_path) as conn:
+            cur = conn.execute(
+                "UPDATE documents SET batch_id = ? WHERE vault_path = ?",
+                (batch_id, vault_path),
+            )
+            return Success(cur.rowcount)
+    except sqlite3.Error as exc:
+        return Failure(
+            error=str(exc),
+            recoverable=False,
+            context={"vault_path": vault_path, "op": "update_batch_id"},
+        )
