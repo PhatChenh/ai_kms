@@ -78,8 +78,7 @@
       }
     ],
     "direction": "horizontal",
-    "width": 300,
-    "collapsed": true
+    "width": 300
   },
   "right": {
     "id": "eb3390f7af0f8ec8",
@@ -186,10 +185,10 @@
   },
   "active": "7ab4542fc32ccf5f",
   "lastOpenFiles": [
-    "docs/system_behavior/render_guide.py",
     "data/kb.db-wal",
-    "data/kb.db",
     "data/kb.db-shm",
+    "docs/system_behavior/render_guide.py",
+    "data/kb.db",
     "docs/system_behavior/TESTING_GUIDE.md.tmp.63671.9c6272d16eec",
     "docs/onboarding.md",
     "docs/gotchas_archive.md",
