@@ -8,7 +8,7 @@
 #   STAGING = parent of VAULT — staging files the tester copies/drags into VAULT
 #
 # IMPORTANT: This script operates on the TEST vault, never the real vault.
-# Last generated: 2026-06-08
+# Last generated: 2026-06-09
 
 set -euo pipefail
 
@@ -211,7 +211,7 @@ setup_P1_CAP_09() {
     Test fixture for P1-CAP-09."
 }
 
-# phase | P1-CAP-10: CLUELESS routing — inbox binary gets pending-routing marker
+# phase | P1-CAP-10: CLUELESS routing — inbox binary gets real summary marker with needs-review status
 setup_P1_CAP_10() {
     # ── cleanup ──
     rm -f "$VAULT/inbox/mystery-file.pdf"
@@ -524,6 +524,105 @@ setup_P2_REC_03() {
 
     Test fixture for P2-REC-03."
 }
+
+# phase | P2-CIC-01: Loose inbox .md note with a confident destination is moved into the project/domain folder DERIVED from its assigned tags+project (AUTO)
+setup_P2_CIC_01() {
+    # ── cleanup ──
+    rm -f "$VAULT/inbox/p2cic-01-clear-project-note.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/p2cic-01-clear-project-note.md'" 2>/dev/null || true
+    # ── create ──
+    write_md "$VAULT/inbox/p2cic-01-clear-project-note.md" \
+    "Loose inbox .md note with a confident destination is moved into the project/domain folder DERIVED from its assigned tags+project (AUTO).
+
+    Test fixture for P2-CIC-01."
+}
+
+# phase | P2-CIC-02: Loose inbox note with a medium-confidence destination stays in inbox with suggested destination recorded (SUGGEST)
+setup_P2_CIC_02() {
+    # ── cleanup ──
+    rm -f "$VAULT/inbox/p2cic-02-ambiguous-note.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/p2cic-02-ambiguous-note.md'" 2>/dev/null || true
+    # ── create ──
+    write_md "$VAULT/inbox/p2cic-02-ambiguous-note.md" \
+    "Loose inbox note with a medium-confidence destination stays in inbox with suggested destination recorded (SUGGEST).
+
+    Test fixture for P2-CIC-02."
+}
+
+# phase | P2-CIC-03: Loose inbox note the AI cannot place stays in inbox marked stuck (CLUELESS)
+setup_P2_CIC_03() {
+    # ── cleanup ──
+    rm -f "$VAULT/inbox/p2cic-03-no-match-note.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/p2cic-03-no-match-note.md'" 2>/dev/null || true
+    # ── create ──
+    write_md "$VAULT/inbox/p2cic-03-no-match-note.md" \
+    "Loose inbox note the AI cannot place stays in inbox marked stuck (CLUELESS).
+
+    Test fixture for P2-CIC-03."
+}
+
+# phase | P2-CIC-04: A file dropped directly into a project/domain folder is filed by location WITHOUT any AI classify call
+setup_P2_CIC_04() {
+    # ── cleanup ──
+    rm -f "$VAULT/Projects/Alpha/p2cic-04-located-note.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'Projects/Alpha/p2cic-04-located-note.md'" 2>/dev/null || true
+    # ── create ──
+    write_md "$VAULT/Projects/Alpha/p2cic-04-located-note.md" \
+    "A file dropped directly into a project/domain folder is filed by location WITHOUT any AI classify call.
+
+    Test fixture for P2-CIC-04."
+}
+
+# phase | P2-CIC-05: Loose inbox PDF gets a rich attachment summary AND is classified at drop time (two AI calls; pending-routing marker retired)
+setup_P2_CIC_05() {
+    # ── cleanup ──
+    rm -f "$VAULT/inbox/p2cic-05-clear-project-report.pdf"
+    rm -f "$VAULT/inbox/.summaries/p2cic-05-clear-project-report.pdf.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path LIKE '%p2cic-05-clear-project-report.pdf%'" 2>/dev/null || true
+    # ── create ──
+    mkdir -p "$VAULT/inbox"
+    if [ -f "$FIXTURES/sample_text.pdf" ]; then
+        cp "$FIXTURES/sample_text.pdf" "$VAULT/inbox/p2cic-05-clear-project-report.pdf"
+    else
+        echo "⚠ P2-CIC-05: No sample PDF at $FIXTURES/sample_text.pdf — place a test PDF manually"
+    fi
+}
+
+# phase | P2-CIC-10: A single file dropped in a project/domain folder is still summarized + frontmatter-stamped; only the classify step and the move are skipped (LOCATED is NOT a no-op)
+setup_P2_CIC_10() {
+    # ── cleanup ──
+    rm -f "$VAULT/Projects/Alpha/p2cic-10-located-summary-note.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'Projects/Alpha/p2cic-10-located-summary-note.md'" 2>/dev/null || true
+    # ── create ──
+    write_md "$VAULT/Projects/Alpha/p2cic-10-located-summary-note.md" \
+    "A single file dropped in a project/domain folder is still summarized + frontmatter-stamped; only the classify step and the move are skipped (LOCATED is NOT a no-op).
+
+    Test fixture for P2-CIC-10."
+}
+
+# phase | P2-CIC-11: When the AI assigns a project, the note moves to that Project folder even though it also carries domain tags (project beats domain — precedence)
+setup_P2_CIC_11() {
+    # ── cleanup ──
+    rm -f "$VAULT/inbox/p2cic-11-project-and-domain-note.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/p2cic-11-project-and-domain-note.md'" 2>/dev/null || true
+    # ── create ──
+    write_md "$VAULT/inbox/p2cic-11-project-and-domain-note.md" \
+    "When the AI assigns a project, the note moves to that Project folder even though it also carries domain tags (project beats domain — precedence).
+
+    Test fixture for P2-CIC-11."
+}
+
+# phase | P2-CIC-12: A loose note with NO project and MULTIPLE domain tags moves to the AI's designated PRIMARY domain folder while keeping all its domain tags
+setup_P2_CIC_12() {
+    # ── cleanup ──
+    rm -f "$VAULT/inbox/p2cic-12-multi-domain-note.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/p2cic-12-multi-domain-note.md'" 2>/dev/null || true
+    # ── create ──
+    write_md "$VAULT/inbox/p2cic-12-multi-domain-note.md" \
+    "A loose note with NO project and MULTIPLE domain tags moves to the AI's designated PRIMARY domain folder while keeping all its domain tags.
+
+    Test fixture for P2-CIC-12."
+}
 # ─── Phase 1 — Capture Pipeline (full) ─────────────────────────────────────
 
 # full | P1-DEV-01: Audit trail written for every capture decision
@@ -551,21 +650,6 @@ setup_P1_DEV_03() {
 # full | P1-DEV-04: Cooldown gate rejects file still being written
 setup_P1_DEV_04() {
     echo "P1-DEV-04: No pre-created fixtures. Trigger: kms capture <file> (mtime < cooldown_seconds ago)"
-}
-
-# full | P1-DEV-05: Pending-routing guard blocks re-capture of CLUELESS binary
-setup_P1_DEV_05() {
-    # ── cleanup ──
-    rm -f "$VAULT/inbox/mystery-file.pdf"
-    rm -f "$VAULT/inbox/.summaries/mystery-file.pdf.md"
-    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path LIKE '%mystery-file.pdf%'" 2>/dev/null || true
-    # ── create ──
-    mkdir -p "$VAULT/inbox"
-    if [ -f "$FIXTURES/sample_text.pdf" ]; then
-        cp "$FIXTURES/sample_text.pdf" "$VAULT/inbox/mystery-file.pdf"
-    else
-        echo "⚠ P1-DEV-05: No sample PDF at $FIXTURES/sample_text.pdf — place a test PDF manually"
-    fi
 }
 # ─── Phase 1.5 — Location Tags + Attachment Layout + Reconcile (full) ──────
 
@@ -681,6 +765,53 @@ setup_VR_CONTENT_01() {
     mkdir -p "$VAULT/Projects/Alpha/attachment"
     cd "$PROJECT_ROOT" && uv run python -c "import openpyxl; wb = openpyxl.Workbook(); ws = wb.active; ws.title = 'Vr Content 01 Test'; ws.append(['Column A', 'Column B', 'Column C']); ws.append(['Row 1 A', 'Row 1 B', 'Row 1 C']); ws.append(['Row 2 A', 'Row 2 B', 'Row 2 C']); wb.save('$VAULT/Projects/Alpha/attachment/vr-content-01-test.xlsx')"
 }
+# ─── Phase 2 (full) ────────────────────────────────────────────────────────
+
+# full | P2-CIC-06: Every classify outcome (AUTO/SUGGEST/CLUELESS) writes exactly one decision-log audit row
+setup_P2_CIC_06() {
+    # ── cleanup ──
+    rm -f "$VAULT/inbox/p2cic-06-audit-note.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/p2cic-06-audit-note.md'" 2>/dev/null || true
+    # ── create ──
+    write_md "$VAULT/inbox/p2cic-06-audit-note.md" \
+    "Every classify outcome (AUTO/SUGGEST/CLUELESS) writes exactly one decision-log audit row.
+
+    Test fixture for P2-CIC-06."
+}
+
+# full | P2-CIC-07: A classify AUTO-move to a project/domain root leaves batch_id NULL; index location stays consistent
+setup_P2_CIC_07() {
+    # ── cleanup ──
+    rm -f "$VAULT/inbox/p2cic-07-batch-note.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/p2cic-07-batch-note.md'" 2>/dev/null || true
+    # ── create ──
+    write_md "$VAULT/inbox/p2cic-07-batch-note.md" \
+    "A classify AUTO-move to a project/domain root leaves batch_id NULL; index location stays consistent.
+
+    Test fixture for P2-CIC-07."
+}
+
+# full | P2-CIC-08: A classify AUTO-move under the running watcher does not double-fire re-home or create a duplicate row
+setup_P2_CIC_08() {
+    echo "P2-CIC-08: No pre-created fixtures. Trigger: kms watch + a loose inbox file that classify AUTO-routes"
+}
+
+# full | P2-CIC-09: A file captured as part of a dropped folder is fully captured but NOT individually re-classified (SUPPRESS — the folder is the routing unit)
+setup_P2_CIC_09() {
+    echo "P2-CIC-09: No pre-created fixtures. Trigger: kms watch / capture_folder on a folder dropped in inbox/"
+}
+
+# full | P2-CIC-13: Structural consistency: an AUTO-filed note's on-disk folder always matches its stamped project/primary-domain (no free pick that could disagree)
+setup_P2_CIC_13() {
+    # ── cleanup ──
+    rm -f "$VAULT/inbox/p2cic-13-consistency-note.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/p2cic-13-consistency-note.md'" 2>/dev/null || true
+    # ── create ──
+    write_md "$VAULT/inbox/p2cic-13-consistency-note.md" \
+    "Structural consistency: an AUTO-filed note's on-disk folder always matches its stamped project/primary-domain (no free pick that could disagree).
+
+    Test fixture for P2-CIC-13."
+}
 
 # ─── Tier runners ──────────────────────────────────────────────────────────────
 
@@ -724,6 +855,14 @@ run_phase() {
     setup_P2_REC_01
     setup_P2_REC_02
     setup_P2_REC_03
+    setup_P2_CIC_01
+    setup_P2_CIC_02
+    setup_P2_CIC_03
+    setup_P2_CIC_04
+    setup_P2_CIC_05
+    setup_P2_CIC_10
+    setup_P2_CIC_11
+    setup_P2_CIC_12
 }
 
 run_all() {
@@ -732,7 +871,6 @@ run_all() {
     setup_P1_DEV_02
     setup_P1_DEV_03
     setup_P1_DEV_04
-    setup_P1_DEV_05
     setup_P15_DEV_01
     setup_P15_DEV_02
     setup_P15_DEV_03
@@ -741,6 +879,11 @@ run_all() {
     setup_P15_DEV_06
     setup_P15_DEV_07
     setup_VR_CONTENT_01
+    setup_P2_CIC_06
+    setup_P2_CIC_07
+    setup_P2_CIC_08
+    setup_P2_CIC_09
+    setup_P2_CIC_13
 }
 
 # ─── Main dispatch ─────────────────────────────────────────────────────────────
@@ -800,12 +943,19 @@ case "${1:-all}" in
     P2-REC-01)  reset_db; clean_vault; setup_P2_REC_01 ;;
     P2-REC-02)  reset_db; clean_vault; setup_P2_REC_02 ;;
     P2-REC-03)  reset_db; clean_vault; setup_P2_REC_03 ;;
+    P2-CIC-01)  reset_db; clean_vault; setup_P2_CIC_01 ;;
+    P2-CIC-02)  reset_db; clean_vault; setup_P2_CIC_02 ;;
+    P2-CIC-03)  reset_db; clean_vault; setup_P2_CIC_03 ;;
+    P2-CIC-04)  reset_db; clean_vault; setup_P2_CIC_04 ;;
+    P2-CIC-05)  reset_db; clean_vault; setup_P2_CIC_05 ;;
+    P2-CIC-10)  reset_db; clean_vault; setup_P2_CIC_10 ;;
+    P2-CIC-11)  reset_db; clean_vault; setup_P2_CIC_11 ;;
+    P2-CIC-12)  reset_db; clean_vault; setup_P2_CIC_12 ;;
     # ── Full ──
     P1-DEV-01)  reset_db; clean_vault; setup_P1_DEV_01 ;;
     P1-DEV-02)  reset_db; clean_vault; setup_P1_DEV_02 ;;
     P1-DEV-03)  reset_db; clean_vault; setup_P1_DEV_03 ;;
     P1-DEV-04)  reset_db; clean_vault; setup_P1_DEV_04 ;;
-    P1-DEV-05)  reset_db; clean_vault; setup_P1_DEV_05 ;;
     P15-DEV-01)  reset_db; clean_vault; setup_P15_DEV_01 ;;
     P15-DEV-02)  reset_db; clean_vault; setup_P15_DEV_02 ;;
     P15-DEV-03)  reset_db; clean_vault; setup_P15_DEV_03 ;;
@@ -814,6 +964,11 @@ case "${1:-all}" in
     P15-DEV-06)  reset_db; clean_vault; setup_P15_DEV_06 ;;
     P15-DEV-07)  reset_db; clean_vault; setup_P15_DEV_07 ;;
     VR-CONTENT-01)  reset_db; clean_vault; setup_VR_CONTENT_01 ;;
+    P2-CIC-06)  reset_db; clean_vault; setup_P2_CIC_06 ;;
+    P2-CIC-07)  reset_db; clean_vault; setup_P2_CIC_07 ;;
+    P2-CIC-08)  reset_db; clean_vault; setup_P2_CIC_08 ;;
+    P2-CIC-09)  reset_db; clean_vault; setup_P2_CIC_09 ;;
+    P2-CIC-13)  reset_db; clean_vault; setup_P2_CIC_13 ;;
     *)
         echo "Unknown test ID: ${1}"
         echo "Usage: $0 [test-id|all|smoke|phase]"

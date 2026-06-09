@@ -1,9 +1,9 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-06-08 (P2-CIC Classify Inline in Capture — all 9 phases implemented, 1080 tests, merged to main)_
+_Last updated: 2026-06-09 (TD-040/TD-041 Batch-ID Fix confirmed complete; docs synced)_
 
 ## Current Position
-**Phase**: Phase 2 — Classify pipeline **COMPLETE**. P2-CIC (Classify Inline in Single-File Capture) implemented 2026-06-08 — all 9 phases, ~70 tests, 1080 total passing. Merged to `main`. Next: `/tdd-implement` against TD-040/TD-041 (Batch-ID Fix) and Project Registry. M1 milestone (~15 May target) now fully achievable — Capture + Classify + Search end-to-end.
+**Phase**: Phase 2 — Classify pipeline **COMPLETE**. P2-CIC (Classify Inline in Single-File Capture) implemented 2026-06-08 — all 9 phases, ~70 tests, 1080 total passing. Merged to `main`. **TD-040/TD-041 Batch-ID Fix COMPLETE (2026-06-09)** — batch-stamp in `capture_file()` + subfolder detection in `scan_capture()`. Next: Project Registry implementation, then Phase 3 Search.
 
 **Phase 0 Final Checklist** _(CLOSED)_:
 - [x] core/exceptions.py
@@ -137,13 +137,13 @@ Triggered by `/superpowers:requesting-code-review`. Applied subset of review fin
 - [x] 959 tests pass; 1 pre-existing flaky watcher test (order-dependent, investigation dispatched)
 - **TD-042 CLOSED** — Stage 5 now strips deprecated frontmatter keys via `_DEPRECATED_KEYS` dirty check
 
-**[TD-040 + TD-041 — Batch-ID Fix — Plan written 2026-06-07]** _(PENDING implementation)_:
-- [ ] Phase 1 — SQL migration 006: add `folder_path` column to `batches`
-- [ ] Phase 2 — `storage/batches.py`: extend `insert()` + add `find_by_folder_path()`
-- [ ] Phase 3 — `vault/paths.py`: add `is_batch_subfolder()` predicate
-- [ ] Phase 4 — `pipelines/capture.py`: batch-stamp single-file capture + subfolder detection in `scan_capture()`
-- [ ] Phase 5 — `vault/watcher.py`: batch-stamp on watcher move + add `update_batch_id()` to `storage/documents.py`
-- [ ] Phase 6 — Integration smoke: full watcher-move + scan path exercised end-to-end
+**[TD-040 + TD-041 — Batch-ID Fix — ✅ COMPLETE 2026-06-09]**:
+- [x] Phase 1 — SQL migration 006: add `folder_path` column to `batches`
+- [x] Phase 2 — `storage/batches.py`: extend `insert()` + add `find_by_folder_path()`
+- [x] Phase 3 — `vault/paths.py`: add `is_batch_subfolder()` predicate
+- [x] Phase 4 — `pipelines/capture.py`: batch-stamp single-file capture + subfolder detection in `scan_capture()`
+- [x] Phase 5 — `vault/watcher.py`: batch-stamp on watcher move + add `update_batch_id()` to `storage/documents.py`
+- [x] Phase 6 — Integration smoke: full watcher-move + scan path exercised end-to-end
 
 **Plan:** `docs/5_plans/td040-td041-batch-id-fix.md`
 **Design:** `docs/1_design/td040-td041-batch-id-fix.md`
@@ -176,7 +176,7 @@ Triggered by `/superpowers:requesting-code-review`. Applied subset of review fin
 - Directory event registry calls go INSIDE existing `if event.is_directory: return` branches
 - TD-034 retired by this plan (project-to-domain registry now exists)
 
-**Next roadmap work**: Phase 2 — Classify pipeline (after TD-040/TD-041 and Project Registry implementation).
+**Next roadmap work**: Project Registry implementation, then Phase 3 — Search pipeline.
 
 **[P2-CL — classify() pure function — ✅ COMPLETE 2026-06-08]** _(implemented on `main`: commits b2d33fa + a28b33c)_:
 - [x] Phase 1 — `ClassifyResult` dataclass in `src/pipelines/classify.py`
@@ -211,3 +211,7 @@ Triggered by `/superpowers:requesting-code-review`. Applied subset of review fin
 - `.md` AUTO cross-folder move via `move_note` before store (not through `_store_md` internal rename)
 - TD-048: 3 retries with exponential backoff, fall back to CLUELESS on exhaustion
 - TD-049: NFC-normalize `folder_path` on both write and read paths
+
+**Session notes (2026-06-09):**
+- TD-040/TD-041 Batch-ID Fix confirmed COMPLETE — code already shipped (P2-BAT); docs were stale, synced today
+- P2-CIC review fixes applied (2026-06-08): AUTO audit moved post-move, exact-membership destination validation via `_destination_names()`, F841 dead variable removed, duplicate `asyncio` import removed
