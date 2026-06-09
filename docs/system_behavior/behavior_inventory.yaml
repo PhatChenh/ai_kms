@@ -58,8 +58,8 @@
   last_tested: "2026-06-07"
   last_result: "passed"
   pytest_ref: "tests/test_pipelines/test_capture.py::test_capture_file_md_end_to_end_returns_write_outcome"
-  status: active
-  retired: null
+  status: retired
+  retired: "2026-06-09: classify_step now runs on all inbox files. Inbox .md behavior covered by P2-CIC-01 (AUTO move), P2-CIC-02 (SUGGEST), P2-CIC-03 (CLUELESS)."
 
 - id: P1-CAP-02
   behavior: "PDF already in a project folder creates sibling .md and moves binary to attachment/"
@@ -87,7 +87,7 @@
   retired: null
 
 - id: P1-CAP-03
-  behavior: "Body text of .md file preserved exactly after capture"
+  behavior: "Body text of .md file preserved exactly after capture (classify_step runs on inbox files but does not affect body)"
   tier: smoke
   phase: 1
   origin: implementation
@@ -100,8 +100,9 @@
     - "`uv run kms capture inbox/test-body-preservation.md`"
   expected:
     - "Body text below second --- is byte-identical to original"
+    - "classify_step runs on this inbox file — candidate fields (suggested_project etc.) may appear in frontmatter depending on AI confidence"
     - "summary: appears only inside frontmatter (between --- markers), never in body"
-  spec_ref: "roadmap §Phase1 'frontmatter-only writes'"
+  spec_ref: "roadmap §Phase1 'frontmatter-only writes'; updated P2-CIC 2026-06-09"
   human_reviewed: yes
   last_tested: "2026-06-07"
   last_result: "passed"
@@ -132,8 +133,8 @@
   last_tested: "2026-06-07"
   last_result: "passed"
   pytest_ref: "tests/test_pipelines/test_capture_rename.py::test_rename_gate_skip_on_recapture"
-  status: active
-  retired: null
+  status: retired
+  retired: "2026-06-09: inbox fixture broken by classify_step — first capture may AUTO-move file, second capture on old inbox path hits FILE_LOST. Rename gate on LOCATED files covered by P2-CIC-04."
 
 - id: P1-CAP-05
   behavior: "Scan captures un-indexed .md files, skips already-indexed"
@@ -158,13 +159,13 @@
   last_tested: "2026-06-07"
   last_result: "passed"
   pytest_ref: "tests/test_pipelines/test_capture_phase10.py::test_scan_capture_added_unindexed_captured_indexed_unchanged_skipped"
-  status: active
-  retired: null
+  status: retired
+  retired: "2026-06-09: scan now runs classify_step on inbox files. Scan behavior covered by P2-CIC entries + P2-BAT-04/05."
 
 # --- Phase tier (test when capture code changes) ---
 
 - id: P1-CAP-06
-  behavior: "DOCX file dropped in inbox creates pending-routing marker (no summary yet)"
+  behavior: "DOCX file dropped in inbox gets real-summary sibling AND is classified at capture time"
   tier: phase
   phase: 1
   origin: implementation
@@ -174,15 +175,17 @@
     - inbox/q3-planning-brief.docx
   steps: "`uv run kms capture inbox/q3-planning-brief.docx`"
   expected:
-    - "q3-planning-brief.docx stays in inbox/ (not moved)"
+    - "On CLUELESS/SUGGEST: q3-planning-brief.docx stays in inbox/; sibling at inbox/.summaries/"
+    - "On AUTO: binary moves to project attachment/; sibling moves alongside"
     - "Sibling .md created at inbox/.summaries/q3-planning-brief.docx.md"
     - "Sibling frontmatter has type: attachment-summary"
-    - "Sibling frontmatter has status: pending-routing"
-    - "Sibling frontmatter has NO summary: field (deferred to Phase 2 Classify)"
-  spec_ref: "roadmap §Phase1 'handler: docx'"
-  human_reviewed: yes
+    - "Sibling frontmatter has status: needs-review (NOT pending-routing — concept retired in P2-CIC Phase 7)"
+    - "Sibling frontmatter has source_hash set (idempotent re-entry)"
+    - "Sibling body contains a real AI-generated summary (NOT placeholder text)"
+  spec_ref: "roadmap §Phase1 'handler: docx'; P2-CIC-05 2026-06-09"
+  human_reviewed: no
   last_tested: "2026-06-07"
-  last_result: "passed"
+  last_result: "passed — behavior changed in P2-CIC Phase 7; re-verify needed"
   pytest_ref: "tests/test_handlers/test_docx_handler.py::test_extract_returns_success_with_raw_content"
   status: active
   retired: null
@@ -211,11 +214,11 @@
   last_tested: "2026-06-07"
   last_result: "passed"
   pytest_ref: null
-  status: active
-  retired: null
+  status: retired
+  retired: "2026-06-09: watcher drops now run classify_step. Watcher capture behavior covered by P2-CIC-01/02/03 (inbox) and P2-CIC-04 (LOCATED)."
 
 - id: P1-CAP-08
-  behavior: "Gibberish-named inbox PDF gets pending-routing marker (rename deferred to Phase 2 Classify)"
+  behavior: "Gibberish-named inbox PDF gets real-summary marker with needs-review status (was pending-routing pre-P2-CIC)"
   tier: phase
   phase: 1
   origin: implementation
@@ -227,19 +230,20 @@
   expected:
     - "xkjdhfs83.pdf stays in inbox/ with original name (no rename during capture)"
     - "Sibling .md created at inbox/.summaries/xkjdhfs83.pdf.md"
-    - "Sibling frontmatter has status: pending-routing"
-    - "Audit log shows outcome=CLUELESS (rename gate not called for inbox binaries)"
-    - "Phase 2 Classify will rename and route"
-  spec_ref: "roadmap §Phase1 'CLUELESS path: inbox binary parked' (DECISION-027)"
-  human_reviewed: yes
+    - "Sibling frontmatter has status: needs-review (NOT pending-routing)"
+    - "Sibling frontmatter has source_hash set"
+    - "Sibling body has a real AI summary (NOT placeholder)"
+    - "Audit log shows outcome=CLUELESS"
+  spec_ref: "roadmap §Phase1 'CLUELESS path: inbox binary parked' (DECISION-027); updated P2-CIC Phase 7 2026-06-09"
+  human_reviewed: no
   last_tested: "2026-06-07"
-  last_result: "passed"
+  last_result: "passed — P2-CIC Phase 7 replaced pending-routing with needs-review; re-verify needed"
   pytest_ref: "tests/test_pipelines/test_capture_rename.py::test_rename_gate_full_rename_on_illegible_binary"
-  status: active
-  retired: null
+  status: retired
+  retired: "2026-06-09: classify_step may AUTO-move or SUGGEST instead of CLUELESS. Inbox binary classify behavior covered by P2-CIC-05 (AUTO), P2-CIC-03 (CLUELESS)."
 
 - id: P1-CAP-09
-  behavior: "Idempotent capture — unchanged .md file skipped"
+  behavior: "Idempotent capture — unchanged .md file skipped (content_hash match). Note: inbox fixture may be AUTO-moved by classify_step on first capture."
   tier: phase
   phase: 1
   origin: implementation
@@ -256,7 +260,8 @@
     - "Second run returns OK (SKIPPED) in terminal output"
     - "content_hash match — no LLM call made"
     - "summary: field identical to first capture"
-  spec_ref: "roadmap §Phase1 'idempotent capture guard'"
+    - "If file was AUTO-moved by classify_step on first capture, second capture on original inbox path returns FILE_LOST"
+  spec_ref: "roadmap §Phase1 'idempotent capture guard'; updated P2-CIC 2026-06-09"
   human_reviewed: yes
   last_tested: "2026-06-07"
   last_result: "passed"
@@ -265,7 +270,7 @@
   retired: null
 
 - id: P1-CAP-10
-  behavior: "CLUELESS routing — inbox binary gets real summary marker with needs-review status"
+  behavior: "Inbox binary gets real summary AND is classified — may be CLUELESS, SUGGEST, or AUTO"
   tier: phase
   phase: 1
   origin: implementation
@@ -277,7 +282,8 @@
     - "`uv run kms capture inbox/mystery-file.pdf`"
     - "No project/domain hint in filename or content — capture parks binary + writes real-summary sibling."
   expected:
-    - "mystery-file.pdf stays in inbox/ (not moved)"
+    - "On CLUELESS/SUGGEST: mystery-file.pdf stays in inbox/; sibling at inbox/.summaries/"
+    - "On AUTO: binary moves to project attachment/; sibling moves alongside"
     - "Sibling .md created at inbox/.summaries/mystery-file.pdf.md"
     - "Sibling frontmatter has status: needs-review (NOT pending-routing)"
     - "Sibling frontmatter has type: attachment-summary"
@@ -292,7 +298,7 @@
   retired: null
 
 - id: P1-CAP-11
-  behavior: "URL enrichment — sparse note with URLs gets content fetched"
+  behavior: "URL enrichment — sparse note with URLs gets content fetched (classify_step also runs on inbox files)"
   tier: phase
   phase: 1
   origin: implementation
@@ -309,6 +315,7 @@
     - "File body must contain a URL and less than 500 chars of text to trigger URL enrichment."
   expected:
     - "Open file — summary: reflects content from the URL, not just the sparse body text"
+    - "classify_step runs — candidate fields or AUTO-move possible"
   spec_ref: "roadmap §Phase1 'enrich_urls stage'"
   human_reviewed: yes
   last_tested: "2026-06-07"
@@ -331,15 +338,14 @@
   steps:
     - "Capture the test file:"
     - "`uv run kms capture inbox/p1-dev-01-test.md`"
-    - "Then query the audit log:"
-    - "`sqlite3 data/kb.db \"SELECT * FROM audit_log ORDER BY rowid DESC LIMIT 5\"`"
+    - "Then query:"
+    - "`sqlite3 data/kb.db \"SELECT stage, outcome FROM audit_log ORDER BY rowid DESC LIMIT 5\"`"
   expected:
-    - "audit_log row exists with pipeline=capture"
-    - "stage=metadata in the row"
-    - "outcome=CAPTURED"
+    - "audit_log row exists with stage=metadata, outcome=CAPTURED"
+    - "audit_log row exists with stage=classify (AUTO, SUGGEST, or CLUELESS — classify_step runs on inbox files)"
     - "correlation_id matches the ID shown in terminal output"
-    - "reasoning field is non-empty"
-  spec_ref: "CONSTRAINTS.md C-12 'audit log non-negotiable'"
+    - "reasoning field is non-empty in both rows"
+  spec_ref: "CONSTRAINTS.md C-12 'audit log non-negotiable'; P2-CIC-06 2026-06-09"
   human_reviewed: no
   last_tested: null
   last_result: null
@@ -637,7 +643,7 @@
   retired: null
 
 - id: P15-HDL-01
-  behavior: "XLSX file dropped in inbox gets pending-routing marker"
+  behavior: "XLSX file dropped in inbox gets real-summary marker with needs-review status"
   tier: phase
   phase: 1.5
   origin: implementation
@@ -650,9 +656,10 @@
     - "q2-budget.xlsx stays in inbox/ (not moved — CLUELESS path)"
     - "Marker .md created at inbox/.summaries/q2-budget.xlsx.md"
     - "Marker frontmatter has type: attachment-summary"
-    - "Marker frontmatter has status: pending-routing"
-    - "Marker frontmatter has NO summary: field (deferred to Phase 2 Classify)"
-  spec_ref: "roadmap §Phase1.5 'handler: xlsx'"
+    - "Marker frontmatter has status: needs-review (NOT pending-routing — concept retired in P2-CIC Phase 7)"
+    - "Marker frontmatter has source_hash set (idempotent re-entry)"
+    - "Marker body contains a real AI-generated summary (NOT placeholder)"
+  spec_ref: "roadmap §Phase1.5 'handler: xlsx'; updated P2-CIC Phase 7 2026-06-09"
   human_reviewed: no
   last_tested: null
   last_result: null
@@ -661,7 +668,7 @@
   retired: null
 
 - id: P15-HDL-02
-  behavior: "PPTX file dropped in inbox gets pending-routing marker"
+  behavior: "PPTX file dropped in inbox gets real-summary marker with needs-review status"
   tier: phase
   phase: 1.5
   origin: implementation
@@ -674,9 +681,10 @@
     - "deck.pptx stays in inbox/ (not moved — CLUELESS path)"
     - "Marker .md created at inbox/.summaries/deck.pptx.md"
     - "Marker frontmatter has type: attachment-summary"
-    - "Marker frontmatter has status: pending-routing"
-    - "Marker frontmatter has NO summary: field (deferred to Phase 2 Classify)"
-  spec_ref: "roadmap §Phase1.5 'handler: pptx'"
+    - "Marker frontmatter has status: needs-review (NOT pending-routing)"
+    - "Marker frontmatter has source_hash set (idempotent re-entry)"
+    - "Marker body contains a real AI-generated summary"
+  spec_ref: "roadmap §Phase1.5 'handler: pptx'; updated P2-CIC Phase 7 2026-06-09"
   human_reviewed: no
   last_tested: null
   last_result: null
@@ -685,7 +693,7 @@
   retired: null
 
 - id: P15-HDL-03
-  behavior: "CSV file dropped in inbox gets pending-routing marker"
+  behavior: "CSV file dropped in inbox gets real-summary marker with needs-review status"
   tier: phase
   phase: 1.5
   origin: implementation
@@ -698,9 +706,10 @@
     - "data.csv stays in inbox/ (not moved — CLUELESS path)"
     - "Marker .md created at inbox/.summaries/data.csv.md"
     - "Marker frontmatter has type: attachment-summary"
-    - "Marker frontmatter has status: pending-routing"
-    - "Marker frontmatter has NO summary: field (deferred to Phase 2 Classify)"
-  spec_ref: "roadmap §Phase1.5 'handler: csv'"
+    - "Marker frontmatter has status: needs-review (NOT pending-routing)"
+    - "Marker frontmatter has source_hash set"
+    - "Marker body contains a real AI-generated summary"
+  spec_ref: "roadmap §Phase1.5 'handler: csv'; updated P2-CIC Phase 7 2026-06-09"
   human_reviewed: no
   last_tested: null
   last_result: null
@@ -709,7 +718,7 @@
   retired: null
 
 - id: P15-HDL-04
-  behavior: "HTML file dropped in inbox gets pending-routing marker"
+  behavior: "HTML file dropped in inbox gets real-summary marker with needs-review status"
   tier: phase
   phase: 1.5
   origin: implementation
@@ -722,9 +731,10 @@
     - "page.html stays in inbox/ (not moved — CLUELESS path)"
     - "Marker .md created at inbox/.summaries/page.html.md"
     - "Marker frontmatter has type: attachment-summary"
-    - "Marker frontmatter has status: pending-routing"
-    - "Marker frontmatter has NO summary: field (deferred to Phase 2 Classify)"
-  spec_ref: "roadmap §Phase1.5 'handler: html'"
+    - "Marker frontmatter has status: needs-review (NOT pending-routing)"
+    - "Marker frontmatter has source_hash set"
+    - "Marker body contains a real AI-generated summary"
+  spec_ref: "roadmap §Phase1.5 'handler: html'; updated P2-CIC Phase 7 2026-06-09"
   human_reviewed: no
   last_tested: null
   last_result: null
@@ -733,7 +743,7 @@
   retired: null
 
 - id: P15-HDL-05
-  behavior: "EML email file dropped in inbox gets pending-routing marker"
+  behavior: "EML email file dropped in inbox gets real-summary marker with needs-review status"
   tier: phase
   phase: 1.5
   origin: implementation
@@ -746,9 +756,10 @@
     - "message.eml stays in inbox/ (not moved — CLUELESS path)"
     - "Marker .md created at inbox/.summaries/message.eml.md"
     - "Marker frontmatter has type: attachment-summary"
-    - "Marker frontmatter has status: pending-routing"
-    - "Marker frontmatter has NO summary: field (deferred to Phase 2 Classify)"
-  spec_ref: "roadmap §Phase1.5 'handler: eml'"
+    - "Marker frontmatter has status: needs-review (NOT pending-routing)"
+    - "Marker frontmatter has source_hash set"
+    - "Marker body contains a real AI-generated summary"
+  spec_ref: "roadmap §Phase1.5 'handler: eml'; updated P2-CIC Phase 7 2026-06-09"
   human_reviewed: no
   last_tested: null
   last_result: null
@@ -757,7 +768,7 @@
   retired: null
 
 - id: P15-HDL-06
-  behavior: "MSG Outlook file dropped in inbox gets pending-routing marker"
+  behavior: "MSG Outlook file dropped in inbox gets real-summary marker with needs-review status"
   tier: phase
   phase: 1.5
   origin: implementation
@@ -770,9 +781,10 @@
     - "outlook-msg.msg stays in inbox/ (not moved — CLUELESS path)"
     - "Marker .md created at inbox/.summaries/outlook-msg.msg.md"
     - "Marker frontmatter has type: attachment-summary"
-    - "Marker frontmatter has status: pending-routing"
-    - "Marker frontmatter has NO summary: field (deferred to Phase 2 Classify)"
-  spec_ref: "roadmap §Phase1.5 'handler: msg'"
+    - "Marker frontmatter has status: needs-review (NOT pending-routing)"
+    - "Marker frontmatter has source_hash set"
+    - "Marker body contains a real AI-generated summary"
+  spec_ref: "roadmap §Phase1.5 'handler: msg'; updated P2-CIC Phase 7 2026-06-09"
   human_reviewed: no
   last_tested: null
   last_result: null
@@ -828,7 +840,7 @@
     - "batches row created with folder_name=new-project-folder, confidence > 0, status one of: ROUTING | PENDING_REVIEW | CLUELESS"
     - "AUTO (status=ROUTING): folder moved to Projects/<name>/ or Domain/<name>/; files captured; documents rows present with matching batch_id"
     - "SUGGEST (status=PENDING_REVIEW): folder stays in inbox/; no documents rows for its files yet"
-    - "CLUELESS (status=CLUELESS): folder stays in inbox/; per-file pending-routing markers at inbox/.summaries/; documents rows with batch_id"
+    - "CLUELESS (status=CLUELESS): folder stays in inbox/; per-file needs-review markers with real summaries at inbox/.summaries/; documents rows with batch_id"
     - "All files inside the folder (including subfolders of Projects/<A>/ or Domain/<D>/) captured with a batch_id"
   spec_ref: "roadmap §Phase1.5 'folder drop classification' — see TD-041 for scan gap"
   human_reviewed: yes
@@ -1258,13 +1270,14 @@
   trigger: "kms capture <Projects/Alpha/subdir/report.pdf>"
   fixtures: []
   steps: "Drop a file into Projects/Alpha/subdir/ and run `uv run kms capture Projects/Alpha/subdir/report.pdf`. Query the DB: `sqlite3 data/kb.db 'SELECT vault_path, batch_id FROM documents WHERE vault_path LIKE \"%report%\"'`"
-  expected: "batch_id column is non-NULL; the value references a row in the batches table with folder_path = 'Projects/Alpha/subdir'"
+  expected:
+    - "batch_id column is non-NULL; the value references a row in the batches table with folder_path = 'Projects/Alpha/subdir'"
   spec_ref: "docs/1_design/td040-td041-batch-id-fix.md §Success criteria"
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_capture.py::test_batch_stamp_sets_batch_id_on_subfolder_capture"
+  status: active
   retired: null
 
 - id: P2-BAT-02
@@ -1276,13 +1289,14 @@
   trigger: "kms capture <file1>; kms capture <file2> (same folder)"
   fixtures: []
   steps: "Capture two files from the same subfolder in separate CLI invocations. Query batch_id for both vault_path rows."
-  expected: "Both documents rows have identical batch_id values; the batches row for that folder_path has file_count >= 2"
+  expected:
+    - "Both documents rows have identical batch_id values; the batches row for that folder_path has file_count >= 2"
   spec_ref: "docs/1_design/td040-td041-batch-id-fix.md §Success criteria"
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_capture.py::test_batch_stamp_reuses_existing_batch"
+  status: active
   retired: null
 
 - id: P2-BAT-03
@@ -1294,13 +1308,14 @@
   trigger: "kms capture <inbox/report.pdf>"
   fixtures: []
   steps: "Capture a file dropped directly into inbox/ (not inside a subfolder). Query batch_id for the resulting documents row."
-  expected: "batch_id column is NULL — inbox root is not batch-worthy"
+  expected:
+    - "batch_id column is NULL — inbox root is not batch-worthy"
   spec_ref: "docs/1_design/td040-td041-batch-id-fix.md §Success criteria"
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_capture_folder.py::test_single_file_capture_leaves_batch_id_null"
+  status: active
   retired: null
 
 - id: P2-BAT-04
@@ -1312,13 +1327,14 @@
   trigger: "kms capture --scan"
   fixtures: []
   steps: "Create a subfolder inside inbox/ with two files. Run `uv run kms capture --scan`. Inspect the documents table and vault."
-  expected: "Both files appear as documents rows with a shared non-NULL batch_id. A batches row exists with the subfolder name as folder_path."
+  expected:
+    - "Both files appear as documents rows with a shared non-NULL batch_id. A batches row exists with the subfolder name as folder_path."
   spec_ref: "docs/1_design/td040-td041-batch-id-fix.md §Success criteria"
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_capture_folder.py::test_project_drop_writes_batch_id_on_document_rows"
+  status: active
   retired: null
 
 - id: P2-BAT-05
@@ -1330,13 +1346,14 @@
   trigger: "kms capture --scan (after watcher already processed the folder)"
   fixtures: []
   steps: "Start watcher, drop a subfolder into inbox/. After watcher captures it, stop watcher and run `kms capture --scan`."
-  expected: "No second batches row created for the same folder_path. Existing documents rows unchanged. Log shows subfolder skipped."
+  expected:
+    - "No second batches row created for the same folder_path. Existing documents rows unchanged. Log shows subfolder skipped."
   spec_ref: "docs/1_design/td040-td041-batch-id-fix.md §Success criteria"
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_capture_folder.py::test_folder_path_nfc_matches_batch_lookup"
+  status: active
   retired: null
 
 - id: P2-BAT-06
@@ -1348,13 +1365,14 @@
   trigger: "kms watch + file moved into Projects/Alpha/subdir/"
   fixtures: []
   steps: "Start watcher. Move a previously-captured file from inbox/ into Projects/Alpha/subdir/. Query batch_id for the updated documents row."
-  expected: "batch_id updated to the batch for Projects/Alpha/subdir. No re-capture triggered (summary and content_hash unchanged)."
+  expected:
+    - "batch_id updated to the batch for Projects/Alpha/subdir. No re-capture triggered (summary and content_hash unchanged)."
   spec_ref: "docs/1_design/td040-td041-batch-id-fix.md §Success criteria"
   human_reviewed: no
   last_tested: null
   last_result: null
   pytest_ref: null
-  status: planned
+  status: active
   retired: null
 
 - id: P2-REC-01
@@ -1614,6 +1632,8 @@
 # ═══════════════════════════════════════════════════════════════
 # ID prefix: P2-CPROMPT
 # Design doc: docs/2_specs/classify-prompt-mini.md
+# NOTE: All P2-CPROMPT entries RETIRED 2026-06-09 — classify engine reshaped in P2-CIC Phase 3
+# (target_type/target_name → project/domains/primary_domain). P2-CIC entries cover classify behavior.
 # ═══════════════════════════════════════════════════════════════
 
 - id: P2-CPROMPT-01
@@ -1640,8 +1660,8 @@
   last_tested: null
   last_result: null
   pytest_ref: null
-  status: planned
-  retired: null
+  status: retired
+  retired: "2026-06-09: classify engine reshaped in P2-CIC Phase 3 — old target_type/target_name API replaced with project/domains/primary_domain. P2-CIC entries now cover classify behavior."
 
 - id: P2-CPROMPT-02
   behavior: "Classify prompt routes active-work notes to a project and general-knowledge notes to a domain"
@@ -1666,8 +1686,8 @@
   last_tested: null
   last_result: null
   pytest_ref: null
-  status: planned
-  retired: null
+  status: retired
+  retired: "2026-06-09: classify engine reshaped in P2-CIC Phase 3 — old target_type/target_name API replaced with project/domains/primary_domain. P2-CIC entries now cover classify behavior."
 
 - id: P2-CPROMPT-03
   behavior: "Classify prompt never returns target_name='Uncategorized' — routes to actual project name within that group"
@@ -1690,8 +1710,8 @@
   last_tested: null
   last_result: null
   pytest_ref: null
-  status: planned
-  retired: null
+  status: retired
+  retired: "2026-06-09: classify engine reshaped in P2-CIC Phase 3 — old target_type/target_name API replaced with project/domains/primary_domain. P2-CIC entries now cover classify behavior."
 
 - id: P2-CPROMPT-04
   behavior: "Classify prompt returns low confidence rather than a forced answer when no destination fits well"
@@ -1713,8 +1733,8 @@
   last_tested: null
   last_result: null
   pytest_ref: null
-  status: planned
-  retired: null
+  status: retired
+  retired: "2026-06-09: classify engine reshaped in P2-CIC Phase 3 — old target_type/target_name API replaced with project/domains/primary_domain. P2-CIC entries now cover classify behavior."
 
 - id: P2-CL-01
   behavior: "classify() returns Success(ClassifyResult) with all four fields when AI returns valid JSON"
@@ -1740,8 +1760,8 @@
   last_tested: null
   last_result: null
   pytest_ref: null
-  status: planned
-  retired: null
+  status: retired
+  retired: "2026-06-09: ClassifyResult schema reshaped in P2-CIC Phase 3 — old target_type/target_name fields replaced with project/domains/primary_domain."
 
 - id: P2-CL-02
   behavior: "classify() returns Failure(recoverable=True) when AI returns malformed JSON"
@@ -1763,8 +1783,8 @@
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_classify.py::test_bad_json_returns_retryable"
+  status: active
   retired: null
 
 - id: P2-CL-03
@@ -1788,8 +1808,8 @@
   last_tested: null
   last_result: null
   pytest_ref: null
-  status: planned
-  retired: null
+  status: retired
+  retired: "2026-06-09: ClassifyResult schema reshaped in P2-CIC Phase 3 — old target_type/target_name fields replaced with project/domains/primary_domain."
 
 - id: P2-CL-04
   behavior: "classify() never raises an exception and never returns None"
@@ -1810,8 +1830,8 @@
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_classify.py::test_never_raises"
+  status: active
   retired: null
 
 - id: P2-CL-05
@@ -1832,8 +1852,8 @@
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_classify.py::test_no_prompt_in_source"
+  status: active
   retired: null
 
 - id: P2-CL-06
@@ -1854,8 +1874,8 @@
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_classify.py::test_no_direct_ai_import"
+  status: active
   retired: null
 
 # ═══════════════════════════════════════════════════════════════

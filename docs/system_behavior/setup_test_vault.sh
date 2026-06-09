@@ -63,18 +63,6 @@ clean_vault() {
 
 # ─── Phase 1 — Capture Pipeline (smoke) ────────────────────────────────────
 
-# smoke | P1-CAP-01: .md file captured in-place with AI summary in frontmatter
-setup_P1_CAP_01() {
-    # ── cleanup ──
-    rm -f "$VAULT/inbox/test-md-capture.md"
-    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/test-md-capture.md'" 2>/dev/null || true
-    # ── create ──
-    write_md "$VAULT/inbox/test-md-capture.md" \
-    ".md file captured in-place with AI summary in frontmatter.
-
-    Test fixture for P1-CAP-01."
-}
-
 # smoke | P1-CAP-02: PDF already in a project folder creates sibling .md and moves binary to attachment/
 setup_P1_CAP_02() {
     # ── cleanup ──
@@ -91,46 +79,16 @@ setup_P1_CAP_02() {
     fi
 }
 
-# smoke | P1-CAP-03: Body text of .md file preserved exactly after capture
+# smoke | P1-CAP-03: Body text of .md file preserved exactly after capture (classify_step runs on inbox files but does not affect body)
 setup_P1_CAP_03() {
     # ── cleanup ──
     rm -f "$VAULT/inbox/test-body-preservation.md"
     sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/test-body-preservation.md'" 2>/dev/null || true
     # ── create ──
     write_md "$VAULT/inbox/test-body-preservation.md" \
-    "Body text of .md file preserved exactly after capture.
+    "Body text of .md file preserved exactly after capture (classify_step runs on inbox files but does not affect body).
 
     Test fixture for P1-CAP-03."
-}
-
-# smoke | P1-CAP-04: Re-capture does not rename already-captured .md file (rename gate Rule 1)
-setup_P1_CAP_04() {
-    # ── cleanup ──
-    rm -f "$VAULT/inbox/test-rename-gate.md"
-    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/test-rename-gate.md'" 2>/dev/null || true
-    # ── create ──
-    write_md "$VAULT/inbox/test-rename-gate.md" \
-    "Re-capture does not rename already-captured .md file (rename gate Rule 1).
-
-    Test fixture for P1-CAP-04."
-}
-
-# smoke | P1-CAP-05: Scan captures un-indexed .md files, skips already-indexed
-setup_P1_CAP_05() {
-    # ── cleanup ──
-    rm -f "$VAULT/inbox/test-md-capture.md"
-    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/test-md-capture.md'" 2>/dev/null || true
-    rm -f "$VAULT/inbox/test-scan-uncaptured.md"
-    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/test-scan-uncaptured.md'" 2>/dev/null || true
-    # ── create ──
-    write_md "$VAULT/inbox/test-md-capture.md" \
-    "Scan captures un-indexed .md files, skips already-indexed.
-
-    Test fixture for P1-CAP-05."
-    write_md "$VAULT/inbox/test-scan-uncaptured.md" \
-    "Scan captures un-indexed .md files, skips already-indexed.
-
-    Test fixture for P1-CAP-05."
 }
 # ─── Phase 1.5 — Location Tags + Attachment Layout + Reconcile (smoke) ─────
 
@@ -157,9 +115,15 @@ setup_P15_LOC_02() {
 
     Test fixture for P15-LOC-02."
 }
+# ─── Phase 2 (smoke) ───────────────────────────────────────────────────────
+
+# smoke | P2-BAT-04: scan_capture detects and batch-captures an unprocessed inbox subfolder
+setup_P2_BAT_04() {
+    echo "P2-BAT-04: No pre-created fixtures. Trigger: kms capture --scan"
+}
 # ─── Phase 1 — Capture Pipeline (phase) ────────────────────────────────────
 
-# phase | P1-CAP-06: DOCX file dropped in inbox creates pending-routing marker (no summary yet)
+# phase | P1-CAP-06: DOCX file dropped in inbox gets real-summary sibling AND is classified at capture time
 setup_P1_CAP_06() {
     # ── cleanup ──
     rm -f "$VAULT/inbox/q3-planning-brief.docx"
@@ -167,51 +131,22 @@ setup_P1_CAP_06() {
     sqlite3 "$DB" "DELETE FROM documents WHERE vault_path LIKE '%q3-planning-brief.docx%'" 2>/dev/null || true
     # ── create ──
     mkdir -p "$VAULT/inbox"
-    cd "$PROJECT_ROOT" && uv run python -c "from docx import Document; doc = Document(); doc.add_heading('Q3 Planning Brief', 0); doc.add_paragraph('DOCX file dropped in inbox creates pending-routing marker (n.'); doc.add_paragraph('Test fixture for P1-CAP-06.'); doc.save('$VAULT/inbox/q3-planning-brief.docx')"
+    cd "$PROJECT_ROOT" && uv run python -c "from docx import Document; doc = Document(); doc.add_heading('Q3 Planning Brief', 0); doc.add_paragraph('DOCX file dropped in inbox gets real-summary sibling AND is .'); doc.add_paragraph('Test fixture for P1-CAP-06.'); doc.save('$VAULT/inbox/q3-planning-brief.docx')"
 }
 
-# phase | P1-CAP-07: Watcher auto-captures new file drops
-setup_P1_CAP_07() {
-    # ── cleanup ──
-    rm -f "$STAGING/auto-capture-test.md"
-    rm -f "$VAULT/inbox/auto-capture-test.md"
-    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/auto-capture-test.md'" 2>/dev/null || true
-    # ── create ──
-    mkdir -p "$STAGING"
-    write_md "$STAGING/auto-capture-test.md" \
-    "Watcher auto-captures new file drops.
-
-    Test fixture for P1-CAP-07."
-}
-
-# phase | P1-CAP-08: Gibberish-named inbox PDF gets pending-routing marker (rename deferred to Phase 2 Classify)
-setup_P1_CAP_08() {
-    # ── cleanup ──
-    rm -f "$VAULT/inbox/xkjdhfs83.pdf"
-    rm -f "$VAULT/inbox/.summaries/xkjdhfs83.pdf.md"
-    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path LIKE '%xkjdhfs83.pdf%'" 2>/dev/null || true
-    # ── create ──
-    mkdir -p "$VAULT/inbox"
-    if [ -f "$FIXTURES/sample_text.pdf" ]; then
-        cp "$FIXTURES/sample_text.pdf" "$VAULT/inbox/xkjdhfs83.pdf"
-    else
-        echo "⚠ P1-CAP-08: No sample PDF at $FIXTURES/sample_text.pdf — place a test PDF manually"
-    fi
-}
-
-# phase | P1-CAP-09: Idempotent capture — unchanged .md file skipped
+# phase | P1-CAP-09: Idempotent capture — unchanged .md file skipped (content_hash match). Note: inbox fixture may be AUTO-moved by classify_step on first capture.
 setup_P1_CAP_09() {
     # ── cleanup ──
     rm -f "$VAULT/inbox/test-idempotent.md"
     sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/test-idempotent.md'" 2>/dev/null || true
     # ── create ──
     write_md "$VAULT/inbox/test-idempotent.md" \
-    "Idempotent capture — unchanged .md file skipped.
+    "Idempotent capture — unchanged .md file skipped (content_hash match). Note: inbox fixture may be AUTO-moved by classify_step on first capture.
 
     Test fixture for P1-CAP-09."
 }
 
-# phase | P1-CAP-10: CLUELESS routing — inbox binary gets real summary marker with needs-review status
+# phase | P1-CAP-10: Inbox binary gets real summary AND is classified — may be CLUELESS, SUGGEST, or AUTO
 setup_P1_CAP_10() {
     # ── cleanup ──
     rm -f "$VAULT/inbox/mystery-file.pdf"
@@ -226,7 +161,7 @@ setup_P1_CAP_10() {
     fi
 }
 
-# phase | P1-CAP-11: URL enrichment — sparse note with URLs gets content fetched
+# phase | P1-CAP-11: URL enrichment — sparse note with URLs gets content fetched (classify_step also runs on inbox files)
 setup_P1_CAP_11() {
     # ── cleanup ──
     rm -f "$VAULT/inbox/test-url-note.md"
@@ -306,7 +241,7 @@ setup_P15_REC_05() {
     Test fixture for P15-REC-05."
 }
 
-# phase | P15-HDL-01: XLSX file dropped in inbox gets pending-routing marker
+# phase | P15-HDL-01: XLSX file dropped in inbox gets real-summary marker with needs-review status
 setup_P15_HDL_01() {
     # ── cleanup ──
     rm -f "$VAULT/inbox/q2-budget.xlsx"
@@ -317,7 +252,7 @@ setup_P15_HDL_01() {
     cd "$PROJECT_ROOT" && uv run python -c "import openpyxl; wb = openpyxl.Workbook(); ws = wb.active; ws.title = 'Q2 Budget'; ws.append(['Column A', 'Column B', 'Column C']); ws.append(['Row 1 A', 'Row 1 B', 'Row 1 C']); ws.append(['Row 2 A', 'Row 2 B', 'Row 2 C']); wb.save('$VAULT/inbox/q2-budget.xlsx')"
 }
 
-# phase | P15-HDL-02: PPTX file dropped in inbox gets pending-routing marker
+# phase | P15-HDL-02: PPTX file dropped in inbox gets real-summary marker with needs-review status
 setup_P15_HDL_02() {
     # ── cleanup ──
     rm -f "$VAULT/inbox/deck.pptx"
@@ -328,7 +263,7 @@ setup_P15_HDL_02() {
     cd "$PROJECT_ROOT" && uv run python -c "from pptx import Presentation; prs = Presentation(); slide = prs.slides.add_slide(prs.slide_layouts[0]); slide.shapes.title.text = 'Deck'; slide.placeholders[1].text = 'Test fixture for P15-HDL-02.'; prs.save('$VAULT/inbox/deck.pptx')"
 }
 
-# phase | P15-HDL-03: CSV file dropped in inbox gets pending-routing marker
+# phase | P15-HDL-03: CSV file dropped in inbox gets real-summary marker with needs-review status
 setup_P15_HDL_03() {
     # ── cleanup ──
     rm -f "$VAULT/inbox/data.csv"
@@ -339,7 +274,7 @@ setup_P15_HDL_03() {
     printf 'name,value,notes\nrow1,100,test\nrow2,200,fixture\n' > "$VAULT/inbox/data.csv"
 }
 
-# phase | P15-HDL-04: HTML file dropped in inbox gets pending-routing marker
+# phase | P15-HDL-04: HTML file dropped in inbox gets real-summary marker with needs-review status
 setup_P15_HDL_04() {
     # ── cleanup ──
     rm -f "$VAULT/inbox/page.html"
@@ -350,7 +285,7 @@ setup_P15_HDL_04() {
     printf '<html><body><h1>Page</h1><p>Test fixture for P15-HDL-04.</p></body></html>\n' > "$VAULT/inbox/page.html"
 }
 
-# phase | P15-HDL-05: EML email file dropped in inbox gets pending-routing marker
+# phase | P15-HDL-05: EML email file dropped in inbox gets real-summary marker with needs-review status
 setup_P15_HDL_05() {
     # ── cleanup ──
     rm -f "$VAULT/inbox/message.eml"
@@ -361,7 +296,7 @@ setup_P15_HDL_05() {
     printf 'From: sender@example.com\nTo: receiver@example.com\nSubject: Test Email for P15-HDL-05\nDate: Wed, 04 Jun 2026 10:00:00 +0700\nMIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\n\nTest email body for P15-HDL-05.\n' > "$VAULT/inbox/message.eml"
 }
 
-# phase | P15-HDL-06: MSG Outlook file dropped in inbox gets pending-routing marker
+# phase | P15-HDL-06: MSG Outlook file dropped in inbox gets real-summary marker with needs-review status
 setup_P15_HDL_06() {
     # ── cleanup ──
     rm -f "$VAULT/inbox/outlook-msg.msg"
@@ -767,6 +702,31 @@ setup_VR_CONTENT_01() {
 }
 # ─── Phase 2 (full) ────────────────────────────────────────────────────────
 
+# full | P2-BAT-01: Single file captured into a project subfolder gets batch_id set in the documents row
+setup_P2_BAT_01() {
+    echo "P2-BAT-01: No pre-created fixtures. Trigger: kms capture <Projects/Alpha/subdir/report.pdf>"
+}
+
+# full | P2-BAT-02: Two files dropped separately into the same subfolder share the same batch_id
+setup_P2_BAT_02() {
+    echo "P2-BAT-02: No pre-created fixtures. Trigger: kms capture <file1>; kms capture <file2> (same folder)"
+}
+
+# full | P2-BAT-03: Single file captured directly into inbox root or vault root gets no batch_id
+setup_P2_BAT_03() {
+    echo "P2-BAT-03: No pre-created fixtures. Trigger: kms capture <inbox/report.pdf>"
+}
+
+# full | P2-BAT-05: scan_capture skips a subfolder already captured by the watcher (no duplicate batch)
+setup_P2_BAT_05() {
+    echo "P2-BAT-05: No pre-created fixtures. Trigger: kms capture --scan (after watcher already processed the folder)"
+}
+
+# full | P2-BAT-06: File moved into a batch-worthy subfolder by the watcher gets batch_id updated in-place
+setup_P2_BAT_06() {
+    echo "P2-BAT-06: No pre-created fixtures. Trigger: kms watch + file moved into Projects/Alpha/subdir/"
+}
+
 # full | P2-CIC-06: Every classify outcome (AUTO/SUGGEST/CLUELESS) writes exactly one decision-log audit row
 setup_P2_CIC_06() {
     # ── cleanup ──
@@ -816,20 +776,16 @@ setup_P2_CIC_13() {
 # ─── Tier runners ──────────────────────────────────────────────────────────────
 
 run_smoke() {
-    setup_P1_CAP_01
     setup_P1_CAP_02
     setup_P1_CAP_03
-    setup_P1_CAP_04
-    setup_P1_CAP_05
     setup_P15_LOC_01
     setup_P15_LOC_02
+    setup_P2_BAT_04
 }
 
 run_phase() {
     run_smoke
     setup_P1_CAP_06
-    setup_P1_CAP_07
-    setup_P1_CAP_08
     setup_P1_CAP_09
     setup_P1_CAP_10
     setup_P1_CAP_11
@@ -879,6 +835,11 @@ run_all() {
     setup_P15_DEV_06
     setup_P15_DEV_07
     setup_VR_CONTENT_01
+    setup_P2_BAT_01
+    setup_P2_BAT_02
+    setup_P2_BAT_03
+    setup_P2_BAT_05
+    setup_P2_BAT_06
     setup_P2_CIC_06
     setup_P2_CIC_07
     setup_P2_CIC_08
@@ -907,17 +868,13 @@ case "${1:-all}" in
         echo ""; echo "✓ Phase fixtures ready (smoke + phase)"
         ;;
     # ── Smoke ──
-    P1-CAP-01)  reset_db; clean_vault; setup_P1_CAP_01 ;;
     P1-CAP-02)  reset_db; clean_vault; setup_P1_CAP_02 ;;
     P1-CAP-03)  reset_db; clean_vault; setup_P1_CAP_03 ;;
-    P1-CAP-04)  reset_db; clean_vault; setup_P1_CAP_04 ;;
-    P1-CAP-05)  reset_db; clean_vault; setup_P1_CAP_05 ;;
     P15-LOC-01)  reset_db; clean_vault; setup_P15_LOC_01 ;;
     P15-LOC-02)  reset_db; clean_vault; setup_P15_LOC_02 ;;
+    P2-BAT-04)  reset_db; clean_vault; setup_P2_BAT_04 ;;
     # ── Phase ──
     P1-CAP-06)  reset_db; clean_vault; setup_P1_CAP_06 ;;
-    P1-CAP-07)  reset_db; clean_vault; setup_P1_CAP_07 ;;
-    P1-CAP-08)  reset_db; clean_vault; setup_P1_CAP_08 ;;
     P1-CAP-09)  reset_db; clean_vault; setup_P1_CAP_09 ;;
     P1-CAP-10)  reset_db; clean_vault; setup_P1_CAP_10 ;;
     P1-CAP-11)  reset_db; clean_vault; setup_P1_CAP_11 ;;
@@ -964,6 +921,11 @@ case "${1:-all}" in
     P15-DEV-06)  reset_db; clean_vault; setup_P15_DEV_06 ;;
     P15-DEV-07)  reset_db; clean_vault; setup_P15_DEV_07 ;;
     VR-CONTENT-01)  reset_db; clean_vault; setup_VR_CONTENT_01 ;;
+    P2-BAT-01)  reset_db; clean_vault; setup_P2_BAT_01 ;;
+    P2-BAT-02)  reset_db; clean_vault; setup_P2_BAT_02 ;;
+    P2-BAT-03)  reset_db; clean_vault; setup_P2_BAT_03 ;;
+    P2-BAT-05)  reset_db; clean_vault; setup_P2_BAT_05 ;;
+    P2-BAT-06)  reset_db; clean_vault; setup_P2_BAT_06 ;;
     P2-CIC-06)  reset_db; clean_vault; setup_P2_CIC_06 ;;
     P2-CIC-07)  reset_db; clean_vault; setup_P2_CIC_07 ;;
     P2-CIC-08)  reset_db; clean_vault; setup_P2_CIC_08 ;;

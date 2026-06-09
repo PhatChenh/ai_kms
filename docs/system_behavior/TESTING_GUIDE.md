@@ -11,10 +11,10 @@ Each check is tagged. Here is what the tags mean.
 
 ### Origin — who created this check?
 
-| Label | Meaning | What to do |
-|-------|---------|------------|
-| `design` | Created during design phase — captures what the human INTENDED the system to do, before any code was written | Treat as the human's stated requirement. If this conflicts with what the system actually does, the system might have a bug. |
-| `implementation` | Created after code was written — captures what the system ACTUALLY does | Treat as ground truth for current behavior. If this conflicts with design intent, the code might be doing something the human didn't ask for. |
+| Label            | Meaning                                                                                                      | What to do                                                                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `design`         | Created during design phase — captures what the human INTENDED the system to do, before any code was written | Treat as the human's stated requirement. If this conflicts with what the system actually does, the system might have a bug.                   |
+| `implementation` | Created after code was written — captures what the system ACTUALLY does                                      | Treat as ground truth for current behavior. If this conflicts with design intent, the code might be doing something the human didn't ask for. |
 
 ### Granularity — what level of detail?
 
@@ -112,33 +112,6 @@ uv run kms capture inbox/screenshot.png
 
 ---
 
-### P1-CAP-01 · .md file captured in-place with AI summary in frontmatter
-_Origin: implementation · Granularity: outcome_
-
-**Setup:**
-```bash
-bash docs/system_behavior/setup_test_vault.sh P1-CAP-01
-```
-
-**Run:**
-```bash
-uv run kms capture inbox/test-md-capture.md
-```
-
-**Check:**
-- [ ] File stays at inbox/test-md-capture.md (not moved)
-- [ ] Open file — frontmatter block (between --- markers) added at top
-- [ ] summary: field present and non-empty
-- [ ] tags: includes at least one type/ tag
-- [ ] confidence: has a decimal number
-- [ ] Body text below --- unchanged from original
-
-**Last tested:** 2026-06-07
-**Last result:** passed
-**Current result:** ___
-
----
-
 ### P1-CAP-02 · PDF already in a project folder creates sibling .md and moves binary to attachment/
 _Origin: implementation · Granularity: outcome_
 
@@ -166,7 +139,7 @@ uv run kms capture Projects/Alpha/sample-report.pdf
 
 ---
 
-### P1-CAP-03 · Body text of .md file preserved exactly after capture
+### P1-CAP-03 · Body text of .md file preserved exactly after capture (classify_step runs on inbox files but does not affect body)
 _Origin: implementation · Granularity: outcome_
 
 **Setup:**
@@ -183,70 +156,8 @@ uv run kms capture inbox/test-body-preservation.md
 
 **Check:**
 - [ ] Body text below second --- is byte-identical to original
+- [ ] classify_step runs on this inbox file — candidate fields (suggested_project etc.) may appear in frontmatter depending on AI confidence
 - [ ] summary: appears only inside frontmatter (between --- markers), never in body
-
-**Last tested:** 2026-06-07
-**Last result:** passed
-**Current result:** ___
-
----
-
-### P1-CAP-04 · Re-capture does not rename already-captured .md file (rename gate Rule 1)
-_Origin: implementation · Granularity: outcome_
-
-**Setup:**
-```bash
-bash docs/system_behavior/setup_test_vault.sh P1-CAP-04
-```
-
-**Run:**
-Run once:
-
-```bash
-uv run kms capture inbox/test-rename-gate.md
-```
-
-Then run again without editing the file:
-
-```bash
-uv run kms capture inbox/test-rename-gate.md
-```
-
-**Check:**
-- [ ] File keeps original name test-rename-gate.md after second capture
-- [ ] summary: may update but filename unchanged
-- [ ] No duplicate file appears on disk
-
-**Last tested:** 2026-06-07
-**Last result:** passed
-**Current result:** ___
-
----
-
-### P1-CAP-05 · Scan captures un-indexed .md files, skips already-indexed
-_Origin: implementation · Granularity: outcome_
-
-**Setup:**
-```bash
-bash docs/system_behavior/setup_test_vault.sh P1-CAP-05
-```
-
-**Run:**
-Both files are in inbox. Capture test-md-capture.md first to get it indexed:
-
-```bash
-uv run kms capture inbox/test-md-capture.md
-```
-
-Now run scan — test-scan-uncaptured.md is in inbox but not yet indexed:
-
-```bash
-uv run kms capture --scan
-```
-
-**Check:**
-- [ ] test-scan-uncaptured.md gets summary: in frontmatter
-- [ ] test-md-capture.md summary: unchanged (not re-processed)
 
 **Last tested:** 2026-06-07
 **Last result:** passed
@@ -299,6 +210,23 @@ uv run kms capture Projects/Alpha/test-project-tag.md
 
 ---
 
+### P2-BAT-04 · scan_capture detects and batch-captures an unprocessed inbox subfolder
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Create a subfolder inside inbox/ with two files. Run `uv run kms capture --scan`. Inspect the documents table and vault.
+
+**Check:**
+- [ ] Both files appear as documents rows with a shared non-NULL batch_id. A batches row exists with the subfolder name as folder_path.
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
 ## PHASE — Run When Phase Code Changes
 
 ---
@@ -307,7 +235,7 @@ uv run kms capture Projects/Alpha/test-project-tag.md
 
 ---
 
-### P1-CAP-06 · DOCX file dropped in inbox creates pending-routing marker (no summary yet)
+### P1-CAP-06 · DOCX file dropped in inbox gets real-summary sibling AND is classified at capture time
 _Origin: implementation · Granularity: outcome_
 
 **Setup:**
@@ -321,77 +249,23 @@ uv run kms capture inbox/q3-planning-brief.docx
 ```
 
 **Check:**
-- [ ] q3-planning-brief.docx stays in inbox/ (not moved)
+- [ ] On CLUELESS/SUGGEST: q3-planning-brief.docx stays in inbox/; sibling at inbox/.summaries/
+- [ ] On AUTO: binary moves to project attachment/; sibling moves alongside
 - [ ] Sibling .md created at inbox/.summaries/q3-planning-brief.docx.md
 - [ ] Sibling frontmatter has type: attachment-summary
-- [ ] Sibling frontmatter has status: pending-routing
-- [ ] Sibling frontmatter has NO summary: field (deferred to Phase 2 Classify)
+- [ ] Sibling frontmatter has status: needs-review (NOT pending-routing — concept retired in P2-CIC Phase 7)
+- [ ] Sibling frontmatter has source_hash set (idempotent re-entry)
+- [ ] Sibling body contains a real AI-generated summary (NOT placeholder text)
 
 **Last tested:** 2026-06-07
-**Last result:** passed
+**Last result:** passed — behavior changed in P2-CIC Phase 7; re-verify needed
 **Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
 
 ---
 
-### P1-CAP-07 · Watcher auto-captures new file drops
-_Origin: implementation · Granularity: outcome_
-
-**Setup:**
-```bash
-bash docs/system_behavior/setup_test_vault.sh P1-CAP-07
-```
-
-**Run:**
-In Terminal 1, start the watcher:
-
-```bash
-uv run kms watch
-```
-
-In Terminal 2, copy the staging file to inbox/ and wait ~10 seconds:
-
-```bash
-cp /tmp/auto-capture-test.md /tmp/ai_kms_test_vault/inbox/
-```
-
-**Check:**
-- [ ] auto-capture-test.md gets summary: in frontmatter automatically
-- [ ] No manual kms capture was needed
-- [ ] Only one capture pipeline fires per drop (in-flight guard prevents concurrent pipelines on same path)
-
-**Last tested:** 2026-06-07
-**Last result:** passed
-**Current result:** ___
-
----
-
-### P1-CAP-08 · Gibberish-named inbox PDF gets pending-routing marker (rename deferred to Phase 2 Classify)
-_Origin: implementation · Granularity: outcome_
-
-**Setup:**
-```bash
-bash docs/system_behavior/setup_test_vault.sh P1-CAP-08
-```
-
-**Run:**
-```bash
-uv run kms capture inbox/xkjdhfs83.pdf
-```
-
-**Check:**
-- [ ] xkjdhfs83.pdf stays in inbox/ with original name (no rename during capture)
-- [ ] Sibling .md created at inbox/.summaries/xkjdhfs83.pdf.md
-- [ ] Sibling frontmatter has status: pending-routing
-- [ ] Audit log shows outcome=CLUELESS (rename gate not called for inbox binaries)
-- [ ] Phase 2 Classify will rename and route
-
-**Last tested:** 2026-06-07
-**Last result:** passed
-**Current result:** ___
-
----
-
-### P1-CAP-09 · Idempotent capture — unchanged .md file skipped
+### P1-CAP-09 · Idempotent capture — unchanged .md file skipped (content_hash match). Note: inbox fixture may be AUTO-moved by classify_step on first capture.
 _Origin: implementation · Granularity: outcome_
 
 **Setup:**
@@ -416,6 +290,7 @@ uv run kms capture inbox/test-idempotent.md
 - [ ] Second run returns OK (SKIPPED) in terminal output
 - [ ] content_hash match — no LLM call made
 - [ ] summary: field identical to first capture
+- [ ] If file was AUTO-moved by classify_step on first capture, second capture on original inbox path returns FILE_LOST
 
 **Last tested:** 2026-06-07
 **Last result:** passed
@@ -423,7 +298,7 @@ uv run kms capture inbox/test-idempotent.md
 
 ---
 
-### P1-CAP-10 · CLUELESS routing — inbox binary gets real summary marker with needs-review status
+### P1-CAP-10 · Inbox binary gets real summary AND is classified — may be CLUELESS, SUGGEST, or AUTO
 _Origin: implementation · Granularity: outcome_
 
 **Setup:**
@@ -439,7 +314,8 @@ uv run kms capture inbox/mystery-file.pdf
 No project/domain hint in filename or content — capture parks binary + writes real-summary sibling.
 
 **Check:**
-- [ ] mystery-file.pdf stays in inbox/ (not moved)
+- [ ] On CLUELESS/SUGGEST: mystery-file.pdf stays in inbox/; sibling at inbox/.summaries/
+- [ ] On AUTO: binary moves to project attachment/; sibling moves alongside
 - [ ] Sibling .md created at inbox/.summaries/mystery-file.pdf.md
 - [ ] Sibling frontmatter has status: needs-review (NOT pending-routing)
 - [ ] Sibling frontmatter has type: attachment-summary
@@ -454,7 +330,7 @@ No project/domain hint in filename or content — capture parks binary + writes 
 
 ---
 
-### P1-CAP-11 · URL enrichment — sparse note with URLs gets content fetched
+### P1-CAP-11 · URL enrichment — sparse note with URLs gets content fetched (classify_step also runs on inbox files)
 _Origin: implementation · Granularity: outcome_
 
 **Setup:**
@@ -471,6 +347,7 @@ File body must contain a URL and less than 500 chars of text to trigger URL enri
 
 **Check:**
 - [ ] Open file — summary: reflects content from the URL, not just the sparse body text
+- [ ] classify_step runs — candidate fields or AUTO-move possible
 
 **Last tested:** 2026-06-07
 **Last result:** passed
@@ -648,7 +525,7 @@ sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE vault_path 
 
 ---
 
-### P15-HDL-01 · XLSX file dropped in inbox gets pending-routing marker
+### P15-HDL-01 · XLSX file dropped in inbox gets real-summary marker with needs-review status
 _Origin: implementation · Granularity: outcome_
 
 **Setup:**
@@ -665,8 +542,9 @@ uv run kms capture inbox/q2-budget.xlsx
 - [ ] q2-budget.xlsx stays in inbox/ (not moved — CLUELESS path)
 - [ ] Marker .md created at inbox/.summaries/q2-budget.xlsx.md
 - [ ] Marker frontmatter has type: attachment-summary
-- [ ] Marker frontmatter has status: pending-routing
-- [ ] Marker frontmatter has NO summary: field (deferred to Phase 2 Classify)
+- [ ] Marker frontmatter has status: needs-review (NOT pending-routing — concept retired in P2-CIC Phase 7)
+- [ ] Marker frontmatter has source_hash set (idempotent re-entry)
+- [ ] Marker body contains a real AI-generated summary (NOT placeholder)
 
 **Last tested:** never
 **Last result:** none
@@ -676,7 +554,7 @@ uv run kms capture inbox/q2-budget.xlsx
 
 ---
 
-### P15-HDL-02 · PPTX file dropped in inbox gets pending-routing marker
+### P15-HDL-02 · PPTX file dropped in inbox gets real-summary marker with needs-review status
 _Origin: implementation · Granularity: outcome_
 
 **Setup:**
@@ -693,8 +571,9 @@ uv run kms capture inbox/deck.pptx
 - [ ] deck.pptx stays in inbox/ (not moved — CLUELESS path)
 - [ ] Marker .md created at inbox/.summaries/deck.pptx.md
 - [ ] Marker frontmatter has type: attachment-summary
-- [ ] Marker frontmatter has status: pending-routing
-- [ ] Marker frontmatter has NO summary: field (deferred to Phase 2 Classify)
+- [ ] Marker frontmatter has status: needs-review (NOT pending-routing)
+- [ ] Marker frontmatter has source_hash set (idempotent re-entry)
+- [ ] Marker body contains a real AI-generated summary
 
 **Last tested:** never
 **Last result:** none
@@ -704,7 +583,7 @@ uv run kms capture inbox/deck.pptx
 
 ---
 
-### P15-HDL-03 · CSV file dropped in inbox gets pending-routing marker
+### P15-HDL-03 · CSV file dropped in inbox gets real-summary marker with needs-review status
 _Origin: implementation · Granularity: outcome_
 
 **Setup:**
@@ -721,8 +600,9 @@ uv run kms capture inbox/data.csv
 - [ ] data.csv stays in inbox/ (not moved — CLUELESS path)
 - [ ] Marker .md created at inbox/.summaries/data.csv.md
 - [ ] Marker frontmatter has type: attachment-summary
-- [ ] Marker frontmatter has status: pending-routing
-- [ ] Marker frontmatter has NO summary: field (deferred to Phase 2 Classify)
+- [ ] Marker frontmatter has status: needs-review (NOT pending-routing)
+- [ ] Marker frontmatter has source_hash set
+- [ ] Marker body contains a real AI-generated summary
 
 **Last tested:** never
 **Last result:** none
@@ -732,7 +612,7 @@ uv run kms capture inbox/data.csv
 
 ---
 
-### P15-HDL-04 · HTML file dropped in inbox gets pending-routing marker
+### P15-HDL-04 · HTML file dropped in inbox gets real-summary marker with needs-review status
 _Origin: implementation · Granularity: outcome_
 
 **Setup:**
@@ -749,8 +629,9 @@ uv run kms capture inbox/page.html
 - [ ] page.html stays in inbox/ (not moved — CLUELESS path)
 - [ ] Marker .md created at inbox/.summaries/page.html.md
 - [ ] Marker frontmatter has type: attachment-summary
-- [ ] Marker frontmatter has status: pending-routing
-- [ ] Marker frontmatter has NO summary: field (deferred to Phase 2 Classify)
+- [ ] Marker frontmatter has status: needs-review (NOT pending-routing)
+- [ ] Marker frontmatter has source_hash set
+- [ ] Marker body contains a real AI-generated summary
 
 **Last tested:** never
 **Last result:** none
@@ -760,7 +641,7 @@ uv run kms capture inbox/page.html
 
 ---
 
-### P15-HDL-05 · EML email file dropped in inbox gets pending-routing marker
+### P15-HDL-05 · EML email file dropped in inbox gets real-summary marker with needs-review status
 _Origin: implementation · Granularity: outcome_
 
 **Setup:**
@@ -777,8 +658,9 @@ uv run kms capture inbox/message.eml
 - [ ] message.eml stays in inbox/ (not moved — CLUELESS path)
 - [ ] Marker .md created at inbox/.summaries/message.eml.md
 - [ ] Marker frontmatter has type: attachment-summary
-- [ ] Marker frontmatter has status: pending-routing
-- [ ] Marker frontmatter has NO summary: field (deferred to Phase 2 Classify)
+- [ ] Marker frontmatter has status: needs-review (NOT pending-routing)
+- [ ] Marker frontmatter has source_hash set
+- [ ] Marker body contains a real AI-generated summary
 
 **Last tested:** never
 **Last result:** none
@@ -788,7 +670,7 @@ uv run kms capture inbox/message.eml
 
 ---
 
-### P15-HDL-06 · MSG Outlook file dropped in inbox gets pending-routing marker
+### P15-HDL-06 · MSG Outlook file dropped in inbox gets real-summary marker with needs-review status
 _Origin: implementation · Granularity: outcome_
 
 **Setup:**
@@ -805,8 +687,9 @@ uv run kms capture inbox/outlook-msg.msg
 - [ ] outlook-msg.msg stays in inbox/ (not moved — CLUELESS path)
 - [ ] Marker .md created at inbox/.summaries/outlook-msg.msg.md
 - [ ] Marker frontmatter has type: attachment-summary
-- [ ] Marker frontmatter has status: pending-routing
-- [ ] Marker frontmatter has NO summary: field (deferred to Phase 2 Classify)
+- [ ] Marker frontmatter has status: needs-review (NOT pending-routing)
+- [ ] Marker frontmatter has source_hash set
+- [ ] Marker body contains a real AI-generated summary
 
 **Last tested:** never
 **Last result:** none
@@ -847,7 +730,7 @@ sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE batch_id = 
 - [ ] batches row created with folder_name=new-project-folder, confidence > 0, status one of: ROUTING | PENDING_REVIEW | CLUELESS
 - [ ] AUTO (status=ROUTING): folder moved to Projects/`<name>`/ or Domain/`<name>`/; files captured; documents rows present with matching batch_id
 - [ ] SUGGEST (status=PENDING_REVIEW): folder stays in inbox/; no documents rows for its files yet
-- [ ] CLUELESS (status=CLUELESS): folder stays in inbox/; per-file pending-routing markers at inbox/.summaries/; documents rows with batch_id
+- [ ] CLUELESS (status=CLUELESS): folder stays in inbox/; per-file needs-review markers with real summaries at inbox/.summaries/; documents rows with batch_id
 - [ ] All files inside the folder (including subfolders of Projects/`<A>`/ or Domain/`<D>`/) captured with a batch_id
 
 **Last tested:** 2026-06-07
@@ -1385,18 +1268,17 @@ Capture the test file:
 uv run kms capture inbox/p1-dev-01-test.md
 ```
 
-Then query the audit log:
+Then query:
 
 ```bash
-sqlite3 data/kb.db "SELECT * FROM audit_log ORDER BY rowid DESC LIMIT 5"
+sqlite3 data/kb.db "SELECT stage, outcome FROM audit_log ORDER BY rowid DESC LIMIT 5"
 ```
 
 **Check:**
-- [ ] audit_log row exists with pipeline=capture
-- [ ] stage=metadata in the row
-- [ ] outcome=CAPTURED
+- [ ] audit_log row exists with stage=metadata, outcome=CAPTURED
+- [ ] audit_log row exists with stage=classify (AUTO, SUGGEST, or CLUELESS — classify_step runs on inbox files)
 - [ ] correlation_id matches the ID shown in terminal output
-- [ ] reasoning field is non-empty
+- [ ] reasoning field is non-empty in both rows
 
 **Last tested:** never
 **Last result:** none
@@ -1874,6 +1756,91 @@ sqlite3 data/kb.db "SELECT vault_path, content_hash FROM documents WHERE vault_p
 ---
 
 ### Phase 2
+
+---
+
+### P2-BAT-01 · Single file captured into a project subfolder gets batch_id set in the documents row
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Drop a file into Projects/Alpha/subdir/ and run `uv run kms capture Projects/Alpha/subdir/report.pdf`. Query the DB: `sqlite3 data/kb.db 'SELECT vault_path, batch_id FROM documents WHERE vault_path LIKE "%report%"'`
+
+**Check:**
+- [ ] batch_id column is non-NULL; the value references a row in the batches table with folder_path = 'Projects/Alpha/subdir'
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P2-BAT-02 · Two files dropped separately into the same subfolder share the same batch_id
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Capture two files from the same subfolder in separate CLI invocations. Query batch_id for both vault_path rows.
+
+**Check:**
+- [ ] Both documents rows have identical batch_id values; the batches row for that folder_path has file_count >= 2
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P2-BAT-03 · Single file captured directly into inbox root or vault root gets no batch_id
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Capture a file dropped directly into inbox/ (not inside a subfolder). Query batch_id for the resulting documents row.
+
+**Check:**
+- [ ] batch_id column is NULL — inbox root is not batch-worthy
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P2-BAT-05 · scan_capture skips a subfolder already captured by the watcher (no duplicate batch)
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Start watcher, drop a subfolder into inbox/. After watcher captures it, stop watcher and run `kms capture --scan`.
+
+**Check:**
+- [ ] No second batches row created for the same folder_path. Existing documents rows unchanged. Log shows subfolder skipped.
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P2-BAT-06 · File moved into a batch-worthy subfolder by the watcher gets batch_id updated in-place
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Start watcher. Move a previously-captured file from inbox/ into Projects/Alpha/subdir/. Query batch_id for the updated documents row.
+
+**Check:**
+- [ ] batch_id updated to the batch for Projects/Alpha/subdir. No re-capture triggered (summary and content_hash unchanged).
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
 
 ---
 
