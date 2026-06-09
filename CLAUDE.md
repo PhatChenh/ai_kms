@@ -329,7 +329,7 @@ The following rules are enforced by hooks in `.claude/settings.json` — Claude 
 
 ## Build progress
 
-**Overall:** Phase 1 of 8 complete + Brief #2/#3 done + Phase 1.5 Pay-Debt complete + Phase Pre-2 complete + Vault-Restructure complete (2026-06-04, 956 tests). TD-042 deprecated-key strip complete (2026-06-07, 959 tests). P2-CL classify() pure function implemented (2026-06-08, commits b2d33fa + a28b33c on `main`). **P2-CIC Classify Inline in Capture — all 9 phases COMPLETE (2026-06-08, 1080 tests, merged to main).** ~70 tests added. Next: TD-040/TD-041 Batch-ID Fix and Project Registry implementation. M1 milestone (Capture + Classify + Search end-to-end) now fully achievable.
+**Overall:** Phase 1 of 8 complete + Brief #2/#3 done + Phase 1.5 Pay-Debt complete + Phase Pre-2 complete + Vault-Restructure complete (2026-06-04, 956 tests). TD-042 deprecated-key strip complete (2026-06-07, 959 tests). P2-CL classify() pure function implemented (2026-06-08, commits b2d33fa + a28b33c on `main`). **P2-CIC Classify Inline in Capture — all 9 phases COMPLETE (2026-06-08, 1080 tests, merged to main).** ~70 tests added. P2-CIC review fixes applied (2026-06-08): AUTO audit post-move, exact-membership validation, F841 removed. **TD-040/TD-041 Batch-ID Fix COMPLETE (2026-06-09).** Next: Project Registry implementation. M1 milestone (Capture + Classify + Search end-to-end) now fully achievable.
 
 (Phase 0 + Phase 1 checklists closed — see STATE.md for full history.)
 
@@ -387,8 +387,7 @@ from core.config import CONFIG
 ### vault/ — watcher internals
 - **`VaultWatcher` / `_VaultEventHandler` constructors take `vault_config: VaultConfig`, not `attachment_path: Path`.** `_should_skip` uses `_is_in_managed_attachment(path, vault_config)` for non-.md files. CLI: `VaultWatcher(root=root, vault_config=CONFIG.main.vault, ...)`.
 - **`documents.delete_by_path` and `documents.rename` return `Result[int]`.** The int is rowcount — check for 0 to detect "not in index".
-- **`vault/watcher.py::on_deleted` and `on_moved` run binary sync BEFORE `_should_skip`.** Binary delete/move in `Projects/<A>/attachment/` MUST fire `_handle_binary_delete` / `_handle_binary_move` so the sibling DB row + audit log stay consistent. `_should_skip` only filters the user callback (indexer), not the internal sync. Reordering breaks sibling cleanup silently. (TD-030 fix)
-- **Watcher handles binary delete/rename sync internally.** `on_deleted` / `on_moved` call `_handle_binary_delete` / `_handle_binary_move`. Sync uses unique debounce key prefix `bin:` to avoid colliding with user callbacks. Binary move INTO managed attachment dir is NOT skipped — we need to orphan the old sibling.
+- **`vault/watcher.py::on_deleted` and `on_moved` run binary sync BEFORE `_should_skip`, using unique `bin:` debounce key prefix.** Binary delete/move in `Projects/<A>/attachment/` fires `_handle_binary_delete` / `_handle_binary_move` BEFORE `_should_skip` — `_should_skip` only filters the user callback (indexer), not the internal sync. Sync uses `bin:` key prefix to avoid colliding with user callbacks. Binary move INTO managed attachment dir is NOT skipped (needed to orphan the old sibling). Reordering breaks sibling cleanup silently. (TD-030 fix)
 - **Vault-relative paths in watcher computed from `self._root`, not `CONFIG`.** Use `unicodedata.normalize("NFC", str(path.relative_to(self._root).as_posix()))` — the `to_vault_path` helper uses CONFIG singleton which breaks in tests.
 - **Two `_debounce` calls with same key cancel each other.** The second call overwrites the first timer. Use unique keys when debouncing multiple handlers for the same path.
 - **`write_note` sets `updated_by_human` from `actor`, not from incoming metadata.** `_merge_metadata` computes `updated_by_human=(actor == "human")` — any `updated_by_human=True` on the incoming `NoteMetadata` is ignored when `actor="ai"`. Tests that need `updated_by_human=True` on disk must call `write_note(..., actor="human")`.
@@ -408,8 +407,8 @@ from core.config import CONFIG
 
 ### Phase 2 — classify pipeline gotchas
 - **`core/pipeline.py` cannot import from `vault.`** — `tests/test_core/test_pipeline_phase1.py::test_pipeline_has_no_heavy_imports` greps source for `vault.` and fails on any match. PipelineContext fields typed with vault types must use `Any` instead of the actual type, even under `TYPE_CHECKING`. The test checks raw source text, not runtime imports.
-- **Deepseek-v4-pro parent session breaks Agent/Workflow subagent dispatch.** Error: `API Error: 400 thinking options type cannot be disabled when reasoning_effort is set`. Subagents never start (0 tokens, 0 tool uses). Workaround: switch parent model to sonnet/opus/haiku, or implement directly inline.
 - **Parallel subagent dispatch can absorb uncommitted changes.** If two subagents work on same repo simultaneously, one's `git commit -a` can pick up the other's uncommitted changes. Always commit each subagent's work immediately, or use worktree isolation per subagent.
+- **Audit writes must happen AFTER the physical action succeeds, not before.** `_write_classify_audit(...)` called pre-move fires even when the move fails — failure is logged as `AUTO` in the audit log. Pattern: call `_write_classify_audit(..., "AUTO")` only after `move_note()` + `documents.replace_path()` both succeed; call `_write_classify_audit(..., "SUGGEST"/"CLUELESS")` in each fallback branch. Tests asserting `AUTO` outcome without a real file on disk silently no-op the move but fire the pre-move audit — masking the bug. Applies to `_classify_auto_md_move()` in `capture.py`. (P2-CIC review fix #1, 2026-06-08)
 
 
 ### Hook-enforced — no longer needed here

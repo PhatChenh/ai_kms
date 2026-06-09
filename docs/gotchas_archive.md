@@ -18,3 +18,10 @@ Reason codes: **absorbed** (info folded into another entry), **derivable** (read
 
 - **Settle window in watcher coalesces multi-hop moves.** Binary move A→B followed quickly by B→C produces one re-home event (A→C), not two. Default settle window is configurable. Without this, intermediate destinations trigger spurious sibling creation/deletion.
   _Reason: detail — implementation behavior, not a mistake pattern; documented in `vault/watcher.py` (T7)._
+
+---
+
+## Archived 2026-06-09
+
+- **Deepseek-v4-pro parent session breaks Agent/Workflow subagent dispatch.** Error: `API Error: 400 thinking options type cannot be disabled when reasoning_effort is set`. Subagents never start (0 tokens, 0 tool uses). Workaround: switch parent model to sonnet/opus/haiku, or implement directly inline.
+  _Reason: model-specific environment gotcha, not a codebase pattern. No longer the session model (Opus 4.8 current)._

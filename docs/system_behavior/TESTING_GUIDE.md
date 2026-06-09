@@ -1,7 +1,7 @@
 # AI-KMS Testing Guide
 _For non-technical testers. No coding required for Smoke and Phase checks._
 _Auto-generated from `behavior_inventory.yaml`. Fill in **Current result** fields after testing. All other content is regenerated — do not edit._
-_Last generated: 2026-06-08_
+_Last generated: 2026-06-09_
 
 ---
 
@@ -423,7 +423,7 @@ uv run kms capture inbox/test-idempotent.md
 
 ---
 
-### P1-CAP-10 · CLUELESS routing — inbox binary gets pending-routing marker
+### P1-CAP-10 · CLUELESS routing — inbox binary gets real summary marker with needs-review status
 _Origin: implementation · Granularity: outcome_
 
 **Setup:**
@@ -436,18 +436,21 @@ bash docs/system_behavior/setup_test_vault.sh P1-CAP-10
 uv run kms capture inbox/mystery-file.pdf
 ```
 
-No project/domain hint in filename or content — capture should park and create pending-routing marker.
+No project/domain hint in filename or content — capture parks binary + writes real-summary sibling.
 
 **Check:**
 - [ ] mystery-file.pdf stays in inbox/ (not moved)
-- [ ] Marker .md created at inbox/.summaries/mystery-file.pdf.md
-- [ ] Marker frontmatter has status: pending-routing
-- [ ] Marker frontmatter has type: attachment-summary
-- [ ] Marker body contains placeholder text (not a real summary)
+- [ ] Sibling .md created at inbox/.summaries/mystery-file.pdf.md
+- [ ] Sibling frontmatter has status: needs-review (NOT pending-routing)
+- [ ] Sibling frontmatter has type: attachment-summary
+- [ ] Sibling frontmatter has source_hash set (non-empty — enables idempotent re-entry)
+- [ ] Sibling body contains a real AI-generated summary (NOT a one-line placeholder)
 
 **Last tested:** 2026-06-07
-**Last result:** passed
+**Last result:** passed — behavior changed in P2-CIC Phase 7; re-verify needed
 **Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
 
 ---
 
@@ -1128,6 +1131,237 @@ Check the note's last-modified timestamp before and after — it should not chan
 
 ---
 
+### P2-CIC-01 · Loose inbox .md note with a confident destination is moved into the project/domain folder DERIVED from its assigned tags+project (AUTO)
+_Origin: design · Granularity: outcome_
+
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P2-CIC-01
+```
+
+**Run:**
+Place a note in inbox/ whose content clearly belongs to an existing project (e.g. meeting notes for Projects/Alpha).
+
+Ensure Projects/Alpha/ exists with a CLAUDE.md domain tag.
+
+```bash
+uv run kms capture inbox/p2cic-01-clear-project-note.md
+```
+
+**Check:**
+- [ ] Note is GONE from inbox/ (moved to the DERIVED folder, e.g. Projects/Alpha/p2cic-01-clear-project-note.md)
+- [ ] Frontmatter has project: Alpha AND the destination folder matches that project field (location derived from the field, not picked independently)
+- [ ] No status: needs-review field (AUTO acted, not suggested)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P2-CIC-02 · Loose inbox note with a medium-confidence destination stays in inbox with suggested destination recorded (SUGGEST)
+_Origin: design · Granularity: outcome_
+
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P2-CIC-02
+```
+
+**Run:**
+Place a note in inbox/ whose content plausibly fits a destination but is not clear-cut.
+
+```bash
+uv run kms capture inbox/p2cic-02-ambiguous-note.md
+```
+
+**Check:**
+- [ ] Note STAYS at inbox/p2cic-02-ambiguous-note.md (not moved)
+- [ ] Frontmatter records a suggested destination (e.g. status: needs-review plus a suggested-destination field)
+- [ ] Frontmatter records the AI confidence and one-sentence reasoning
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P2-CIC-03 · Loose inbox note the AI cannot place stays in inbox marked stuck (CLUELESS)
+_Origin: design · Granularity: outcome_
+
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P2-CIC-03
+```
+
+**Run:**
+Place a note in inbox/ whose topic matches no existing project or domain.
+
+```bash
+uv run kms capture inbox/p2cic-03-no-match-note.md
+```
+
+**Check:**
+- [ ] Note STAYS at inbox/p2cic-03-no-match-note.md (not moved)
+- [ ] Frontmatter records that the AI was stuck (low/no candidate) with its reasoning
+- [ ] No destination move occurred
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P2-CIC-04 · A file dropped directly into a project/domain folder is filed by location WITHOUT any AI classify call
+_Origin: design · Granularity: outcome_
+
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P2-CIC-04
+```
+
+**Run:**
+Place a note directly inside Projects/Alpha/.
+
+```bash
+uv run kms capture Projects/Alpha/p2cic-04-located-note.md
+```
+
+**Check:**
+- [ ] Note stays in Projects/Alpha/ (location wins; no move)
+- [ ] Frontmatter has project: Alpha
+- [ ] No suggested-destination / needs-review fields written (classify was skipped)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P2-CIC-05 · Loose inbox PDF gets a rich attachment summary AND is classified at drop time (two AI calls; pending-routing marker retired)
+_Origin: design · Granularity: outcome_
+
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P2-CIC-05
+```
+
+**Run:**
+Place a PDF in inbox/ whose content clearly belongs to an existing project.
+
+```bash
+uv run kms capture inbox/p2cic-05-clear-project-report.pdf
+```
+
+**Check:**
+- [ ] Sibling .md has a real summary (NOT the one-line pending-routing placeholder)
+- [ ] On AUTO: binary moved to the chosen folder's attachment/, sibling moved alongside, both findable
+- [ ] On SUGGEST/CLUELESS: binary stays in inbox; sibling records the suggested destination or stuck state
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P2-CIC-10 · A single file dropped in a project/domain folder is still summarized + frontmatter-stamped; only the classify step and the move are skipped (LOCATED is NOT a no-op)
+_Origin: design · Granularity: outcome_
+
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P2-CIC-10
+```
+
+**Run:**
+Place a note directly inside Projects/Alpha/ with body content worth summarizing.
+
+```bash
+uv run kms capture Projects/Alpha/p2cic-10-located-summary-note.md
+```
+
+**Check:**
+- [ ] Note stays in Projects/Alpha/ (no move)
+- [ ] Frontmatter has a real AI summary and project: Alpha (earlier capture stages ran)
+- [ ] No suggested-destination / classify_confidence / needs-review fields (classify step was skipped)
+- [ ] No stage='classify' audit row for this file (LOCATED — no classify AI call)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P2-CIC-11 · When the AI assigns a project, the note moves to that Project folder even though it also carries domain tags (project beats domain — precedence)
+_Origin: design · Granularity: outcome_
+
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P2-CIC-11
+```
+
+**Run:**
+Place a loose inbox note that clearly belongs to an existing project AND carries one or more domain tags (e.g. a deliverable for Projects/Alpha that is also about domain/Finance).
+
+Ensure both Projects/Alpha/ and Domain/Finance/ exist.
+
+```bash
+uv run kms capture inbox/p2cic-11-project-and-domain-note.md
+```
+
+**Check:**
+- [ ] Note moves to Projects/Alpha/ (the Project root), NOT Domain/Finance/ — project field wins over the domain tag
+- [ ] Frontmatter still carries the domain/Finance tag (tags are not stripped; only the move follows precedence)
+- [ ] Frontmatter project: Alpha
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P2-CIC-12 · A loose note with NO project and MULTIPLE domain tags moves to the AI's designated PRIMARY domain folder while keeping all its domain tags
+_Origin: design · Granularity: outcome_
+
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P2-CIC-12
+```
+
+**Run:**
+Place a loose inbox note that spans two existing domains (e.g. tagged domain/Finance and domain/Legal) and ties to no specific project.
+
+Ensure Domain/Finance/ and Domain/Legal/ both exist.
+
+```bash
+uv run kms capture inbox/p2cic-12-multi-domain-note.md
+```
+
+**Check:**
+- [ ] Note moves to exactly ONE domain folder — the AI's designated primary (e.g. Domain/Finance/), not both
+- [ ] Frontmatter still lists BOTH domain tags (domain/Finance AND domain/Legal) — only the move uses the primary
+- [ ] Frontmatter records no project (no project field set)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
 ## FULL — Developer Only (Terminal + DB Access)
 
 ---
@@ -1248,46 +1482,6 @@ grep -i 'cooldown\|too_recent\|file_too_recent' logs/app.log | tail -5
 - [ ] Terminal shows Failure(recoverable=True)
 - [ ] No LLM call made
 - [ ] No DB row created in documents table
-
-**Last tested:** never
-**Last result:** none
-**Current result:** ___
-
-⚠ AI-authored — not yet human-verified.
-
----
-
-### P1-DEV-05 · Pending-routing guard blocks re-capture of CLUELESS binary
-_Origin: implementation · Granularity: mechanism_
-
-**Setup:**
-```bash
-bash docs/system_behavior/setup_test_vault.sh P1-DEV-05
-```
-
-**Run:**
-Run once to create the CLUELESS marker:
-
-```bash
-uv run kms capture inbox/mystery-file.pdf
-```
-
-Then run again without changing anything:
-
-```bash
-uv run kms capture inbox/mystery-file.pdf
-```
-
-Verify only one marker row exists in DB (count should be 1):
-
-```bash
-sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path LIKE '%mystery-file.pdf%'"
-```
-
-**Check:**
-- [ ] Second capture returns Failure(recoverable=True)
-- [ ] No duplicate marker .md created
-- [ ] No LLM call made on second run
 
 **Last tested:** never
 **Last result:** none
@@ -1670,6 +1864,144 @@ sqlite3 data/kb.db "SELECT vault_path, content_hash FROM documents WHERE vault_p
 - [ ] Sibling .md re-summarized with updated content
 - [ ] source_hash updated in sibling frontmatter (open .summaries/vr-content-01-test.xlsx.md to verify)
 - [ ] content_hash in DB row differs from pre-edit value
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### Phase 2
+
+---
+
+### P2-CIC-06 · Every classify outcome (AUTO/SUGGEST/CLUELESS) writes exactly one decision-log audit row
+_Origin: design · Granularity: mechanism_
+
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P2-CIC-06
+```
+
+**Run:**
+```bash
+uv run kms capture inbox/p2cic-06-audit-note.md
+```
+
+```bash
+sqlite3 data/kb.db "SELECT pipeline, stage, outcome, reasoning, source_ids FROM audit_log WHERE stage='classify' ORDER BY rowid DESC LIMIT 3"
+```
+
+**Check:**
+- [ ] An audit_log row exists with pipeline=capture, stage=classify
+- [ ] outcome is one of AUTO | SUGGEST | CLUELESS
+- [ ] reasoning is non-empty; source_ids contains the note's vault path
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P2-CIC-07 · A classify AUTO-move to a project/domain root leaves batch_id NULL; index location stays consistent
+_Origin: design · Granularity: mechanism_
+
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P2-CIC-07
+```
+
+**Run:**
+Capture a loose inbox note that AUTO-routes to a project ROOT (e.g. Projects/Alpha/).
+
+```bash
+sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE vault_path LIKE '%p2cic-07-batch-note%'"
+```
+
+**Check:**
+- [ ] documents.vault_path equals the new in-folder path (e.g. Projects/Alpha/p2cic-07-batch-note.md) — matches disk
+- [ ] batch_id is NULL (a tree root is not a batch-worthy subfolder)
+- [ ] Exactly one documents row exists for the note (no orphan row at the old inbox path)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P2-CIC-08 · A classify AUTO-move under the running watcher does not double-fire re-home or create a duplicate row
+_Origin: design · Granularity: mechanism_
+
+**Run:**
+Start kms watch.
+
+Drop a loose inbox file whose content clearly belongs to a project, wait for capture to AUTO-route it.
+
+```bash
+sqlite3 data/kb.db "SELECT count(*), vault_path FROM documents WHERE vault_path LIKE '%<that-file>%' GROUP BY vault_path"
+```
+
+**Check:**
+- [ ] Exactly one documents row, pointing at the new destination path
+- [ ] Watcher re-home was suppressed for the pipeline-initiated move (log shows rehome_skip reason=pipeline_initiated)
+- [ ] No second move back to inbox; the file stays at its classified destination
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P2-CIC-09 · A file captured as part of a dropped folder is fully captured but NOT individually re-classified (SUPPRESS — the folder is the routing unit)
+_Origin: design · Granularity: mechanism_
+
+**Run:**
+Drop a folder containing 2-3 loose files into inbox/ (a folder the system routes or marks CLUELESS).
+
+Let the folder capture flow process it (watcher stable-folder event, or capture_folder).
+
+`sqlite3 data/kb.db "SELECT count(*) FROM audit_log WHERE stage='classify'"` and inspect each file's frontmatter.
+
+**Check:**
+- [ ] Each file inside the folder is summarized + frontmatter-stamped + batch-stamped (full capture ran)
+- [ ] NO file inside the folder carries suggested_type / suggested_name / classify_confidence / status: needs-review from an individual classify call
+- [ ] No per-file stage='classify' audit row is written for the folder's files (the folder verdict is the only classify decision)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P2-CIC-13 · Structural consistency: an AUTO-filed note's on-disk folder always matches its stamped project/primary-domain (no free pick that could disagree)
+_Origin: design · Granularity: mechanism_
+
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P2-CIC-13
+```
+
+**Run:**
+Capture any loose inbox note that AUTO-routes.
+
+`sqlite3 data/kb.db "SELECT vault_path, project FROM documents WHERE vault_path LIKE '%p2cic-13-consistency-note%'"` and read the note's frontmatter.
+
+Compare the folder portion of vault_path against the stamped project (or primary domain) field.
+
+**Check:**
+- [ ] If a project is stamped, vault_path is under Projects/<that project>/
+- [ ] If no project but a primary domain, vault_path is under Domain/<that primary domain>/
+- [ ] The folder NEVER points at a project/domain the frontmatter does not name (derived, not free pick)
 
 **Last tested:** never
 **Last result:** none

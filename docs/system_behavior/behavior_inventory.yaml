@@ -265,7 +265,7 @@
   retired: null
 
 - id: P1-CAP-10
-  behavior: "CLUELESS routing — inbox binary gets pending-routing marker"
+  behavior: "CLUELESS routing — inbox binary gets real summary marker with needs-review status"
   tier: phase
   phase: 1
   origin: implementation
@@ -275,18 +275,19 @@
     - inbox/mystery-file.pdf
   steps:
     - "`uv run kms capture inbox/mystery-file.pdf`"
-    - "No project/domain hint in filename or content — capture should park and create pending-routing marker."
+    - "No project/domain hint in filename or content — capture parks binary + writes real-summary sibling."
   expected:
     - "mystery-file.pdf stays in inbox/ (not moved)"
-    - "Marker .md created at inbox/.summaries/mystery-file.pdf.md"
-    - "Marker frontmatter has status: pending-routing"
-    - "Marker frontmatter has type: attachment-summary"
-    - "Marker body contains placeholder text (not a real summary)"
-  spec_ref: "roadmap §Phase1.5 'CLUELESS pending-routing markers'"
-  human_reviewed: yes
+    - "Sibling .md created at inbox/.summaries/mystery-file.pdf.md"
+    - "Sibling frontmatter has status: needs-review (NOT pending-routing)"
+    - "Sibling frontmatter has type: attachment-summary"
+    - "Sibling frontmatter has source_hash set (non-empty — enables idempotent re-entry)"
+    - "Sibling body contains a real AI-generated summary (NOT a one-line placeholder)"
+  spec_ref: "docs/1_design/phase2/classify-inline-capture.md P2-CIC Phase 7 'retire pending-routing'"
+  human_reviewed: no
   last_tested: "2026-06-07"
-  last_result: "passed"
-  pytest_ref: "tests/test_pipelines/test_capture_phase3.py::test_store_nonmd_clueless_inbox_binary_stays_pending_marker"
+  last_result: "passed — behavior changed in P2-CIC Phase 7; re-verify needed"
+  pytest_ref: "tests/test_pipelines/test_capture_phase3.py::test_store_nonmd_clueless_inbox_binary_stays_needs_review"
   status: active
   retired: null
 
@@ -444,9 +445,9 @@
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_capture_phase3.py::test_capture_file_skips_pending_routing_binary"
-  status: active
-  retired: null
+  pytest_ref: "tests/test_pipelines/test_capture_phase3.py::test_pending_routing_guard_removed"
+  status: retired
+  retired: "2026-06-09: P2-CIC Phase 7 removed the pending-routing guard entirely — old status:pending-routing concept retired. Idempotent re-entry now uses source_hash comparison in _store_nonmd CLUELESS path (capture.py). New test asserts the OPPOSITE: classify IS called on second run (guard removed). See P2-CIC-03 for current CLUELESS binary behavior."
 
 # ═══════════════════════════════════════════════════════════════
 # PHASE 1.5 — Location Tags + Attachment Layout + Reconcile
@@ -1884,8 +1885,8 @@
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_auto_md_moves_to_project_folder"
+  status: active
   retired: null
 
 - id: P2-CIC-02
@@ -1908,8 +1909,8 @@
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_classify_step_inbox_suggest"
+  status: active
   retired: null
 
 - id: P2-CIC-03
@@ -1932,8 +1933,8 @@
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_classify_step_inbox_clueless"
+  status: active
   retired: null
 
 - id: P2-CIC-04
@@ -1956,8 +1957,8 @@
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_classify_step_located_project_passthrough"
+  status: active
   retired: null
 
 - id: P2-CIC-05
@@ -1980,8 +1981,8 @@
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_auto_binary_end_to_end_placement"
+  status: active
   retired: null
 
 - id: P2-CIC-06
@@ -2004,8 +2005,8 @@
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_auto_human_locked_fallback"
+  status: active
   retired: null
 
 - id: P2-CIC-07
@@ -2028,8 +2029,8 @@
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_auto_binary_batch_id_null"
+  status: active
   retired: null
 
 - id: P2-CIC-08
@@ -2052,8 +2053,8 @@
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_auto_md_move_guard_registered"
+  status: active
   retired: null
 
 - id: P2-CIC-09
@@ -2076,8 +2077,8 @@
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_classify_step_suppress_passthrough"
+  status: active
   retired: null
 
 - id: P2-CIC-10
@@ -2101,8 +2102,8 @@
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_classify_step_located_project_passthrough"
+  status: active
   retired: null
 
 - id: P2-CIC-11
@@ -2126,8 +2127,8 @@
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_classify_step_project_beats_domain"
+  status: active
   retired: null
 
 - id: P2-CIC-12
@@ -2151,8 +2152,8 @@
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_classify_step_multi_domain_primary_routing"
+  status: active
   retired: null
 
 - id: P2-CIC-13
@@ -2176,6 +2177,6 @@
   human_reviewed: no
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_auto_md_replace_path_atomic"
+  status: active
   retired: null

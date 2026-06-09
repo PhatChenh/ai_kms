@@ -301,7 +301,8 @@ Note: `MetadataResult.ai_domain` is **kept** as internal pipeline state — `app
 ---
 
 ### TD-040 · Single-file capture never sets batch_id — batch association only possible via folder drop
-**Status:** OPEN
+**Status:** RESOLVED (P2-BAT, 2026-06-09)
+**Resolution:** `is_batch_subfolder()` predicate added to `vault/paths.py`; batch-stamp pre-step added to `capture_file()` at line 1384 — looks up or creates a batch row for any file dropped into a batch-worthy subfolder. `update_batch_id()` added to `storage/documents.py`. SQL migration 006 adds `folder_path` column to `batches`. All single-file paths (CLI, scan, watcher) now set `batch_id` when the drop target is a recognized subfolder.
 **Phase:** Phase 2 / Phase 8 (Briefing)
 **Risk if triggered early:** Phase 8 Briefing groups content by batch. Any file captured individually — via `kms capture <file>`, `kms capture --scan`, or watcher single-file drop — will never appear in a batch grouping in the briefing, even if the user intentionally dropped several files into the same project folder one by one. The batch signal exists only for folder drops; individual drops are invisible to the batch layer.
 **What:** `capture_file()` is called with `ctx.batch_id = None` in all single-file code paths (CLI, scan, watcher on_create). `_insert_batch()` is only called inside `capture_folder()`, which is only triggered when the watcher detects a stable folder drop. There is no mechanism for single-file capture to associate itself with a batch — not by destination folder, not by time window, not by user intent.
@@ -312,7 +313,8 @@ Note: `MetadataResult.ai_domain` is **kept** as internal pipeline state — `app
 ---
 
 ### TD-041 · scan_capture does not classify or batch-capture inbox subfolders
-**Status:** OPEN
+**Status:** RESOLVED (P2-BAT, 2026-06-09)
+**Resolution:** `scan_capture()` now includes a subfolder-detection pass (lines 1474–1504 in `capture.py`): unprocessed batch-worthy subfolders in `inbox/`, `Projects/`, and `Domain/` are dispatched via `capture_folder()`. Already-located folders skip the LLM classify step (Case B dedup). Mirrors the watcher-triggered folder-drop path.
 **Phase:** Phase 2 / Phase 8 (Briefing)
 **Risk if triggered early:** P15-FOLD-01 describes folder classification as a `kms capture --scan` capability. Current code: `scan_capture()` calls `capture_file()` per individual file and never calls `capture_folder()`. A folder sitting in `inbox/` is walked file-by-file with no LLM classification, no batch row, and no batch_id on the resulting documents. Files inside `inbox/<subfolder>/` and `Projects/<A>/<subfolder>/` and `Domain/<D>/<subfolder>/` are all captured individually without grouping.
 **What:** `scan_capture()` (`src/pipelines/capture.py`) does not detect or dispatch subfolder drops. `capture_folder()` is triggered only by `vault/watcher.py` on a stable folder-creation event, not by any CLI scan path. The desired behavior: `kms capture --scan` should detect unprocessed subfolders in `inbox/`, classify them via LLM, create a batch row, and assign a `batch_id` to all files inside — mirroring what `capture_folder()` does for watcher-triggered drops.
