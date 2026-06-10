@@ -17,6 +17,11 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path))
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    import sqlite_vec
+
+    conn.enable_load_extension(True)
+    sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
     return conn
 
 
@@ -43,6 +48,7 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
 def init_db(db_path: Path | None = None) -> Result[None]:
     if db_path is None:
         from core.config import CONFIG
+
         resolved: Path = CONFIG.main.database.path
     else:
         resolved = db_path
@@ -56,9 +62,13 @@ def init_db(db_path: Path | None = None) -> Result[None]:
         finally:
             conn.close()
     except StorageError as exc:
-        return Failure(error=str(exc), recoverable=False, context={"db_path": str(resolved)})
+        return Failure(
+            error=str(exc), recoverable=False, context={"db_path": str(resolved)}
+        )
     except sqlite3.Error as exc:
-        return Failure(error=str(exc), recoverable=False, context={"db_path": str(resolved)})
+        return Failure(
+            error=str(exc), recoverable=False, context={"db_path": str(resolved)}
+        )
 
 
 @contextmanager
@@ -67,6 +77,7 @@ def get_connection(
 ) -> Generator[sqlite3.Connection, None, None]:
     if db_path is None:
         from core.config import CONFIG
+
         resolved: Path = CONFIG.main.database.path
     else:
         resolved = db_path

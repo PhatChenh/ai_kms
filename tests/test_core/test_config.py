@@ -63,11 +63,12 @@ from core.config import (
     OllamaConfig,
     PipelineRouting,
     ProvidersConfig,
+    RouteDecision,
     Routing,
+    SearchConfig,
     SelfLearningConfig,
     Thresholds,
     VaultConfig,
-    RouteDecision,
 )
 from core.exceptions import ConfigError
 
@@ -773,6 +774,34 @@ class TestSelfLearningConfig:
         assert s.max_examples == 5
 
 
+class TestSearchConfig:
+    """P3-IDX-10: SearchConfig model defaults and overrides."""
+
+    def test_embedding_model_default(self):
+        s = SearchConfig()
+        assert s.embedding_model == "all-MiniLM-L6-v2"
+
+    def test_reranker_model_default(self):
+        s = SearchConfig()
+        assert s.reranker_model == "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+    def test_max_candidates_default(self):
+        s = SearchConfig()
+        assert s.max_candidates == 20
+
+    def test_max_results_default(self):
+        s = SearchConfig()
+        assert s.max_results == 10
+
+    def test_custom_embedding_model(self):
+        s = SearchConfig(embedding_model="custom-model")
+        assert s.embedding_model == "custom-model"
+
+    def test_custom_max_results(self):
+        s = SearchConfig(max_results=50)
+        assert s.max_results == 50
+
+
 class TestClaudeCliConfig:
     def test_default_cli_path_is_claude(self):
         from core.config import ClaudeCliConfig
@@ -1111,3 +1140,21 @@ class TestConfigSingleton:
         result = band.route(0.10)
         assert result is not None
         assert result == RouteDecision.CLUELESS
+
+    # ── SearchConfig (P3-IDX-10) ─────────────────────────────────────────
+
+    def test_search_embedding_model_is_minilm(self):
+        """P3-IDX-10: CONFIG.main.search.embedding_model == all-MiniLM-L6-v2."""
+        assert self.cfg.main.search.embedding_model == "all-MiniLM-L6-v2"
+
+    def test_search_reranker_model_is_cross_encoder(self):
+        assert (
+            self.cfg.main.search.reranker_model
+            == "cross-encoder/ms-marco-MiniLM-L-6-v2"
+        )
+
+    def test_search_max_candidates_is_20(self):
+        assert self.cfg.main.search.max_candidates == 20
+
+    def test_search_max_results_is_10(self):
+        assert self.cfg.main.search.max_results == 10

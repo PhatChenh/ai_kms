@@ -26,20 +26,33 @@ def test_init_db_creates_file(db_path: Path) -> None:
         ).fetchall()
     }
     conn.close()
-    assert tables == {"documents", "audit_log", "corrections", "schema_version", "batches"}
+    base_tables = {
+        "documents",
+        "audit_log",
+        "corrections",
+        "schema_version",
+        "batches",
+    }
+    search_tables = {"embeddings_vec", "notes_fts"}
+    assert base_tables <= tables, f"Core tables missing. Got: {tables}"
+    assert search_tables <= tables, f"Search tables missing. Got: {tables}"
 
 
 def test_init_db_is_idempotent(db_path: Path) -> None:
     result1 = init_db(db_path)
     assert isinstance(result1, Success)
     conn = sqlite3.connect(str(db_path))
-    version_after_first = conn.execute("SELECT version FROM schema_version").fetchone()[0]
+    version_after_first = conn.execute("SELECT version FROM schema_version").fetchone()[
+        0
+    ]
     conn.close()
 
     result2 = init_db(db_path)
     assert isinstance(result2, Success)
     conn = sqlite3.connect(str(db_path))
-    version_after_second = conn.execute("SELECT version FROM schema_version").fetchone()[0]
+    version_after_second = conn.execute(
+        "SELECT version FROM schema_version"
+    ).fetchone()[0]
     conn.close()
 
     assert version_after_second == version_after_first
@@ -59,7 +72,9 @@ def test_pragma_journal_mode_wal(db_path: Path) -> None:
     assert value == "wal"
 
 
-def test_migration_runner_advances_version(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_migration_runner_advances_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import storage.db as db_module
 
     mig_dir = tmp_path / "migrations"
@@ -77,7 +92,9 @@ def test_migration_runner_advances_version(tmp_path: Path, monkeypatch: pytest.M
     assert version == 2
 
 
-def test_migration_failure_rolls_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_migration_failure_rolls_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import storage.db as db_module
 
     mig_dir = tmp_path / "migrations"
@@ -136,18 +153,19 @@ def test_schema_version_rejects_second_row(db_path: Path) -> None:
     conn.close()
 
 
-def test_migration_006_adds_folder_path_to_batches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_migration_006_adds_folder_path_to_batches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Migration 006 adds folder_path TEXT column to batches table."""
     db_path = tmp_path / "kb.db"
     result = init_db(db_path)
     assert isinstance(result, Success)
 
     conn = sqlite3.connect(str(db_path))
-    columns = {
-        row[1]: row[2]
-        for row in conn.execute("PRAGMA table_info(batches)")
-    }
+    columns = {row[1]: row[2] for row in conn.execute("PRAGMA table_info(batches)")}
     conn.close()
 
-    assert "folder_path" in columns, f"folder_path column missing; columns={list(columns.keys())}"
+    assert "folder_path" in columns, (
+        f"folder_path column missing; columns={list(columns.keys())}"
+    )
     # Nullable — no NOT NULL constraint, just verify TEXT-like type.

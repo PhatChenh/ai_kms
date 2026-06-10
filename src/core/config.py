@@ -300,6 +300,15 @@ class CaptureConfig(BaseModel):
     folder_max_workers: int = Field(4, ge=1)
 
 
+class SearchConfig(BaseModel):
+    """Search/retrieval configuration. Read from config.yaml search: section."""
+
+    embedding_model: str = "all-MiniLM-L6-v2"
+    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    max_candidates: int = 20
+    max_results: int = 10
+
+
 class TestingConfig(BaseModel):
     """Isolated vault used for manual testing-guide runs.
 
@@ -330,6 +339,7 @@ class MainConfig(BaseModel):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     handlers: HandlersConfig = Field(default_factory=HandlersConfig)  # type: ignore[arg-type]
     capture: CaptureConfig = Field(default_factory=CaptureConfig)  # type: ignore[arg-type]
+    search: SearchConfig = Field(default_factory=SearchConfig)
     env: Env = "dev"
 
     @model_validator(mode="after")
