@@ -440,3 +440,42 @@ def test_update_batch_id_db_error(tmp_path):
     r = update_batch_id("inbox/foo.md", 42, db_path=bad_db)
     assert isinstance(r, Failure)
     assert r.recoverable is False
+
+
+# ---------------------------------------------------------------------------
+# _derive_title tests (Phase 3 Session B — Descriptive Title at Capture)
+# ---------------------------------------------------------------------------
+
+
+def test_derive_title_prefers_metadata_title():
+    """_derive_title returns metadata.title when set, not the vault_path stem."""
+    from storage.documents import _derive_title
+
+    outcome = _outcome(
+        vault_path="Projects/Alpha/report.pdf.md",
+        title="Q3 Budget Report",
+    )
+    assert _derive_title(outcome) == "Q3 Budget Report"
+
+
+def test_derive_title_falls_back_to_extra_then_stem():
+    """_derive_title falls back from metadata.title to extra to vault_path stem."""
+    from storage.documents import _derive_title
+
+    # Case (a): metadata.title = None, extra has "title" -> returns extra value
+    outcome_a = WriteOutcome(
+        vault_path="Projects/Alpha/report.pdf.md",
+        absolute_path=Path("/fake/vault/Projects/Alpha/report.pdf.md"),
+        content_hash="abc",
+        metadata=NoteMetadata(title=None, extra={"title": "From Extra"}),
+    )
+    assert _derive_title(outcome_a) == "From Extra"
+
+    # Case (b): metadata.title = None, extra = {}, vault_path stem -> returns stem
+    outcome_b = WriteOutcome(
+        vault_path="Projects/Alpha/report.pdf.md",
+        absolute_path=Path("/fake/vault/Projects/Alpha/report.pdf.md"),
+        content_hash="abc",
+        metadata=NoteMetadata(title=None, extra={}),
+    )
+    assert _derive_title(outcome_b) == "report.pdf"

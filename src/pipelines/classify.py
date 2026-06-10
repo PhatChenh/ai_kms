@@ -76,11 +76,9 @@ def _destination_names(valid_destinations: str) -> set[str]:
     Used for exact-membership validation so a value that is merely a *substring*
     of a real destination (e.g. ``"Alph"`` vs ``"Alpha"``) is rejected.
 
-    # COUPLING: project names and domain names are pooled into one set, so a
-    # project name used as a primary_domain (or vice versa) still validates.
-    # Closing that cross-type gap needs the structured ProjectRegistry, not the
-    # formatted string — tracked as TD-051. This fix only closes the substring
-    # hole (the reported defect).
+    This is the backward-compat path — callers with a ProjectRegistry should
+    use the ``project_names`` / ``domain_names`` params on classify() instead
+    to get cross-type validation (TD-051).
     """
     names: set[str] = set()
     for line in valid_destinations.splitlines():
@@ -114,6 +112,8 @@ async def classify(
     subject: str,
     valid_destinations: str,
     config: MainConfig,
+    project_names: frozenset[str] | None = None,
+    domain_names: frozenset[str] | None = None,
 ) -> Result[ClassifyResult]:
     """Ask the AI which project and domains a note belongs to.
 
@@ -189,25 +189,45 @@ async def classify(
     confidence = float(data["confidence"])
     reasoning = data["reasoning"]
 
-    # Exact-membership set parsed from the destinations block (not a substring
-    # `in` test — "Alph" must not pass for a real destination "Alpha").
-    valid_names = _destination_names(valid_destinations)
+    # Exact-membership validation.
+    # When both project_names and domain_names are provided, validate against
+    # the typed sets (cross-type — TD-051).  Otherwise fall back to the pooled
+    # set parsed from valid_destinations (backward compat for callers that
+    # don't have a ProjectRegistry).
+    if project_names is not None and domain_names is not None:
+        # Step 8: Validate project (when set) is an exact project name
+        if project is not None and project not in project_names:
+            return Failure(
+                error=f"classify project {project!r} not in project_names (cross-type: is it a domain?)",
+                recoverable=True,
+                context={"stage": "classify", "project": project},
+            )
 
-    # Step 8: Validate project (when set) is an exact valid destination
-    if project is not None and project not in valid_names:
-        return Failure(
-            error=f"classify project {project!r} not in valid destinations",
-            recoverable=True,
-            context={"stage": "classify", "project": project},
-        )
+        # Step 9: Validate primary_domain (when set) is an exact domain name
+        if primary_domain is not None and primary_domain not in domain_names:
+            return Failure(
+                error=f"classify primary_domain {primary_domain!r} not in domain_names (cross-type: is it a project?)",
+                recoverable=True,
+                context={"stage": "classify", "primary_domain": primary_domain},
+            )
+    else:
+        valid_names = _destination_names(valid_destinations)
 
-    # Step 9: Validate primary_domain (when set) is an exact valid destination
-    if primary_domain is not None and primary_domain not in valid_names:
-        return Failure(
-            error=f"classify primary_domain {primary_domain!r} not in valid destinations",
-            recoverable=True,
-            context={"stage": "classify", "primary_domain": primary_domain},
-        )
+        # Step 8: Validate project (when set) is an exact valid destination
+        if project is not None and project not in valid_names:
+            return Failure(
+                error=f"classify project {project!r} not in valid destinations",
+                recoverable=True,
+                context={"stage": "classify", "project": project},
+            )
+
+        # Step 9: Validate primary_domain (when set) is an exact valid destination
+        if primary_domain is not None and primary_domain not in valid_names:
+            return Failure(
+                error=f"classify primary_domain {primary_domain!r} not in valid destinations",
+                recoverable=True,
+                context={"stage": "classify", "primary_domain": primary_domain},
+            )
 
     # Step 10: Validate domains is a list
     if not isinstance(domains, list):

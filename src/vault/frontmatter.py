@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 # Keys that live explicitly on NoteMetadata; everything else goes in extra.
 _KNOWN_KEYS: frozenset[str] = frozenset(
     {
+        "title",
         "type",
         "tags",
         "project",
@@ -57,6 +58,7 @@ class NoteMetadata(BaseModel):
 
     model_config = {"extra": "ignore"}
 
+    title: str | None = None
     type: str | None = None
     tags: list[str] = Field(default_factory=list)
     project: str | None = None
