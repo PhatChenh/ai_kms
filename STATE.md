@@ -1,9 +1,9 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-06-09 (TD-040/TD-041 Batch-ID Fix confirmed complete; docs synced)_
+_Last updated: 2026-06-10 (P3 Session A Index Layer — all 5 phases COMPLETE, merged to main, 1147 tests)_
 
 ## Current Position
-**Phase**: Phase 2 — Classify pipeline **COMPLETE**. P2-CIC (Classify Inline in Single-File Capture) implemented 2026-06-08 — all 9 phases, ~70 tests, 1080 total passing. Merged to `main`. **TD-040/TD-041 Batch-ID Fix COMPLETE (2026-06-09)** — batch-stamp in `capture_file()` + subfolder detection in `scan_capture()`. Next: Project Registry implementation, then Phase 3 Search.
+**Phase**: Phase 2 — Classify pipeline **COMPLETE**. P3 Session A Index Layer **COMPLETE** (2026-06-10, 1147 tests, merged to `main`). Index Layer builds search infrastructure: migration 007 (embeddings_vec + notes_fts), `retrieval/` package (Meaning Indexer + Word Indexer), capture pipeline wiring (best-effort indexing at 4 call sites), and search-table cleanup in documents.py (delete/rename/replace_path). **Next**: Session B — Search API (query, rank, reranker, MCP search tool).
 
 **Phase 0 Final Checklist** _(CLOSED)_:
 - [x] core/exceptions.py
@@ -176,7 +176,26 @@ Triggered by `/superpowers:requesting-code-review`. Applied subset of review fin
 - Directory event registry calls go INSIDE existing `if event.is_directory: return` branches
 - TD-034 retired by this plan (project-to-domain registry now exists)
 
-**Next roadmap work**: Project Registry implementation, then Phase 3 — Search pipeline.
+**Next roadmap work**: Session B — Search API (query, rank, reranker, MCP search tool).
+
+**[P3 Session A — Index Layer — ✅ COMPLETE 2026-06-10]** _(merged to main, 1147 tests)_:
+- [x] **Phase 1 — Infrastructure**: Migration 007 (embeddings_vec vec0 + notes_fts FTS5), sqlite-vec extension loading in `_connect()`, SearchConfig (4 fields), sentence-transformers dependency, TD-050 timer-leak fixture. Commit: da5a0f5.
+- [x] **Phase 2 — Meaning Indexer**: `src/retrieval/embeddings.py` — `index_embedding()` with lazy SentenceTransformer, DELETE+INSERT for vec0 PK semantics, retry on OperationalError. Commit: da5a0f5.
+- [x] **Phase 3 — Word Indexer**: `src/retrieval/keyword.py` — `index_keywords()` with DELETE+INSERT in single `get_connection()` transaction. Commit: 9455e76.
+- [x] **Phase 4 — Capture wiring + index maintenance** (Components 7+8): 4 best-effort try/except indexing blocks in `capture.py` (2 `_store_md` + 2 `_store_nonmd`), lazy imports, separate try per indexer. Search-table cleanup in `documents.py` (`delete_by_path`, `rename`, `replace_path`) within same transaction. +10 new tests (5 maintenance + 5 capture search). Commits: 940a6c9, 721f78b.
+- [x] **Phase 5 — Full suite verification**: 1147 passed, 0 failures. Ruff clean on changed files. Plan updated. Commit: 1dae395.
+
+**Plan:** `docs/4_plans/p3_session_a_index_layer.md`
+**Spec:** `docs/2_specs/p3_session_a_index_layer.md`
+**Research:** `docs/3_research/p3_session_a_index_layer.md`
+**New modules:** `src/retrieval/` (embeddings.py, keyword.py, __init__.py)
+**New migration:** `src/storage/migrations/007_search_indexes.sql`
+**Key decisions locked:**
+- vec0 virtual table for embeddings (float[384] coupled to all-MiniLM-L6-v2), FTS5 for keywords
+- Best-effort indexing — failures logged, never block capture
+- DELETE+INSERT pattern everywhere (vec0/FTS5 no PK update support)
+- `replace_path` cleans old search entries but does NOT create new ones (capture pipeline does that)
+- `rename` copies both search tables old→new within same transaction
 
 **[P2-CL — classify() pure function — ✅ COMPLETE 2026-06-08]** _(implemented on `main`: commits b2d33fa + a28b33c)_:
 - [x] Phase 1 — `ClassifyResult` dataclass in `src/pipelines/classify.py`

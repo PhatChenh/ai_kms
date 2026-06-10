@@ -1,2209 +1,2080 @@
-# Behavior Inventory — AI-KMS
-# Living file. Edited in place, never recreated. Holds irreplaceable human state.
-# Last seeded: 2026-06-04 from current code + design docs.
-# Reconciled: 2026-06-05 — origin/granularity backfilled by code-match (Job 5);
-#   43 entries verified MATCH (origin: implementation), 1 conflict (P15-HDL-07).
-#
-# Schema per entry:
-#   id:             unique slug (phase prefix + number)
-#   behavior:       one-line description of observable outcome
-#   tier:           smoke | phase | full
-#   phase:          originating phase number or name
-#   origin:         design | implementation — WHO created this entry (provenance)
-#   granularity:    outcome | mechanism — WHAT level of detail
-#   trigger:        CLI command or event that fires this behavior
-#   fixtures:       list of files the setup script must create
-#   fixture_body:   OPTIONAL multiline (YAML | block) — overrides default md body for fixtures[].
-#                   Default body is "{behavior}.\n\nTest fixture for {id}."
-#   fixture_frontmatter: OPTIONAL multiline (YAML | block) — YAML content between --- markers for md fixtures.
-#                   Causes setup script to call write_md_with_frontmatter instead of write_md.
-#                   Use when fixture must arrive pre-tagged (e.g. stale domain tag for reconcile tests).
-#   steps:          what the tester does (plain English)
-#   expected:       what must be true after (vault-visible for smoke/phase, DB/log for full)
-#   expected_design:         only populated when status: conflict (design intent)
-#   expected_implementation: only populated when status: conflict (what code does)
-#   spec_ref:       roadmap/spec clause or "NONE -- needs human"
-#   human_reviewed: yes | no
-#   last_tested:    null or ISO date of last manual test (e.g. "2026-06-05")
-#   last_result:    null or "pass" / "fail" / "pass — <observation>" / "fail — <observation>"
-#   pytest_ref:     test function path or null
-#   status:         active | planned | retired | conflict
-#   retired:        null or "<date>: <reason>"
-
-# ═══════════════════════════════════════════════════════════════
-# PHASE 1 — Capture Pipeline
-# ═══════════════════════════════════════════════════════════════
-
-# --- Smoke tier (must always pass) ---
-
 - id: P1-CAP-01
-  behavior: ".md file captured in-place with AI summary in frontmatter"
+  behavior: .md file captured in-place with AI summary in frontmatter
   tier: smoke
   phase: 1
   origin: implementation
   granularity: outcome
-  trigger: "kms capture <file.md>"
+  trigger: kms capture <file.md>
   fixtures:
-    - inbox/test-md-capture.md
-  steps: "`uv run kms capture inbox/test-md-capture.md`"
+  - inbox/test-md-capture.md
+  steps: '`uv run kms capture inbox/test-md-capture.md`'
   expected:
-    - "File stays at inbox/test-md-capture.md (not moved)"
-    - "Open file — frontmatter block (between --- markers) added at top"
-    - "summary: field present and non-empty"
-    - "tags: includes at least one type/ tag"
-    - "confidence: has a decimal number"
-    - "Body text below --- unchanged from original"
-  spec_ref: "roadmap §Phase1 'capture pipeline: markdown in-place'"
-  human_reviewed: yes
-  last_tested: "2026-06-07"
-  last_result: "passed"
-  pytest_ref: "tests/test_pipelines/test_capture.py::test_capture_file_md_end_to_end_returns_write_outcome"
+  - File stays at inbox/test-md-capture.md (not moved)
+  - Open file — frontmatter block (between --- markers) added at top
+  - 'summary: field present and non-empty'
+  - 'tags: includes at least one type/ tag'
+  - 'confidence: has a decimal number'
+  - Body text below --- unchanged from original
+  spec_ref: 'roadmap §Phase1 ''capture pipeline: markdown in-place'''
+  human_reviewed: true
+  last_tested: '2026-06-07'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_capture.py::test_capture_file_md_end_to_end_returns_write_outcome
   status: retired
-  retired: "2026-06-09: classify_step now runs on all inbox files. Inbox .md behavior covered by P2-CIC-01 (AUTO move), P2-CIC-02 (SUGGEST), P2-CIC-03 (CLUELESS)."
-
+  retired: '2026-06-09: classify_step now runs on all inbox files. Inbox .md behavior covered by P2-CIC-01 (AUTO move), P2-CIC-02 (SUGGEST), P2-CIC-03 (CLUELESS).'
 - id: P1-CAP-02
-  behavior: "PDF already in a project folder creates sibling .md and moves binary to attachment/"
+  behavior: PDF already in a project folder creates sibling .md and moves binary to attachment/
   tier: smoke
   phase: 1
   origin: implementation
   granularity: outcome
-  trigger: "kms capture <Projects/Alpha/sample-report.pdf>"
+  trigger: kms capture <Projects/Alpha/sample-report.pdf>
   fixtures:
-    - Projects/Alpha/sample-report.pdf
-  steps: "`uv run kms capture Projects/Alpha/sample-report.pdf`"
+  - Projects/Alpha/sample-report.pdf
+  steps: '`uv run kms capture Projects/Alpha/sample-report.pdf`'
   expected:
-    - "Projects/Alpha/sample-report.pdf is GONE from Projects/Alpha/ (moved to attachment/)"
-    - "Binary appears at `Projects/Alpha/attachment/sample-report.pdf`"
-    - "Sibling .md at `Projects/Alpha/attachment/.summaries/sample-report.pdf.md`"
-    - "Sibling frontmatter has attachment_path: pointing to binary location"
-    - "Sibling frontmatter has type: attachment-summary"
-    - "Sibling frontmatter has summary: (non-empty)"
-  spec_ref: "roadmap §Phase1 'non-md -> sibling summary'"
-  human_reviewed: yes
-  last_tested: "2026-06-07"
-  last_result: "passed"
-  pytest_ref: "tests/test_pipelines/test_capture_phase12.py::test_store_nonmd_located_happy_path_documents_row"
+  - Projects/Alpha/sample-report.pdf is GONE from Projects/Alpha/ (moved to attachment/)
+  - Binary appears at `Projects/Alpha/attachment/sample-report.pdf`
+  - Sibling .md at `Projects/Alpha/attachment/.summaries/sample-report.pdf.md`
+  - 'Sibling frontmatter has attachment_path: pointing to binary location'
+  - 'Sibling frontmatter has type: attachment-summary'
+  - 'Sibling frontmatter has summary: (non-empty)'
+  spec_ref: roadmap §Phase1 'non-md -> sibling summary'
+  human_reviewed: 'yes'
+  last_tested: '2026-06-10'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_capture_phase12.py::test_store_nonmd_located_happy_path_documents_row
   status: active
   retired: null
-
 - id: P1-CAP-03
-  behavior: "Body text of .md file preserved exactly after capture (classify_step runs on inbox files but does not affect body)"
+  behavior: Body text of .md file preserved exactly after capture (classify_step runs on inbox files but does not affect body)
   tier: smoke
   phase: 1
   origin: implementation
   granularity: outcome
-  trigger: "kms capture <file.md>"
+  trigger: kms capture <file.md>
   fixtures:
-    - inbox/test-body-preservation.md
+  - inbox/test-body-preservation.md
   steps:
-    - "Note down the body text of inbox/test-body-preservation.md before running"
-    - "`uv run kms capture inbox/test-body-preservation.md`"
+  - Note down the body text of inbox/test-body-preservation.md before running
+  - '`uv run kms capture inbox/test-body-preservation.md`'
   expected:
-    - "Body text below second --- is byte-identical to original"
-    - "classify_step runs on this inbox file — candidate fields (suggested_project etc.) may appear in frontmatter depending on AI confidence"
-    - "summary: appears only inside frontmatter (between --- markers), never in body"
-  spec_ref: "roadmap §Phase1 'frontmatter-only writes'; updated P2-CIC 2026-06-09"
-  human_reviewed: yes
-  last_tested: "2026-06-07"
-  last_result: "passed"
-  pytest_ref: "tests/test_handlers/test_markdown_handler.py::test_extract_body_text_matches_known_body"
+  - Body text below second --- is byte-identical to original
+  - classify_step runs on this inbox file — candidate fields (suggested_project etc.) may appear in frontmatter depending on AI confidence
+  - 'summary: appears only inside frontmatter (between --- markers), never in body'
+  spec_ref: roadmap §Phase1 'frontmatter-only writes'; updated P2-CIC 2026-06-09
+  human_reviewed: 'yes'
+  last_tested: '2026-06-10'
+  last_result: passed
+  pytest_ref: tests/test_handlers/test_markdown_handler.py::test_extract_body_text_matches_known_body
   status: active
   retired: null
-
 - id: P1-CAP-04
-  behavior: "Re-capture does not rename already-captured .md file (rename gate Rule 1)"
+  behavior: Re-capture does not rename already-captured .md file (rename gate Rule 1)
   tier: smoke
   phase: 1
   origin: implementation
   granularity: outcome
-  trigger: "kms capture <file.md> (second run)"
+  trigger: kms capture <file.md> (second run)
   fixtures:
-    - inbox/test-rename-gate.md
+  - inbox/test-rename-gate.md
   steps:
-    - "Run once:"
-    - "`uv run kms capture inbox/test-rename-gate.md`"
-    - "Then run again without editing the file:"
-    - "`uv run kms capture inbox/test-rename-gate.md`"
+  - 'Run once:'
+  - '`uv run kms capture inbox/test-rename-gate.md`'
+  - 'Then run again without editing the file:'
+  - '`uv run kms capture inbox/test-rename-gate.md`'
   expected:
-    - "File keeps original name test-rename-gate.md after second capture"
-    - "summary: may update but filename unchanged"
-    - "No duplicate file appears on disk"
-  spec_ref: "roadmap §Phase1 'rename gate: skip already-captured'"
-  human_reviewed: yes
-  last_tested: "2026-06-07"
-  last_result: "passed"
-  pytest_ref: "tests/test_pipelines/test_capture_rename.py::test_rename_gate_skip_on_recapture"
+  - File keeps original name test-rename-gate.md after second capture
+  - 'summary: may update but filename unchanged'
+  - No duplicate file appears on disk
+  spec_ref: 'roadmap §Phase1 ''rename gate: skip already-captured'''
+  human_reviewed: true
+  last_tested: '2026-06-07'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_capture_rename.py::test_rename_gate_skip_on_recapture
   status: retired
-  retired: "2026-06-09: inbox fixture broken by classify_step — first capture may AUTO-move file, second capture on old inbox path hits FILE_LOST. Rename gate on LOCATED files covered by P2-CIC-04."
-
+  retired: '2026-06-09: inbox fixture broken by classify_step — first capture may AUTO-move file, second capture on old inbox path hits FILE_LOST. Rename gate on LOCATED files covered by P2-CIC-04.'
 - id: P1-CAP-05
-  behavior: "Scan captures un-indexed .md files, skips already-indexed"
+  behavior: Scan captures un-indexed .md files, skips already-indexed
   tier: smoke
   phase: 1
   origin: implementation
   granularity: outcome
-  trigger: "kms capture --scan"
+  trigger: kms capture --scan
   fixtures:
-    - inbox/test-md-capture.md
-    - inbox/test-scan-uncaptured.md
+  - inbox/test-md-capture.md
+  - inbox/test-scan-uncaptured.md
   steps:
-    - "Both files are in inbox. Capture test-md-capture.md first to get it indexed:"
-    - "`uv run kms capture inbox/test-md-capture.md`"
-    - "Now run scan — test-scan-uncaptured.md is in inbox but not yet indexed:"
-    - "`uv run kms capture --scan`"
+  - 'Both files are in inbox. Capture test-md-capture.md first to get it indexed:'
+  - '`uv run kms capture inbox/test-md-capture.md`'
+  - 'Now run scan — test-scan-uncaptured.md is in inbox but not yet indexed:'
+  - '`uv run kms capture --scan`'
   expected:
-    - "test-scan-uncaptured.md gets summary: in frontmatter"
-    - "test-md-capture.md summary: unchanged (not re-processed)"
-  spec_ref: "roadmap §Phase1 'scan_capture: added loop'"
-  human_reviewed: yes
-  last_tested: "2026-06-07"
-  last_result: "passed"
-  pytest_ref: "tests/test_pipelines/test_capture_phase10.py::test_scan_capture_added_unindexed_captured_indexed_unchanged_skipped"
+  - 'test-scan-uncaptured.md gets summary: in frontmatter'
+  - 'test-md-capture.md summary: unchanged (not re-processed)'
+  spec_ref: 'roadmap §Phase1 ''scan_capture: added loop'''
+  human_reviewed: true
+  last_tested: '2026-06-07'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_capture_phase10.py::test_scan_capture_added_unindexed_captured_indexed_unchanged_skipped
   status: retired
-  retired: "2026-06-09: scan now runs classify_step on inbox files. Scan behavior covered by P2-CIC entries + P2-BAT-04/05."
-
-# --- Phase tier (test when capture code changes) ---
-
+  retired: '2026-06-09: scan now runs classify_step on inbox files. Scan behavior covered by P2-CIC entries + P2-BAT-04/05.'
 - id: P1-CAP-06
-  behavior: "DOCX file dropped in inbox gets real-summary sibling AND is classified at capture time"
+  behavior: DOCX file dropped in inbox gets real-summary sibling AND is classified at capture time
   tier: phase
   phase: 1
   origin: implementation
   granularity: outcome
-  trigger: "kms capture <inbox/file.docx>"
+  trigger: kms capture <inbox/file.docx>
   fixtures:
-    - inbox/q3-planning-brief.docx
-  steps: "`uv run kms capture inbox/q3-planning-brief.docx`"
+  - inbox/q3-planning-brief.docx
+  steps: '`uv run kms capture inbox/q3-planning-brief.docx`'
   expected:
-    - "On CLUELESS/SUGGEST: q3-planning-brief.docx stays in inbox/; sibling at inbox/.summaries/"
-    - "On AUTO: binary moves to project attachment/; sibling moves alongside"
-    - "Sibling .md created at inbox/.summaries/q3-planning-brief.docx.md"
-    - "Sibling frontmatter has type: attachment-summary"
-    - "Sibling frontmatter has status: needs-review (NOT pending-routing — concept retired in P2-CIC Phase 7)"
-    - "Sibling frontmatter has source_hash set (idempotent re-entry)"
-    - "Sibling body contains a real AI-generated summary (NOT placeholder text)"
-  spec_ref: "roadmap §Phase1 'handler: docx'; P2-CIC-05 2026-06-09"
-  human_reviewed: no
-  last_tested: "2026-06-07"
-  last_result: "passed — behavior changed in P2-CIC Phase 7; re-verify needed"
-  pytest_ref: "tests/test_handlers/test_docx_handler.py::test_extract_returns_success_with_raw_content"
+  - 'On CLUELESS/SUGGEST: q3-planning-brief.docx stays in inbox/; sibling at inbox/.summaries/'
+  - 'On AUTO: binary moves to project attachment/; sibling moves alongside'
+  - Sibling .md created at inbox/.summaries/q3-planning-brief.docx.md
+  - 'Sibling frontmatter has type: attachment-summary'
+  - 'Sibling frontmatter has status: needs-review (NOT pending-routing — concept retired in P2-CIC Phase 7)'
+  - Sibling frontmatter has source_hash set (idempotent re-entry)
+  - Sibling body contains a real AI-generated summary (NOT placeholder text)
+  spec_ref: 'roadmap §Phase1 ''handler: docx''; P2-CIC-05 2026-06-09'
+  human_reviewed: false
+  last_tested: '2026-06-07'
+  last_result: passed — behavior changed in P2-CIC Phase 7; re-verify needed
+  pytest_ref: tests/test_handlers/test_docx_handler.py::test_extract_returns_success_with_raw_content
   status: active
   retired: null
-
 - id: P1-CAP-07
-  behavior: "Watcher auto-captures new file drops"
+  behavior: Watcher auto-captures new file drops
   tier: phase
   phase: 1
   origin: implementation
   granularity: outcome
-  trigger: "kms watch + file created"
+  trigger: kms watch + file created
   fixtures: []
   staging_fixtures:
-    - auto-capture-test.md
+  - auto-capture-test.md
   steps:
-    - "In Terminal 1, start the watcher:"
-    - "`uv run kms watch`"
-    - "In Terminal 2, copy the staging file to inbox/ and wait ~10 seconds:"
-    - "`cp <staging>/auto-capture-test.md <vault>/inbox/`"
+  - 'In Terminal 1, start the watcher:'
+  - '`uv run kms watch`'
+  - 'In Terminal 2, copy the staging file to inbox/ and wait ~10 seconds:'
+  - '`cp <staging>/auto-capture-test.md <vault>/inbox/`'
   expected:
-    - "auto-capture-test.md gets summary: in frontmatter automatically"
-    - "No manual kms capture was needed"
-    - "Only one capture pipeline fires per drop (in-flight guard prevents concurrent pipelines on same path)"
-  spec_ref: "roadmap §Phase1 'watcher auto-capture'"
-  human_reviewed: yes
-  last_tested: "2026-06-07"
-  last_result: "passed"
+  - 'auto-capture-test.md gets summary: in frontmatter automatically'
+  - No manual kms capture was needed
+  - Only one capture pipeline fires per drop (in-flight guard prevents concurrent pipelines on same path)
+  spec_ref: roadmap §Phase1 'watcher auto-capture'
+  human_reviewed: true
+  last_tested: '2026-06-07'
+  last_result: passed
   pytest_ref: null
   status: retired
-  retired: "2026-06-09: watcher drops now run classify_step. Watcher capture behavior covered by P2-CIC-01/02/03 (inbox) and P2-CIC-04 (LOCATED)."
-
+  retired: '2026-06-09: watcher drops now run classify_step. Watcher capture behavior covered by P2-CIC-01/02/03 (inbox) and P2-CIC-04 (LOCATED).'
 - id: P1-CAP-08
-  behavior: "Gibberish-named inbox PDF gets real-summary marker with needs-review status (was pending-routing pre-P2-CIC)"
+  behavior: Gibberish-named inbox PDF gets real-summary marker with needs-review status (was pending-routing pre-P2-CIC)
   tier: phase
   phase: 1
   origin: implementation
   granularity: outcome
-  trigger: "kms capture <inbox/gibberish.pdf>"
+  trigger: kms capture <inbox/gibberish.pdf>
   fixtures:
-    - inbox/xkjdhfs83.pdf
-  steps: "`uv run kms capture inbox/xkjdhfs83.pdf`"
+  - inbox/xkjdhfs83.pdf
+  steps: '`uv run kms capture inbox/xkjdhfs83.pdf`'
   expected:
-    - "xkjdhfs83.pdf stays in inbox/ with original name (no rename during capture)"
-    - "Sibling .md created at inbox/.summaries/xkjdhfs83.pdf.md"
-    - "Sibling frontmatter has status: needs-review (NOT pending-routing)"
-    - "Sibling frontmatter has source_hash set"
-    - "Sibling body has a real AI summary (NOT placeholder)"
-    - "Audit log shows outcome=CLUELESS"
-  spec_ref: "roadmap §Phase1 'CLUELESS path: inbox binary parked' (DECISION-027); updated P2-CIC Phase 7 2026-06-09"
-  human_reviewed: no
-  last_tested: "2026-06-07"
-  last_result: "passed — P2-CIC Phase 7 replaced pending-routing with needs-review; re-verify needed"
-  pytest_ref: "tests/test_pipelines/test_capture_rename.py::test_rename_gate_full_rename_on_illegible_binary"
+  - xkjdhfs83.pdf stays in inbox/ with original name (no rename during capture)
+  - Sibling .md created at inbox/.summaries/xkjdhfs83.pdf.md
+  - 'Sibling frontmatter has status: needs-review (NOT pending-routing)'
+  - Sibling frontmatter has source_hash set
+  - Sibling body has a real AI summary (NOT placeholder)
+  - Audit log shows outcome=CLUELESS
+  spec_ref: 'roadmap §Phase1 ''CLUELESS path: inbox binary parked'' (DECISION-027); updated P2-CIC Phase 7 2026-06-09'
+  human_reviewed: false
+  last_tested: '2026-06-07'
+  last_result: passed — P2-CIC Phase 7 replaced pending-routing with needs-review; re-verify needed
+  pytest_ref: tests/test_pipelines/test_capture_rename.py::test_rename_gate_full_rename_on_illegible_binary
   status: retired
-  retired: "2026-06-09: classify_step may AUTO-move or SUGGEST instead of CLUELESS. Inbox binary classify behavior covered by P2-CIC-05 (AUTO), P2-CIC-03 (CLUELESS)."
-
+  retired: '2026-06-09: classify_step may AUTO-move or SUGGEST instead of CLUELESS. Inbox binary classify behavior covered by P2-CIC-05 (AUTO), P2-CIC-03 (CLUELESS).'
 - id: P1-CAP-09
-  behavior: "Idempotent capture — unchanged .md file skipped (content_hash match). Note: inbox fixture may be AUTO-moved by classify_step on first capture."
+  behavior: 'Idempotent capture — unchanged .md file skipped (content_hash match). Note: inbox fixture may be AUTO-moved by classify_step on first capture.'
   tier: phase
   phase: 1
   origin: implementation
   granularity: outcome
-  trigger: "kms capture <file.md> (same content)"
+  trigger: kms capture <file.md> (same content)
   fixtures:
-    - inbox/test-idempotent.md
+  - inbox/test-idempotent.md
   steps:
-    - "Run once:"
-    - "`uv run kms capture inbox/test-idempotent.md`"
-    - "Then run again without editing the file:"
-    - "`uv run kms capture inbox/test-idempotent.md`"
+  - 'Run once:'
+  - '`uv run kms capture inbox/test-idempotent.md`'
+  - 'Then run again without editing the file:'
+  - '`uv run kms capture inbox/test-idempotent.md`'
   expected:
-    - "Second run returns OK (SKIPPED) in terminal output"
-    - "content_hash match — no LLM call made"
-    - "summary: field identical to first capture"
-    - "If file was AUTO-moved by classify_step on first capture, second capture on original inbox path returns FILE_LOST"
-  spec_ref: "roadmap §Phase1 'idempotent capture guard'; updated P2-CIC 2026-06-09"
-  human_reviewed: yes
-  last_tested: "2026-06-07"
-  last_result: "passed"
-  pytest_ref: "tests/test_pipelines/test_capture.py::test_idempotent_md_unchanged_returns_skipped"
+  - Second run returns OK (SKIPPED) in terminal output
+  - content_hash match — no LLM call made
+  - 'summary: field identical to first capture'
+  - If file was AUTO-moved by classify_step on first capture, second capture on original inbox path returns FILE_LOST
+  spec_ref: roadmap §Phase1 'idempotent capture guard'; updated P2-CIC 2026-06-09
+  human_reviewed: true
+  last_tested: '2026-06-07'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_capture.py::test_idempotent_md_unchanged_returns_skipped
   status: active
   retired: null
-
 - id: P1-CAP-10
-  behavior: "Inbox binary gets real summary AND is classified — may be CLUELESS, SUGGEST, or AUTO"
+  behavior: Inbox binary gets real summary AND is classified — may be CLUELESS, SUGGEST, or AUTO
   tier: phase
   phase: 1
   origin: implementation
   granularity: outcome
-  trigger: "kms capture <binary> (no project/domain context)"
+  trigger: kms capture <binary> (no project/domain context)
   fixtures:
-    - inbox/mystery-file.pdf
+  - inbox/mystery-file.pdf
   steps:
-    - "`uv run kms capture inbox/mystery-file.pdf`"
-    - "No project/domain hint in filename or content — capture parks binary + writes real-summary sibling."
+  - '`uv run kms capture inbox/mystery-file.pdf`'
+  - No project/domain hint in filename or content — capture parks binary + writes real-summary sibling.
   expected:
-    - "On CLUELESS/SUGGEST: mystery-file.pdf stays in inbox/; sibling at inbox/.summaries/"
-    - "On AUTO: binary moves to project attachment/; sibling moves alongside"
-    - "Sibling .md created at inbox/.summaries/mystery-file.pdf.md"
-    - "Sibling frontmatter has status: needs-review (NOT pending-routing)"
-    - "Sibling frontmatter has type: attachment-summary"
-    - "Sibling frontmatter has source_hash set (non-empty — enables idempotent re-entry)"
-    - "Sibling body contains a real AI-generated summary (NOT a one-line placeholder)"
-  spec_ref: "docs/1_design/phase2/classify-inline-capture.md P2-CIC Phase 7 'retire pending-routing'"
-  human_reviewed: no
-  last_tested: "2026-06-07"
-  last_result: "passed — behavior changed in P2-CIC Phase 7; re-verify needed"
-  pytest_ref: "tests/test_pipelines/test_capture_phase3.py::test_store_nonmd_clueless_inbox_binary_stays_needs_review"
+  - 'On CLUELESS/SUGGEST: mystery-file.pdf stays in inbox/; sibling at inbox/.summaries/'
+  - 'On AUTO: binary moves to project attachment/; sibling moves alongside'
+  - Sibling .md created at inbox/.summaries/mystery-file.pdf.md
+  - 'Sibling frontmatter has status: needs-review (NOT pending-routing)'
+  - 'Sibling frontmatter has type: attachment-summary'
+  - Sibling frontmatter has source_hash set (non-empty — enables idempotent re-entry)
+  - Sibling body contains a real AI-generated summary (NOT a one-line placeholder)
+  spec_ref: docs/1_design/phase2/classify-inline-capture.md P2-CIC Phase 7 'retire pending-routing'
+  human_reviewed: false
+  last_tested: '2026-06-07'
+  last_result: passed — behavior changed in P2-CIC Phase 7; re-verify needed
+  pytest_ref: tests/test_pipelines/test_capture_phase3.py::test_store_nonmd_clueless_inbox_binary_stays_needs_review
   status: active
   retired: null
-
 - id: P1-CAP-11
-  behavior: "URL enrichment — sparse note with URLs gets content fetched (classify_step also runs on inbox files)"
+  behavior: URL enrichment — sparse note with URLs gets content fetched (classify_step also runs on inbox files)
   tier: phase
   phase: 1
   origin: implementation
   granularity: outcome
-  trigger: "kms capture <file.md> (body has URLs, < 500 chars)"
-  fixture_body: |
-    Quick note — read this later: https://example.com
+  trigger: kms capture <file.md> (body has URLs, < 500 chars)
+  fixture_body: 'Quick note — read this later: https://example.com
+
 
     Test fixture for P1-CAP-11.
+
+    '
   fixtures:
-    - inbox/test-url-note.md
+  - inbox/test-url-note.md
   steps:
-    - "`uv run kms capture inbox/test-url-note.md`"
-    - "File body must contain a URL and less than 500 chars of text to trigger URL enrichment."
+  - '`uv run kms capture inbox/test-url-note.md`'
+  - File body must contain a URL and less than 500 chars of text to trigger URL enrichment.
   expected:
-    - "Open file — summary: reflects content from the URL, not just the sparse body text"
-    - "classify_step runs — candidate fields or AUTO-move possible"
-  spec_ref: "roadmap §Phase1 'enrich_urls stage'"
-  human_reviewed: yes
-  last_tested: "2026-06-07"
-  last_result: "passed"
-  pytest_ref: "tests/test_pipelines/test_capture.py::test_enrich_urls_sparse_text_fetches_and_augments"
+  - 'Open file — summary: reflects content from the URL, not just the sparse body text'
+  - classify_step runs — candidate fields or AUTO-move possible
+  spec_ref: roadmap §Phase1 'enrich_urls stage'
+  human_reviewed: true
+  last_tested: '2026-06-07'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_capture.py::test_enrich_urls_sparse_text_fetches_and_augments
   status: active
   retired: null
-
-# --- Full tier (developer, requires DB/logs) ---
-
 - id: P1-DEV-01
-  behavior: "Audit trail written for every capture decision"
+  behavior: Audit trail written for every capture decision
   tier: full
   phase: 1
   origin: implementation
   granularity: mechanism
-  trigger: "kms capture <any file>"
+  trigger: kms capture <any file>
   fixtures:
-    - inbox/p1-dev-01-test.md
+  - inbox/p1-dev-01-test.md
   steps:
-    - "Capture the test file:"
-    - "`uv run kms capture inbox/p1-dev-01-test.md`"
-    - "Then query:"
-    - "`sqlite3 data/kb.db \"SELECT stage, outcome FROM audit_log ORDER BY rowid DESC LIMIT 5\"`"
+  - 'Capture the test file:'
+  - '`uv run kms capture inbox/p1-dev-01-test.md`'
+  - 'Then query:'
+  - '`sqlite3 data/kb.db "SELECT stage, outcome FROM audit_log ORDER BY rowid DESC LIMIT 5"`'
   expected:
-    - "audit_log row exists with stage=metadata, outcome=CAPTURED"
-    - "audit_log row exists with stage=classify (AUTO, SUGGEST, or CLUELESS — classify_step runs on inbox files)"
-    - "correlation_id matches the ID shown in terminal output"
-    - "reasoning field is non-empty in both rows"
-  spec_ref: "CONSTRAINTS.md C-12 'audit log non-negotiable'; P2-CIC-06 2026-06-09"
-  human_reviewed: no
+  - audit_log row exists with stage=metadata, outcome=CAPTURED
+  - audit_log row exists with stage=classify (AUTO, SUGGEST, or CLUELESS — classify_step runs on inbox files)
+  - correlation_id matches the ID shown in terminal output
+  - reasoning field is non-empty in both rows
+  spec_ref: CONSTRAINTS.md C-12 'audit log non-negotiable'; P2-CIC-06 2026-06-09
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_capture.py::test_metadata_writes_audit_log_row"
+  pytest_ref: tests/test_pipelines/test_capture.py::test_metadata_writes_audit_log_row
   status: active
   retired: null
-
 - id: P1-DEV-02
-  behavior: "Tag violation audited — invalid tags stripped and logged"
+  behavior: Tag violation audited — invalid tags stripped and logged
   tier: full
   phase: 1
   origin: implementation
   granularity: mechanism
-  trigger: "kms capture <file.md> (LLM returns bad tag)"
+  trigger: kms capture <file.md> (LLM returns bad tag)
   fixtures: []
   steps:
-    - "Force a capture where LLM returns a tag not in tags.yaml taxonomy (developer test — requires mocking LLM response). Then query the audit log:"
-    - "`sqlite3 data/kb.db \"SELECT stage, outcome, reasoning FROM audit_log WHERE stage='tag_violation' ORDER BY rowid DESC LIMIT 3\"`"
+  - 'Force a capture where LLM returns a tag not in tags.yaml taxonomy (developer test — requires mocking LLM response). Then query the audit log:'
+  - '`sqlite3 data/kb.db "SELECT stage, outcome, reasoning FROM audit_log WHERE stage=''tag_violation'' ORDER BY rowid DESC LIMIT 3"`'
   expected:
-    - "audit_log row with stage=tag_violation, outcome=TAG_VIOLATION"
-    - "Bad tag removed from final tags list in frontmatter"
-    - "Valid tags preserved in frontmatter"
-  spec_ref: "roadmap §Phase1 'tag validation against taxonomy'"
-  human_reviewed: no
+  - audit_log row with stage=tag_violation, outcome=TAG_VIOLATION
+  - Bad tag removed from final tags list in frontmatter
+  - Valid tags preserved in frontmatter
+  spec_ref: roadmap §Phase1 'tag validation against taxonomy'
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_capture.py::test_metadata_with_violations_writes_two_audit_rows"
+  pytest_ref: tests/test_pipelines/test_capture.py::test_metadata_with_violations_writes_two_audit_rows
   status: active
   retired: null
-
 - id: P1-DEV-03
-  behavior: "File-lost guard — deleted file between event and pipeline"
+  behavior: File-lost guard — deleted file between event and pipeline
   tier: full
   phase: 1
   origin: implementation
   granularity: mechanism
-  trigger: "kms capture <path> (file deleted before pipeline reads)"
+  trigger: kms capture <path> (file deleted before pipeline reads)
   fixtures: []
   steps:
-    - "Run capture on a path that does not exist on disk:"
-    - "`uv run kms capture inbox/nonexistent-file.md`"
-    - "Then verify audit log entry and no DB row created:"
-    - "`sqlite3 data/kb.db \"SELECT stage, outcome FROM audit_log WHERE stage='file_lost' ORDER BY rowid DESC LIMIT 3\"`"
-    - "`sqlite3 data/kb.db \"SELECT count(*) FROM documents WHERE vault_path='inbox/nonexistent-file.md'\"`"
+  - 'Run capture on a path that does not exist on disk:'
+  - '`uv run kms capture inbox/nonexistent-file.md`'
+  - 'Then verify audit log entry and no DB row created:'
+  - '`sqlite3 data/kb.db "SELECT stage, outcome FROM audit_log WHERE stage=''file_lost'' ORDER BY rowid DESC LIMIT 3"`'
+  - '`sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path=''inbox/nonexistent-file.md''"`'
   expected:
-    - "Terminal shows Failure(recoverable=True)"
-    - "audit_log row with stage=file_lost, outcome=FILE_LOST"
-    - "No DB row created in documents table"
-  spec_ref: "roadmap §Phase1.5 'FILE_LOST guard'"
-  human_reviewed: no
+  - Terminal shows Failure(recoverable=True)
+  - audit_log row with stage=file_lost, outcome=FILE_LOST
+  - No DB row created in documents table
+  spec_ref: roadmap §Phase1.5 'FILE_LOST guard'
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_capture.py::test_capture_file_entry_guard_fires_when_file_not_found"
+  pytest_ref: tests/test_pipelines/test_capture.py::test_capture_file_entry_guard_fires_when_file_not_found
   status: active
   retired: null
-
 - id: P1-DEV-04
-  behavior: "Cooldown gate rejects file still being written"
+  behavior: Cooldown gate rejects file still being written
   tier: full
   phase: 1
   origin: implementation
   granularity: mechanism
-  trigger: "kms capture <file> (mtime < cooldown_seconds ago)"
+  trigger: kms capture <file> (mtime < cooldown_seconds ago)
   fixtures: []
   steps:
-    - "Write a new file to inbox/, then immediately run capture (within the cooldown window, before mtime ages):"
-    - "`uv run kms capture inbox/<that-file>.md`"
-    - "Then verify rejection was logged (look for 'cooldown' or 'too recent' in logs):"
-    - "`grep -i 'cooldown\\|too_recent\\|file_too_recent' logs/app.log | tail -5`"
+  - 'Write a new file to inbox/, then immediately run capture (within the cooldown window, before mtime ages):'
+  - '`uv run kms capture inbox/<that-file>.md`'
+  - 'Then verify rejection was logged (look for ''cooldown'' or ''too recent'' in logs):'
+  - '`grep -i ''cooldown\|too_recent\|file_too_recent'' logs/app.log | tail -5`'
   expected:
-    - "Terminal shows Failure(recoverable=True)"
-    - "No LLM call made"
-    - "No DB row created in documents table"
-  spec_ref: "roadmap §Phase1 'cooldown gate'"
-  human_reviewed: no
+  - Terminal shows Failure(recoverable=True)
+  - No LLM call made
+  - No DB row created in documents table
+  spec_ref: roadmap §Phase1 'cooldown gate'
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_capture_phase3.py::test_capture_file_rejects_too_recent_file"
+  pytest_ref: tests/test_pipelines/test_capture_phase3.py::test_capture_file_rejects_too_recent_file
   status: active
   retired: null
-
 - id: P1-DEV-05
-  behavior: "Pending-routing guard blocks re-capture of CLUELESS binary"
+  behavior: Pending-routing guard blocks re-capture of CLUELESS binary
   tier: full
   phase: 1
   origin: implementation
   granularity: mechanism
-  trigger: "kms capture <binary> (already has pending-routing marker)"
+  trigger: kms capture <binary> (already has pending-routing marker)
   fixtures:
-    - inbox/mystery-file.pdf
+  - inbox/mystery-file.pdf
   steps:
-    - "Run once to create the CLUELESS marker:"
-    - "`uv run kms capture inbox/mystery-file.pdf`"
-    - "Then run again without changing anything:"
-    - "`uv run kms capture inbox/mystery-file.pdf`"
-    - "Verify only one marker row exists in DB (count should be 1):"
-    - "`sqlite3 data/kb.db \"SELECT count(*) FROM documents WHERE vault_path LIKE '%mystery-file.pdf%'\"`"
+  - 'Run once to create the CLUELESS marker:'
+  - '`uv run kms capture inbox/mystery-file.pdf`'
+  - 'Then run again without changing anything:'
+  - '`uv run kms capture inbox/mystery-file.pdf`'
+  - 'Verify only one marker row exists in DB (count should be 1):'
+  - '`sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path LIKE ''%mystery-file.pdf%''"`'
   expected:
-    - "Second capture returns Failure(recoverable=True)"
-    - "No duplicate marker .md created"
-    - "No LLM call made on second run"
-  spec_ref: "roadmap §Phase1.5 'pending-routing guard'"
-  human_reviewed: no
+  - Second capture returns Failure(recoverable=True)
+  - No duplicate marker .md created
+  - No LLM call made on second run
+  spec_ref: roadmap §Phase1.5 'pending-routing guard'
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_capture_phase3.py::test_pending_routing_guard_removed"
+  pytest_ref: tests/test_pipelines/test_capture_phase3.py::test_pending_routing_guard_removed
   status: retired
-  retired: "2026-06-09: P2-CIC Phase 7 removed the pending-routing guard entirely — old status:pending-routing concept retired. Idempotent re-entry now uses source_hash comparison in _store_nonmd CLUELESS path (capture.py). New test asserts the OPPOSITE: classify IS called on second run (guard removed). See P2-CIC-03 for current CLUELESS binary behavior."
-
-# ═══════════════════════════════════════════════════════════════
-# PHASE 1.5 — Location Tags + Attachment Layout + Reconcile
-# ═══════════════════════════════════════════════════════════════
-
-# --- Smoke tier ---
-
+  retired: '2026-06-09: P2-CIC Phase 7 removed the pending-routing guard entirely — old status:pending-routing concept retired. Idempotent re-entry now uses source_hash comparison in _store_nonmd CLUELESS
+    path (capture.py). New test asserts the OPPOSITE: classify IS called on second run (guard removed). See P2-CIC-03 for current CLUELESS binary behavior.'
 - id: P15-LOC-01
-  behavior: "Note in Domain/ folder gets domain/<D> tag"
+  behavior: Note in Domain/ folder gets domain/<D> tag
   tier: smoke
   phase: 1.5
   origin: implementation
   granularity: outcome
-  trigger: "kms capture <Domain/Finance/note.md>"
+  trigger: kms capture <Domain/Finance/note.md>
   fixtures:
-    - Domain/Finance/test-domain-tag.md
-  steps: "`uv run kms capture Domain/Finance/test-domain-tag.md`"
+  - Domain/Finance/test-domain-tag.md
+  steps: '`uv run kms capture Domain/Finance/test-domain-tag.md`'
   expected:
-    - "Open file — frontmatter tags: contains domain/Finance"
-    - "No domain: scalar field in frontmatter (only the tag)"
-  spec_ref: "roadmap §Phase1.5 'apply_location_tags: domain'"
-  human_reviewed: yes
-  last_tested: "2026-06-07"
-  last_result: "passed"
-  pytest_ref: "tests/test_pipelines/test_capture.py::test_apply_location_tags_domain_file_adds_tag"
+  - 'Open file — frontmatter tags: contains domain/Finance'
+  - 'No domain: scalar field in frontmatter (only the tag)'
+  spec_ref: 'roadmap §Phase1.5 ''apply_location_tags: domain'''
+  human_reviewed: 'yes'
+  last_tested: '2026-06-10'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_capture.py::test_apply_location_tags_domain_file_adds_tag
   status: active
   retired: null
-
 - id: P15-LOC-02
-  behavior: "Note in Projects/ folder gets project field"
+  behavior: Note in Projects/ folder gets project field
   tier: smoke
   phase: 1.5
   origin: implementation
   granularity: outcome
-  trigger: "kms capture <Projects/Alpha/note.md>"
+  trigger: kms capture <Projects/Alpha/note.md>
   fixtures:
-    - Projects/Alpha/test-project-tag.md
-  steps: "`uv run kms capture Projects/Alpha/test-project-tag.md`"
+  - Projects/Alpha/test-project-tag.md
+  steps: '`uv run kms capture Projects/Alpha/test-project-tag.md`'
   expected:
-    - "Open file — frontmatter has project: Alpha"
-  spec_ref: "roadmap §Phase1.5 'apply_location_tags: project'"
-  human_reviewed: yes
-  last_tested: "2026-06-07"
-  last_result: "passed"
-  pytest_ref: "tests/test_pipelines/test_capture.py::test_apply_location_tags_project_file_sets_ai_project"
+  - 'Open file — frontmatter has project: Alpha'
+  spec_ref: 'roadmap §Phase1.5 ''apply_location_tags: project'''
+  human_reviewed: 'yes'
+  last_tested: '2026-06-10'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_capture.py::test_apply_location_tags_project_file_sets_ai_project
   status: active
   retired: null
-
-# --- Phase tier ---
-
 - id: P15-REC-01
-  behavior: "Reconcile removes stale domain tag when folder deleted"
+  behavior: Reconcile removes stale domain tag when folder deleted
   tier: phase
   phase: 1.5
   origin: implementation
   granularity: outcome
-  trigger: "kms reconcile"
-  fixture_frontmatter: |
-    type: capture
+  trigger: kms reconcile
+  fixture_frontmatter: 'type: capture
+
     tags:
+
     - domain/OldDomain
+
     - type/capture
+
+    '
   fixtures:
-    - inbox/test-stale-domain-tag.md
+  - inbox/test-stale-domain-tag.md
   steps:
-    - "Place inbox/test-stale-domain-tag.md with a domain/OldDomain tag in frontmatter (but no Domain/OldDomain/ folder exists on disk). Then run reconcile:"
-    - "`uv run kms reconcile`"
+  - 'Place inbox/test-stale-domain-tag.md with a domain/OldDomain tag in frontmatter (but no Domain/OldDomain/ folder exists on disk). Then run reconcile:'
+  - '`uv run kms reconcile`'
   expected:
-    - "Open file — domain/OldDomain tag removed from frontmatter"
-    - "Other tags preserved"
-  spec_ref: "roadmap §Phase1.5 'reconcile_stale_tags: remove stale'"
-  human_reviewed: yes
-  last_tested: "2026-06-07"
-  last_result: "passed"
-  pytest_ref: "tests/test_pipelines/test_reconcile.py::test_reconcile_stale_tags_removes_stale_domain_tag"
+  - Open file — domain/OldDomain tag removed from frontmatter
+  - Other tags preserved
+  spec_ref: 'roadmap §Phase1.5 ''reconcile_stale_tags: remove stale'''
+  human_reviewed: true
+  last_tested: '2026-06-07'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_reconcile.py::test_reconcile_stale_tags_removes_stale_domain_tag
   status: active
   retired: null
-
 - id: P15-REC-02
-  behavior: "Reconcile adds missing domain tag for note in Domain/ folder"
+  behavior: Reconcile adds missing domain tag for note in Domain/ folder
   tier: phase
   phase: 1.5
   origin: implementation
   granularity: outcome
-  trigger: "kms reconcile"
+  trigger: kms reconcile
   fixtures:
-    - Domain/Engineering/test-missing-domain-tag.md
+  - Domain/Engineering/test-missing-domain-tag.md
   steps:
-    - "Place Domain/Engineering/test-missing-domain-tag.md without a domain/Engineering tag in frontmatter. Then run reconcile:"
-    - "`uv run kms reconcile`"
+  - 'Place Domain/Engineering/test-missing-domain-tag.md without a domain/Engineering tag in frontmatter. Then run reconcile:'
+  - '`uv run kms reconcile`'
   expected:
-    - "Open file — domain/Engineering tag added to frontmatter"
-    - "Body text unchanged"
-  spec_ref: "roadmap §Phase1.5 'reconcile_stale_tags: add missing'"
-  human_reviewed: yes
-  last_tested: "2026-06-07"
-  last_result: "passed"
-  pytest_ref: "tests/test_pipelines/test_reconcile.py::test_reconcile_stale_tags_adds_missing_domain_tag"
+  - Open file — domain/Engineering tag added to frontmatter
+  - Body text unchanged
+  spec_ref: 'roadmap §Phase1.5 ''reconcile_stale_tags: add missing'''
+  human_reviewed: true
+  last_tested: '2026-06-07'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_reconcile.py::test_reconcile_stale_tags_adds_missing_domain_tag
   status: active
   retired: null
-
 - id: P15-REC-03
-  behavior: "Reconcile captures orphan binaries missing sibling .md"
+  behavior: Reconcile captures orphan binaries missing sibling .md
   tier: phase
   phase: 1.5
   origin: implementation
   granularity: outcome
-  trigger: "kms reconcile"
+  trigger: kms reconcile
   fixtures:
-    - Projects/Alpha/attachment/orphan-report.pdf
+  - Projects/Alpha/attachment/orphan-report.pdf
   steps:
-    - "Place Projects/Alpha/attachment/orphan-report.pdf on disk without any .summaries/orphan-report.pdf.md sibling. Then run reconcile:"
-    - "`uv run kms reconcile`"
+  - 'Place Projects/Alpha/attachment/orphan-report.pdf on disk without any .summaries/orphan-report.pdf.md sibling. Then run reconcile:'
+  - '`uv run kms reconcile`'
   expected:
-    - "Sibling .md created at Projects/Alpha/attachment/.summaries/orphan-report.pdf.md"
-    - "Sibling frontmatter has summary: (non-empty)"
-    - "Sibling frontmatter has attachment_path: pointing to orphan-report.pdf"
-  spec_ref: "roadmap §Phase1.5 'reconcile_orphan_binaries'"
-  human_reviewed: yes
-  last_tested: "2026-06-07"
-  last_result: "passed"
-  pytest_ref: "tests/test_pipelines/test_reconcile.py::test_reconcile_orphan_binaries_captures_binary_without_sibling"
+  - Sibling .md created at Projects/Alpha/attachment/.summaries/orphan-report.pdf.md
+  - 'Sibling frontmatter has summary: (non-empty)'
+  - 'Sibling frontmatter has attachment_path: pointing to orphan-report.pdf'
+  spec_ref: roadmap §Phase1.5 'reconcile_orphan_binaries'
+  human_reviewed: true
+  last_tested: '2026-06-07'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_reconcile.py::test_reconcile_orphan_binaries_captures_binary_without_sibling
   status: active
   retired: null
-
 - id: P15-REC-04
-  behavior: "Reconcile deletes orphan sibling when binary is gone"
+  behavior: Reconcile deletes orphan sibling when binary is gone
   tier: phase
   phase: 1.5
   origin: implementation
   granularity: outcome
-  trigger: "kms reconcile"
+  trigger: kms reconcile
   fixtures:
-    - Projects/Alpha/attachment/.summaries/deleted-file.pdf.md
-  fixture_frontmatter: |
-    type: attachment-summary
+  - Projects/Alpha/attachment/.summaries/deleted-file.pdf.md
+  fixture_frontmatter: 'type: attachment-summary
+
     attachment_path: Projects/Alpha/attachment/deleted-file.pdf
+
+    '
   steps:
-    - "Place Projects/Alpha/attachment/.summaries/deleted-file.pdf.md on disk (with type: attachment-summary in frontmatter) but NO corresponding binary at the attachment_path. Then run reconcile:"
-    - "`uv run kms reconcile`"
-    - "Verify sibling deleted from disk (should return nothing):"
-    - "`ls <vault>/Projects/Alpha/attachment/.summaries/deleted-file.pdf.md 2>&1`"
-    - "Verify DB row removed (expected: 0):"
-    - "`sqlite3 data/kb.db \"SELECT count(*) FROM documents WHERE vault_path='Projects/Alpha/attachment/.summaries/deleted-file.pdf.md'\"`"
+  - 'Place Projects/Alpha/attachment/.summaries/deleted-file.pdf.md on disk (with type: attachment-summary in frontmatter) but NO corresponding binary at the attachment_path. Then run reconcile:'
+  - '`uv run kms reconcile`'
+  - 'Verify sibling deleted from disk (should return nothing):'
+  - '`ls <vault>/Projects/Alpha/attachment/.summaries/deleted-file.pdf.md 2>&1`'
+  - 'Verify DB row removed (expected: 0):'
+  - '`sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path=''Projects/Alpha/attachment/.summaries/deleted-file.pdf.md''"`'
   expected:
-    - "Orphan sibling deleted-file.pdf.md deleted from disk"
-    - "DB row for deleted-file.pdf.md removed from documents table"
-  spec_ref: "roadmap §Phase1.5 'reconcile_orphan_siblings'"
-  human_reviewed: yes
-  last_tested: "2026-06-07"
-  last_result: "failed"
-  pytest_ref: "tests/test_pipelines/test_reconcile.py::test_reconcile_orphan_siblings_removes_ghost_when_binary_gone"
+  - Orphan sibling deleted-file.pdf.md deleted from disk
+  - DB row for deleted-file.pdf.md removed from documents table
+  spec_ref: roadmap §Phase1.5 'reconcile_orphan_siblings'
+  human_reviewed: true
+  last_tested: '2026-06-07'
+  last_result: failed
+  pytest_ref: tests/test_pipelines/test_reconcile.py::test_reconcile_orphan_siblings_removes_ghost_when_binary_gone
   status: active
   retired: null
-
 - id: P15-REC-05
-  behavior: "Reconcile clears stale batch_id when doc moved away from batch destination"
+  behavior: Reconcile clears stale batch_id when doc moved away from batch destination
   tier: phase
   phase: 1.5
   origin: implementation
   granularity: mechanism
-  trigger: "kms reconcile"
+  trigger: kms reconcile
   fixtures:
-    - "Projects/Alpha/note-batch-test.md"
+  - Projects/Alpha/note-batch-test.md
   steps:
-    - "**Prerequisite:** TD-040 must be resolved — single-file capture must set batch_id."
-    - "**Step 1 — capture the file to seed a batch_id:**"
-    - "`uv run kms capture <vault>/Projects/Alpha/note-batch-test.md`"
-    - "**Step 2 — verify batch_id is set:**"
-    - "`sqlite3 data/kb.db \"SELECT vault_path, batch_id FROM documents WHERE vault_path LIKE '%note-batch-test%'\"`"
-    - "Confirm batch_id column shows a non-NULL integer."
-    - "**Step 3 — move the file to a different project:**"
-    - "`mkdir -p <vault>/Projects/Beta && mv <vault>/Projects/Alpha/note-batch-test.md <vault>/Projects/Beta/note-batch-test.md`"
-    - "**Step 4 — run reconcile:**"
-    - "`uv run kms reconcile`"
-    - "**Step 5 — verify batch_id cleared:**"
-    - "`sqlite3 data/kb.db \"SELECT vault_path, batch_id FROM documents WHERE vault_path LIKE '%note-batch-test%'\"`"
+  - '**Prerequisite:** TD-040 must be resolved — single-file capture must set batch_id.'
+  - '**Step 1 — capture the file to seed a batch_id:**'
+  - '`uv run kms capture <vault>/Projects/Alpha/note-batch-test.md`'
+  - '**Step 2 — verify batch_id is set:**'
+  - '`sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE vault_path LIKE ''%note-batch-test%''"`'
+  - Confirm batch_id column shows a non-NULL integer.
+  - '**Step 3 — move the file to a different project:**'
+  - '`mkdir -p <vault>/Projects/Beta && mv <vault>/Projects/Alpha/note-batch-test.md <vault>/Projects/Beta/note-batch-test.md`'
+  - '**Step 4 — run reconcile:**'
+  - '`uv run kms reconcile`'
+  - '**Step 5 — verify batch_id cleared:**'
+  - '`sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE vault_path LIKE ''%note-batch-test%''"`'
   expected:
-    - "After Step 2: batch_id is a non-NULL integer for Projects/Alpha/note-batch-test.md"
-    - "After Step 5: batch_id is NULL for Projects/Beta/note-batch-test.md"
-  spec_ref: "roadmap §Phase1.5 'reconcile_stale_batch_refs'"
-  human_reviewed: yes
-  last_tested: "2026-06-07"
-  last_result: "failed - no single-file capturing with batch_id yet (application gap)"
-  pytest_ref: "tests/test_pipelines/test_reconcile.py::test_stale_batch_refs_file_moved_away"
+  - 'After Step 2: batch_id is a non-NULL integer for Projects/Alpha/note-batch-test.md'
+  - 'After Step 5: batch_id is NULL for Projects/Beta/note-batch-test.md'
+  spec_ref: roadmap §Phase1.5 'reconcile_stale_batch_refs'
+  human_reviewed: true
+  last_tested: '2026-06-07'
+  last_result: failed - no single-file capturing with batch_id yet (application gap)
+  pytest_ref: tests/test_pipelines/test_reconcile.py::test_stale_batch_refs_file_moved_away
   status: active
   retired: null
-
 - id: P15-HDL-01
-  behavior: "XLSX file dropped in inbox gets real-summary marker with needs-review status"
+  behavior: XLSX file dropped in inbox gets real-summary marker with needs-review status
   tier: phase
   phase: 1.5
   origin: implementation
   granularity: outcome
-  trigger: "kms capture <file.xlsx>"
+  trigger: kms capture <file.xlsx>
   fixtures:
-    - inbox/q2-budget.xlsx
-  steps: "`uv run kms capture inbox/q2-budget.xlsx`"
+  - inbox/q2-budget.xlsx
+  steps: '`uv run kms capture inbox/q2-budget.xlsx`'
   expected:
-    - "q2-budget.xlsx stays in inbox/ (not moved — CLUELESS path)"
-    - "Marker .md created at inbox/.summaries/q2-budget.xlsx.md"
-    - "Marker frontmatter has type: attachment-summary"
-    - "Marker frontmatter has status: needs-review (NOT pending-routing — concept retired in P2-CIC Phase 7)"
-    - "Marker frontmatter has source_hash set (idempotent re-entry)"
-    - "Marker body contains a real AI-generated summary (NOT placeholder)"
-  spec_ref: "roadmap §Phase1.5 'handler: xlsx'; updated P2-CIC Phase 7 2026-06-09"
-  human_reviewed: no
+  - q2-budget.xlsx stays in inbox/ (not moved — CLUELESS path)
+  - Marker .md created at inbox/.summaries/q2-budget.xlsx.md
+  - 'Marker frontmatter has type: attachment-summary'
+  - 'Marker frontmatter has status: needs-review (NOT pending-routing — concept retired in P2-CIC Phase 7)'
+  - Marker frontmatter has source_hash set (idempotent re-entry)
+  - Marker body contains a real AI-generated summary (NOT placeholder)
+  spec_ref: 'roadmap §Phase1.5 ''handler: xlsx''; updated P2-CIC Phase 7 2026-06-09'
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_handlers/test_xlsx_handler.py::test_single_sheet_has_data_rows"
+  pytest_ref: tests/test_handlers/test_xlsx_handler.py::test_single_sheet_has_data_rows
   status: active
   retired: null
-
 - id: P15-HDL-02
-  behavior: "PPTX file dropped in inbox gets real-summary marker with needs-review status"
+  behavior: PPTX file dropped in inbox gets real-summary marker with needs-review status
   tier: phase
   phase: 1.5
   origin: implementation
   granularity: outcome
-  trigger: "kms capture <file.pptx>"
+  trigger: kms capture <file.pptx>
   fixtures:
-    - inbox/deck.pptx
-  steps: "`uv run kms capture inbox/deck.pptx`"
+  - inbox/deck.pptx
+  steps: '`uv run kms capture inbox/deck.pptx`'
   expected:
-    - "deck.pptx stays in inbox/ (not moved — CLUELESS path)"
-    - "Marker .md created at inbox/.summaries/deck.pptx.md"
-    - "Marker frontmatter has type: attachment-summary"
-    - "Marker frontmatter has status: needs-review (NOT pending-routing)"
-    - "Marker frontmatter has source_hash set (idempotent re-entry)"
-    - "Marker body contains a real AI-generated summary"
-  spec_ref: "roadmap §Phase1.5 'handler: pptx'; updated P2-CIC Phase 7 2026-06-09"
-  human_reviewed: no
+  - deck.pptx stays in inbox/ (not moved — CLUELESS path)
+  - Marker .md created at inbox/.summaries/deck.pptx.md
+  - 'Marker frontmatter has type: attachment-summary'
+  - 'Marker frontmatter has status: needs-review (NOT pending-routing)'
+  - Marker frontmatter has source_hash set (idempotent re-entry)
+  - Marker body contains a real AI-generated summary
+  spec_ref: 'roadmap §Phase1.5 ''handler: pptx''; updated P2-CIC Phase 7 2026-06-09'
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_handlers/test_pptx_handler.py::test_slide_without_title_has_plain_header"
+  pytest_ref: tests/test_handlers/test_pptx_handler.py::test_slide_without_title_has_plain_header
   status: active
   retired: null
-
 - id: P15-HDL-03
-  behavior: "CSV file dropped in inbox gets real-summary marker with needs-review status"
+  behavior: CSV file dropped in inbox gets real-summary marker with needs-review status
   tier: phase
   phase: 1.5
   origin: implementation
   granularity: outcome
-  trigger: "kms capture <file.csv>"
+  trigger: kms capture <file.csv>
   fixtures:
-    - inbox/data.csv
-  steps: "`uv run kms capture inbox/data.csv`"
+  - inbox/data.csv
+  steps: '`uv run kms capture inbox/data.csv`'
   expected:
-    - "data.csv stays in inbox/ (not moved — CLUELESS path)"
-    - "Marker .md created at inbox/.summaries/data.csv.md"
-    - "Marker frontmatter has type: attachment-summary"
-    - "Marker frontmatter has status: needs-review (NOT pending-routing)"
-    - "Marker frontmatter has source_hash set"
-    - "Marker body contains a real AI-generated summary"
-  spec_ref: "roadmap §Phase1.5 'handler: csv'; updated P2-CIC Phase 7 2026-06-09"
-  human_reviewed: no
+  - data.csv stays in inbox/ (not moved — CLUELESS path)
+  - Marker .md created at inbox/.summaries/data.csv.md
+  - 'Marker frontmatter has type: attachment-summary'
+  - 'Marker frontmatter has status: needs-review (NOT pending-routing)'
+  - Marker frontmatter has source_hash set
+  - Marker body contains a real AI-generated summary
+  spec_ref: 'roadmap §Phase1.5 ''handler: csv''; updated P2-CIC Phase 7 2026-06-09'
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_handlers/test_csv_handler.py::test_valid_csv_returns_success"
+  pytest_ref: tests/test_handlers/test_csv_handler.py::test_valid_csv_returns_success
   status: active
   retired: null
-
 - id: P15-HDL-04
-  behavior: "HTML file dropped in inbox gets real-summary marker with needs-review status"
+  behavior: HTML file dropped in inbox gets real-summary marker with needs-review status
   tier: phase
   phase: 1.5
   origin: implementation
   granularity: outcome
-  trigger: "kms capture <file.html>"
+  trigger: kms capture <file.html>
   fixtures:
-    - inbox/page.html
-  steps: "`uv run kms capture inbox/page.html`"
+  - inbox/page.html
+  steps: '`uv run kms capture inbox/page.html`'
   expected:
-    - "page.html stays in inbox/ (not moved — CLUELESS path)"
-    - "Marker .md created at inbox/.summaries/page.html.md"
-    - "Marker frontmatter has type: attachment-summary"
-    - "Marker frontmatter has status: needs-review (NOT pending-routing)"
-    - "Marker frontmatter has source_hash set"
-    - "Marker body contains a real AI-generated summary"
-  spec_ref: "roadmap §Phase1.5 'handler: html'; updated P2-CIC Phase 7 2026-06-09"
-  human_reviewed: no
+  - page.html stays in inbox/ (not moved — CLUELESS path)
+  - Marker .md created at inbox/.summaries/page.html.md
+  - 'Marker frontmatter has type: attachment-summary'
+  - 'Marker frontmatter has status: needs-review (NOT pending-routing)'
+  - Marker frontmatter has source_hash set
+  - Marker body contains a real AI-generated summary
+  spec_ref: 'roadmap §Phase1.5 ''handler: html''; updated P2-CIC Phase 7 2026-06-09'
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_handlers/test_html_handler.py::test_valid_html_returns_success"
+  pytest_ref: tests/test_handlers/test_html_handler.py::test_valid_html_returns_success
   status: active
   retired: null
-
 - id: P15-HDL-05
-  behavior: "EML email file dropped in inbox gets real-summary marker with needs-review status"
+  behavior: EML email file dropped in inbox gets real-summary marker with needs-review status
   tier: phase
   phase: 1.5
   origin: implementation
   granularity: outcome
-  trigger: "kms capture <file.eml>"
+  trigger: kms capture <file.eml>
   fixtures:
-    - inbox/message.eml
-  steps: "`uv run kms capture inbox/message.eml`"
+  - inbox/message.eml
+  steps: '`uv run kms capture inbox/message.eml`'
   expected:
-    - "message.eml stays in inbox/ (not moved — CLUELESS path)"
-    - "Marker .md created at inbox/.summaries/message.eml.md"
-    - "Marker frontmatter has type: attachment-summary"
-    - "Marker frontmatter has status: needs-review (NOT pending-routing)"
-    - "Marker frontmatter has source_hash set"
-    - "Marker body contains a real AI-generated summary"
-  spec_ref: "roadmap §Phase1.5 'handler: eml'; updated P2-CIC Phase 7 2026-06-09"
-  human_reviewed: no
+  - message.eml stays in inbox/ (not moved — CLUELESS path)
+  - Marker .md created at inbox/.summaries/message.eml.md
+  - 'Marker frontmatter has type: attachment-summary'
+  - 'Marker frontmatter has status: needs-review (NOT pending-routing)'
+  - Marker frontmatter has source_hash set
+  - Marker body contains a real AI-generated summary
+  spec_ref: 'roadmap §Phase1.5 ''handler: eml''; updated P2-CIC Phase 7 2026-06-09'
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_handlers/test_eml_handler.py::test_simple_eml_returns_success"
+  pytest_ref: tests/test_handlers/test_eml_handler.py::test_simple_eml_returns_success
   status: active
   retired: null
-
 - id: P15-HDL-06
-  behavior: "MSG Outlook file dropped in inbox gets real-summary marker with needs-review status"
+  behavior: MSG Outlook file dropped in inbox gets real-summary marker with needs-review status
   tier: phase
   phase: 1.5
   origin: implementation
   granularity: outcome
-  trigger: "kms capture <file.msg>"
+  trigger: kms capture <file.msg>
   fixtures:
-    - inbox/outlook-msg.msg
-  steps: "`uv run kms capture inbox/outlook-msg.msg`"
+  - inbox/outlook-msg.msg
+  steps: '`uv run kms capture inbox/outlook-msg.msg`'
   expected:
-    - "outlook-msg.msg stays in inbox/ (not moved — CLUELESS path)"
-    - "Marker .md created at inbox/.summaries/outlook-msg.msg.md"
-    - "Marker frontmatter has type: attachment-summary"
-    - "Marker frontmatter has status: needs-review (NOT pending-routing)"
-    - "Marker frontmatter has source_hash set"
-    - "Marker body contains a real AI-generated summary"
-  spec_ref: "roadmap §Phase1.5 'handler: msg'; updated P2-CIC Phase 7 2026-06-09"
-  human_reviewed: no
+  - outlook-msg.msg stays in inbox/ (not moved — CLUELESS path)
+  - Marker .md created at inbox/.summaries/outlook-msg.msg.md
+  - 'Marker frontmatter has type: attachment-summary'
+  - 'Marker frontmatter has status: needs-review (NOT pending-routing)'
+  - Marker frontmatter has source_hash set
+  - Marker body contains a real AI-generated summary
+  spec_ref: 'roadmap §Phase1.5 ''handler: msg''; updated P2-CIC Phase 7 2026-06-09'
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_handlers/test_msg_handler.py::test_valid_msg_returns_success"
+  pytest_ref: tests/test_handlers/test_msg_handler.py::test_valid_msg_returns_success
   status: active
   retired: null
-
 - id: P15-HDL-07
-  behavior: "PNG/JPG image file captured with sibling .md"
+  behavior: PNG/JPG image file captured with sibling .md
   tier: phase
   phase: 1.5
   origin: design
   granularity: outcome
-  trigger: "kms capture <file.png>"
+  trigger: kms capture <file.png>
   fixtures:
-    - inbox/screenshot.png
-  steps: "`uv run kms capture inbox/screenshot.png`"
+  - inbox/screenshot.png
+  steps: '`uv run kms capture inbox/screenshot.png`'
   expected:
-    - "Sibling .md created with summary (OCR text or filename-based)"
-  expected_design: >
-    Sibling .md created with summary (OCR text or filename-based).
-  expected_implementation: >
-    NOT implemented. PngHandler/JpgHandler.extract() return
-    Failure("image extraction requires a vision-capable LLM — not yet implemented",
-    recoverable=False) at src/handlers/image_handler.py:21-26 and :30-38.
-    No sibling .md is created; no summary is produced. Images are NOT captured.
-  spec_ref: "roadmap §Phase1.5 'handler: image'"
-  human_reviewed: yes
-  last_tested: "2026-06-05"
-  last_result: "failed - img LLM not yet implemented"
-  pytest_ref: "tests/test_handlers/test_image_handler.py::test_always_returns_failure"
+  - Sibling .md created with summary (OCR text or filename-based)
+  expected_design: 'Sibling .md created with summary (OCR text or filename-based).
+
+    '
+  expected_implementation: 'NOT implemented. PngHandler/JpgHandler.extract() return Failure("image extraction requires a vision-capable LLM — not yet implemented", recoverable=False) at src/handlers/image_handler.py:21-26
+    and :30-38. No sibling .md is created; no summary is produced. Images are NOT captured.
+
+    '
+  spec_ref: 'roadmap §Phase1.5 ''handler: image'''
+  human_reviewed: true
+  last_tested: '2026-06-05'
+  last_result: failed - img LLM not yet implemented
+  pytest_ref: tests/test_handlers/test_image_handler.py::test_always_returns_failure
   status: conflict
   retired: null
-
 - id: P15-FOLD-01
-  behavior: "Folder dropped in inbox classified and routed by LLM"
+  behavior: Folder dropped in inbox classified and routed by LLM
   tier: phase
   phase: 1.5
   origin: implementation
   granularity: outcome
-  trigger: "kms capture --scan (folder in inbox/) or watcher folder event"
+  trigger: kms capture --scan (folder in inbox/) or watcher folder event
   fixtures:
-    - inbox/new-project-folder/file1.md
-    - inbox/new-project-folder/file2.pdf
+  - inbox/new-project-folder/file1.md
+  - inbox/new-project-folder/file2.pdf
   steps:
-    - "Create inbox/new-project-folder/ with inbox/new-project-folder/file1.md and inbox/new-project-folder/file2.pdf inside. Then run scan:"
-    - "`uv run kms capture --scan`"
-    - "Verify batches row created:"
-    - "`sqlite3 data/kb.db \"SELECT folder_name, destination_type, destination_name, confidence, status FROM batches ORDER BY rowid DESC LIMIT 5\"`"
-    - "If status=ROUTING: verify files captured with batch_id:"
-    - "`sqlite3 data/kb.db \"SELECT vault_path, batch_id FROM documents WHERE batch_id = (SELECT batch_id FROM batches ORDER BY rowid DESC LIMIT 1)\"`"
+  - 'Create inbox/new-project-folder/ with inbox/new-project-folder/file1.md and inbox/new-project-folder/file2.pdf inside. Then run scan:'
+  - '`uv run kms capture --scan`'
+  - 'Verify batches row created:'
+  - '`sqlite3 data/kb.db "SELECT folder_name, destination_type, destination_name, confidence, status FROM batches ORDER BY rowid DESC LIMIT 5"`'
+  - 'If status=ROUTING: verify files captured with batch_id:'
+  - '`sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE batch_id = (SELECT batch_id FROM batches ORDER BY rowid DESC LIMIT 1)"`'
   expected:
-    - "batches row created with folder_name=new-project-folder, confidence > 0, status one of: ROUTING | PENDING_REVIEW | CLUELESS"
-    - "AUTO (status=ROUTING): folder moved to Projects/<name>/ or Domain/<name>/; files captured; documents rows present with matching batch_id"
-    - "SUGGEST (status=PENDING_REVIEW): folder stays in inbox/; no documents rows for its files yet"
-    - "CLUELESS (status=CLUELESS): folder stays in inbox/; per-file needs-review markers with real summaries at inbox/.summaries/; documents rows with batch_id"
-    - "All files inside the folder (including subfolders of Projects/<A>/ or Domain/<D>/) captured with a batch_id"
-  spec_ref: "roadmap §Phase1.5 'folder drop classification' — see TD-041 for scan gap"
-  human_reviewed: yes
-  last_tested: "2026-06-07"
-  last_result: "failed"
-  pytest_ref: "tests/test_pipelines/test_capture_folder.py::test_inbox_auto_confidence_moves_folder_and_captures_files"
+  - 'batches row created with folder_name=new-project-folder, confidence > 0, status one of: ROUTING | PENDING_REVIEW | CLUELESS'
+  - 'AUTO (status=ROUTING): folder moved to Projects/<name>/ or Domain/<name>/; files captured; documents rows present with matching batch_id'
+  - 'SUGGEST (status=PENDING_REVIEW): folder stays in inbox/; no documents rows for its files yet'
+  - 'CLUELESS (status=CLUELESS): folder stays in inbox/; per-file needs-review markers with real summaries at inbox/.summaries/; documents rows with batch_id'
+  - All files inside the folder (including subfolders of Projects/<A>/ or Domain/<D>/) captured with a batch_id
+  spec_ref: roadmap §Phase1.5 'folder drop classification' — see TD-041 for scan gap
+  human_reviewed: true
+  last_tested: '2026-06-07'
+  last_result: failed
+  pytest_ref: tests/test_pipelines/test_capture_folder.py::test_inbox_auto_confidence_moves_folder_and_captures_files
   status: active
   retired: null
-
-# --- Full tier (developer) ---
-
 - id: P15-DEV-01
-  behavior: "Watcher binary-delete sync — sibling cleaned up"
+  behavior: Watcher binary-delete sync — sibling cleaned up
   tier: full
   phase: 1.5
   origin: implementation
   granularity: mechanism
-  trigger: "Delete a binary file while kms watch running"
+  trigger: Delete a binary file while kms watch running
   fixtures:
-    - Projects/Alpha/attachment/p15-dev-01-report.pdf
+  - Projects/Alpha/attachment/p15-dev-01-report.pdf
   steps:
-    - "First, capture the binary to establish sibling in DB:"
-    - "`uv run kms capture Projects/Alpha/attachment/p15-dev-01-report.pdf`"
-    - "In Terminal 1, start the watcher:"
-    - "`uv run kms watch`"
-    - "In Terminal 2, delete the binary and wait ~5 seconds:"
-    - "`rm $VAULT/Projects/Alpha/attachment/p15-dev-01-report.pdf`"
-    - "In Terminal 2, verify sibling removed from DB (count should be 0) and audit entry written:"
-    - "`sqlite3 data/kb.db \"SELECT count(*) FROM documents WHERE vault_path LIKE '%p15-dev-01-report.pdf.md%'\"`"
-    - "`sqlite3 data/kb.db \"SELECT stage, outcome FROM audit_log WHERE stage='watcher:binary_delete' ORDER BY rowid DESC LIMIT 3\"`"
+  - 'First, capture the binary to establish sibling in DB:'
+  - '`uv run kms capture Projects/Alpha/attachment/p15-dev-01-report.pdf`'
+  - 'In Terminal 1, start the watcher:'
+  - '`uv run kms watch`'
+  - 'In Terminal 2, delete the binary and wait ~5 seconds:'
+  - '`rm $VAULT/Projects/Alpha/attachment/p15-dev-01-report.pdf`'
+  - 'In Terminal 2, verify sibling removed from DB (count should be 0) and audit entry written:'
+  - '`sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path LIKE ''%p15-dev-01-report.pdf.md%''"`'
+  - '`sqlite3 data/kb.db "SELECT stage, outcome FROM audit_log WHERE stage=''watcher:binary_delete'' ORDER BY rowid DESC LIMIT 3"`'
   expected:
-    - "Sibling .md at `.summaries/<binary.name>.md` deleted from disk"
-    - "DB row for sibling removed from documents table"
-    - "audit_log row with stage=watcher:binary_delete, outcome=SIBLING_ORPHANED"
-  spec_ref: "roadmap §Phase1.5 'binary sync on delete'"
-  human_reviewed: no
+  - Sibling .md at `.summaries/<binary.name>.md` deleted from disk
+  - DB row for sibling removed from documents table
+  - audit_log row with stage=watcher:binary_delete, outcome=SIBLING_ORPHANED
+  spec_ref: roadmap §Phase1.5 'binary sync on delete'
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_vault/test_watcher.py::test_on_deleted_binary_removes_sibling_from_db"
+  pytest_ref: tests/test_vault/test_watcher.py::test_on_deleted_binary_removes_sibling_from_db
   status: active
   retired: null
-
 - id: P15-DEV-02
-  behavior: "Watcher binary-rename sync — sibling renamed"
+  behavior: Watcher binary-rename sync — sibling renamed
   tier: full
   phase: 1.5
   origin: implementation
   granularity: mechanism
-  trigger: "Rename a binary file while kms watch running"
+  trigger: Rename a binary file while kms watch running
   fixtures:
-    - Projects/Alpha/attachment/p15-dev-02-old.pdf
+  - Projects/Alpha/attachment/p15-dev-02-old.pdf
   steps:
-    - "First, capture the binary to establish sibling in DB:"
-    - "`uv run kms capture Projects/Alpha/attachment/p15-dev-02-old.pdf`"
-    - "In Terminal 1, start the watcher:"
-    - "`uv run kms watch`"
-    - "In Terminal 2, rename the binary and wait ~5 seconds:"
-    - "`mv $VAULT/Projects/Alpha/attachment/p15-dev-02-old.pdf $VAULT/Projects/Alpha/attachment/p15-dev-02-new.pdf`"
-    - "In Terminal 2, verify DB row updated with new path and attachment_path:"
-    - "`sqlite3 data/kb.db \"SELECT vault_path, attachment_path FROM documents WHERE vault_path LIKE '%p15-dev-02-new.pdf.md%'\"`"
+  - 'First, capture the binary to establish sibling in DB:'
+  - '`uv run kms capture Projects/Alpha/attachment/p15-dev-02-old.pdf`'
+  - 'In Terminal 1, start the watcher:'
+  - '`uv run kms watch`'
+  - 'In Terminal 2, rename the binary and wait ~5 seconds:'
+  - '`mv $VAULT/Projects/Alpha/attachment/p15-dev-02-old.pdf $VAULT/Projects/Alpha/attachment/p15-dev-02-new.pdf`'
+  - 'In Terminal 2, verify DB row updated with new path and attachment_path:'
+  - '`sqlite3 data/kb.db "SELECT vault_path, attachment_path FROM documents WHERE vault_path LIKE ''%p15-dev-02-new.pdf.md%''"`'
   expected:
-    - "Sibling renamed from old.pdf.md to new.pdf.md in .summaries/"
-    - "Open sibling — attachment_path in frontmatter updated to new.pdf"
-    - "DB row path and attachment_path both updated"
-  spec_ref: "roadmap §Phase1.5 'binary sync on rename'"
-  human_reviewed: no
+  - Sibling renamed from old.pdf.md to new.pdf.md in .summaries/
+  - Open sibling — attachment_path in frontmatter updated to new.pdf
+  - DB row path and attachment_path both updated
+  spec_ref: roadmap §Phase1.5 'binary sync on rename'
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_vault/test_watcher.py::test_on_moved_binary_same_folder_renames_sibling"
+  pytest_ref: tests/test_vault/test_watcher.py::test_on_moved_binary_same_folder_renames_sibling
   status: active
   retired: null
-
 - id: P15-DEV-03
-  behavior: "Watcher binary cross-folder move — old sibling orphaned"
+  behavior: Watcher binary cross-folder move — old sibling orphaned
   tier: full
   phase: 1.5
   origin: implementation
   granularity: mechanism
-  trigger: "Move binary between attachment/ folders while kms watch running"
+  trigger: Move binary between attachment/ folders while kms watch running
   fixtures:
-    - Projects/Alpha/attachment/p15-dev-03-file.pdf
+  - Projects/Alpha/attachment/p15-dev-03-file.pdf
   steps:
-    - "First, capture the binary to establish sibling in DB:"
-    - "`uv run kms capture Projects/Alpha/attachment/p15-dev-03-file.pdf`"
-    - "Create the destination folder:"
-    - "`mkdir -p $VAULT/Projects/Beta/attachment`"
-    - "In Terminal 1, start the watcher:"
-    - "`uv run kms watch`"
-    - "In Terminal 2, move the binary to a different project's attachment/ and wait ~5 seconds:"
-    - "`mv $VAULT/Projects/Alpha/attachment/p15-dev-03-file.pdf $VAULT/Projects/Beta/attachment/p15-dev-03-file.pdf`"
-    - "In Terminal 2, verify old sibling DB row removed (count should be 0):"
-    - "`sqlite3 data/kb.db \"SELECT count(*) FROM documents WHERE vault_path LIKE '%Projects/Alpha/attachment/.summaries/p15-dev-03-file.pdf.md%'\"`"
+  - 'First, capture the binary to establish sibling in DB:'
+  - '`uv run kms capture Projects/Alpha/attachment/p15-dev-03-file.pdf`'
+  - 'Create the destination folder:'
+  - '`mkdir -p $VAULT/Projects/Beta/attachment`'
+  - 'In Terminal 1, start the watcher:'
+  - '`uv run kms watch`'
+  - 'In Terminal 2, move the binary to a different project''s attachment/ and wait ~5 seconds:'
+  - '`mv $VAULT/Projects/Alpha/attachment/p15-dev-03-file.pdf $VAULT/Projects/Beta/attachment/p15-dev-03-file.pdf`'
+  - 'In Terminal 2, verify old sibling DB row removed (count should be 0):'
+  - '`sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path LIKE ''%Projects/Alpha/attachment/.summaries/p15-dev-03-file.pdf.md%''"`'
   expected:
-    - "Old sibling .md in Projects/Alpha/attachment/.summaries/ deleted from disk"
-    - "DB row for old sibling removed (count = 0)"
-    - "New orphan binary in Projects/Beta/attachment/ picked up on next `uv run kms reconcile`"
-  spec_ref: "roadmap §Phase1.5 'binary sync cross-folder'"
-  human_reviewed: no
+  - Old sibling .md in Projects/Alpha/attachment/.summaries/ deleted from disk
+  - DB row for old sibling removed (count = 0)
+  - New orphan binary in Projects/Beta/attachment/ picked up on next `uv run kms reconcile`
+  spec_ref: roadmap §Phase1.5 'binary sync cross-folder'
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_vault/test_watcher.py::test_on_moved_binary_different_folder_orphans_old_sibling"
+  pytest_ref: tests/test_vault/test_watcher.py::test_on_moved_binary_different_folder_orphans_old_sibling
   status: active
   retired: null
-
 - id: P15-DEV-04
-  behavior: "Reconcile stage 3 — re-summarize stale binaries"
+  behavior: Reconcile stage 3 — re-summarize stale binaries
   tier: full
   phase: 1.5
   origin: implementation
   granularity: mechanism
-  trigger: "kms reconcile"
+  trigger: kms reconcile
   fixtures:
-    - Projects/Alpha/attachment/p15-dev-04-report.pdf
+  - Projects/Alpha/attachment/p15-dev-04-report.pdf
   steps:
-    - "First, capture the binary to establish sibling in DB and record the initial content_hash:"
-    - "`uv run kms capture Projects/Alpha/attachment/p15-dev-04-report.pdf`"
-    - "`sqlite3 data/kb.db \"SELECT vault_path, content_hash FROM documents WHERE vault_path LIKE '%p15-dev-04-report.pdf.md%'\"`"
-    - "Touch the binary to make it newer than the sibling .md:"
-    - "`touch $VAULT/Projects/Alpha/attachment/p15-dev-04-report.pdf`"
-    - "Run reconcile:"
-    - "`uv run kms reconcile`"
-    - "Verify sibling DB row has an updated content_hash:"
-    - "`sqlite3 data/kb.db \"SELECT vault_path, content_hash FROM documents WHERE vault_path LIKE '%p15-dev-04-report.pdf.md%'\"`"
+  - 'First, capture the binary to establish sibling in DB and record the initial content_hash:'
+  - '`uv run kms capture Projects/Alpha/attachment/p15-dev-04-report.pdf`'
+  - '`sqlite3 data/kb.db "SELECT vault_path, content_hash FROM documents WHERE vault_path LIKE ''%p15-dev-04-report.pdf.md%''"`'
+  - 'Touch the binary to make it newer than the sibling .md:'
+  - '`touch $VAULT/Projects/Alpha/attachment/p15-dev-04-report.pdf`'
+  - 'Run reconcile:'
+  - '`uv run kms reconcile`'
+  - 'Verify sibling DB row has an updated content_hash:'
+  - '`sqlite3 data/kb.db "SELECT vault_path, content_hash FROM documents WHERE vault_path LIKE ''%p15-dev-04-report.pdf.md%''"`'
   expected:
-    - "Sibling .md re-summarized with updated content"
-    - "DB row updated with new content_hash"
-  spec_ref: "roadmap §Phase1.5 'reconcile_stale_binaries'"
-  human_reviewed: no
+  - Sibling .md re-summarized with updated content
+  - DB row updated with new content_hash
+  spec_ref: roadmap §Phase1.5 'reconcile_stale_binaries'
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_reconcile.py::test_reconcile_stale_binaries_recaptures_when_binary_newer"
+  pytest_ref: tests/test_pipelines/test_reconcile.py::test_reconcile_stale_binaries_recaptures_when_binary_newer
   status: active
   retired: null
-
 - id: P15-DEV-05
-  behavior: "Debounce coalescing — rapid file events produce single capture"
+  behavior: Debounce coalescing — rapid file events produce single capture
   tier: full
   phase: 1.5
   origin: implementation
   granularity: mechanism
-  trigger: "kms watch + rapid file saves"
+  trigger: kms watch + rapid file saves
   fixtures:
-    - inbox/p15-dev-05-debounce.md
+  - inbox/p15-dev-05-debounce.md
   steps:
-    - "Clear any prior DB row for the test file:"
-    - "`sqlite3 data/kb.db \"DELETE FROM documents WHERE vault_path='inbox/p15-dev-05-debounce.md'\"`"
-    - "In Terminal 1, start the watcher:"
-    - "`uv run kms watch`"
-    - "In Terminal 2, touch the file 5 times within 1 second:"
-    - "`for i in 1 2 3 4 5; do touch $VAULT/inbox/p15-dev-05-debounce.md; done`"
-    - "After the debounce window (~3 sec), verify only one DB row exists (count should be 1):"
-    - "`sqlite3 data/kb.db \"SELECT count(*) FROM documents WHERE vault_path='inbox/p15-dev-05-debounce.md'\"`"
+  - 'Clear any prior DB row for the test file:'
+  - '`sqlite3 data/kb.db "DELETE FROM documents WHERE vault_path=''inbox/p15-dev-05-debounce.md''"`'
+  - 'In Terminal 1, start the watcher:'
+  - '`uv run kms watch`'
+  - 'In Terminal 2, touch the file 5 times within 1 second:'
+  - '`for i in 1 2 3 4 5; do touch $VAULT/inbox/p15-dev-05-debounce.md; done`'
+  - 'After the debounce window (~3 sec), verify only one DB row exists (count should be 1):'
+  - '`sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path=''inbox/p15-dev-05-debounce.md''"`'
   expected:
-    - "Only one capture_file call fires (after 3.0s debounce window)"
-    - "No duplicate DB rows in documents table"
-  spec_ref: "roadmap §Phase1 'watcher debounce'"
-  human_reviewed: no
+  - Only one capture_file call fires (after 3.0s debounce window)
+  - No duplicate DB rows in documents table
+  spec_ref: roadmap §Phase1 'watcher debounce'
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_vault/test_watcher.py::test_debounce_rapid_creates_fire_once"
+  pytest_ref: tests/test_vault/test_watcher.py::test_debounce_rapid_creates_fire_once
   status: active
   retired: null
-
 - id: P15-DEV-06
-  behavior: "Scan skips .summaries/ paths in added loop"
+  behavior: Scan skips .summaries/ paths in added loop
   tier: full
   phase: 1.5
   origin: implementation
   granularity: mechanism
-  trigger: "kms capture --scan"
+  trigger: kms capture --scan
   fixtures:
-    - Projects/Alpha/attachment/.summaries/p15-dev-06-test.pdf.md
-  fixture_frontmatter: |
-    type: attachment-summary
+  - Projects/Alpha/attachment/.summaries/p15-dev-06-test.pdf.md
+  fixture_frontmatter: 'type: attachment-summary
+
     attachment_path: Projects/Alpha/attachment/p15-dev-06-test.pdf
+
+    '
   steps:
-    - "Run scan:"
-    - "`uv run kms capture --scan`"
-    - "Verify the sibling fixture was NOT captured as a new document (count should be 0):"
-    - "`sqlite3 data/kb.db \"SELECT count(*) FROM documents WHERE vault_path='Projects/Alpha/attachment/.summaries/p15-dev-06-test.pdf.md'\"`"
+  - 'Run scan:'
+  - '`uv run kms capture --scan`'
+  - 'Verify the sibling fixture was NOT captured as a new document (count should be 0):'
+  - '`sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path=''Projects/Alpha/attachment/.summaries/p15-dev-06-test.pdf.md''"`'
   expected:
-    - "Sibling .md files inside .summaries/ NOT re-captured by scan"
-    - "No DB row created for p15-dev-06-test.pdf.md (count = 0)"
-    - "No rename or identity wipe on existing siblings"
-  spec_ref: "CLAUDE.md 'scan_capture modified loop skips .summaries/'"
-  human_reviewed: no
+  - Sibling .md files inside .summaries/ NOT re-captured by scan
+  - No DB row created for p15-dev-06-test.pdf.md (count = 0)
+  - No rename or identity wipe on existing siblings
+  spec_ref: CLAUDE.md 'scan_capture modified loop skips .summaries/'
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_capture_phase9.py::test_scan_capture_skips_summaries_in_modified_loop"
+  pytest_ref: tests/test_pipelines/test_capture_phase9.py::test_scan_capture_skips_summaries_in_modified_loop
   status: active
   retired: null
-
 - id: P15-DEV-07
-  behavior: "In-flight guard — modify event during running pipeline does not launch second capture"
+  behavior: In-flight guard — modify event during running pipeline does not launch second capture
   tier: full
   phase: 1.5
   origin: bugfix
   granularity: mechanism
-  trigger: "kms watch + on_modified fires while on_created pipeline still running (gap > debounce window)"
+  trigger: kms watch + on_modified fires while on_created pipeline still running (gap > debounce window)
   fixtures:
-    - inbox/sample.md
+  - inbox/sample.md
   steps:
-    - "In Terminal 1, start the watcher:"
-    - "`uv run kms watch`"
-    - "In Terminal 2, drop file and wait for pipeline to start (but not finish), then touch it:"
-    - "`cp tests/fixtures/sample.md <vault>/inbox/ && sleep 5 && touch <vault>/inbox/sample.md`"
-    - "In Terminal 2, check logs for the skip marker and verify only one capture fired:"
-    - "`grep 'skip_in_flight' logs/app.log | tail -5`"
-    - "`grep 'metadata.captured' logs/app.log | tail -5`"
-    - "Verify only one audit entry for this path:"
-    - "`sqlite3 data/kb.db \"SELECT count(*), stage, outcome FROM audit_log WHERE outcome='CAPTURED' GROUP BY stage, outcome ORDER BY rowid DESC LIMIT 5\"`"
+  - 'In Terminal 1, start the watcher:'
+  - '`uv run kms watch`'
+  - 'In Terminal 2, drop file and wait for pipeline to start (but not finish), then touch it:'
+  - '`cp tests/fixtures/sample.md <vault>/inbox/ && sleep 5 && touch <vault>/inbox/sample.md`'
+  - 'In Terminal 2, check logs for the skip marker and verify only one capture fired:'
+  - '`grep ''skip_in_flight'' logs/app.log | tail -5`'
+  - '`grep ''metadata.captured'' logs/app.log | tail -5`'
+  - 'Verify only one audit entry for this path:'
+  - '`sqlite3 data/kb.db "SELECT count(*), stage, outcome FROM audit_log WHERE outcome=''CAPTURED'' GROUP BY stage, outcome ORDER BY rowid DESC LIMIT 5"`'
   expected:
-    - "watcher.skip_in_flight debug log appears for the modify event"
-    - "Only one metadata.captured log line appears"
-    - "No duplicate audit entries for the same path"
-  spec_ref: "cli/main.py _dispatch() in-flight set"
-  human_reviewed: no
+  - watcher.skip_in_flight debug log appears for the modify event
+  - Only one metadata.captured log line appears
+  - No duplicate audit entries for the same path
+  spec_ref: cli/main.py _dispatch() in-flight set
+  human_reviewed: false
   last_tested: null
   last_result: null
   pytest_ref: null
   status: active
   retired: null
-
-# ═══════════════════════════════════════════════════════════════
-# PHASE PRE-2 — DB Schema + Domain Scalar Cleanup
-# ═══════════════════════════════════════════════════════════════
-
 - id: PRE2-DB-01
-  behavior: "Capture populates project, status, key_topics DB columns"
+  behavior: Capture populates project, status, key_topics DB columns
   tier: phase
   phase: pre-2
   origin: implementation
   granularity: mechanism
-  trigger: "kms capture <Projects/Alpha/note.md>"
+  trigger: kms capture <Projects/Alpha/note.md>
   fixtures:
-    - Projects/Alpha/test-db-columns.md
+  - Projects/Alpha/test-db-columns.md
   steps:
-    - "`uv run kms capture Projects/Alpha/test-db-columns.md`"
-    - "Then query the DB to verify columns:"
-    - "`sqlite3 data/kb.db \"SELECT vault_path, project, status, key_topics FROM documents WHERE vault_path LIKE '%test-db-columns%'\"`"
+  - '`uv run kms capture Projects/Alpha/test-db-columns.md`'
+  - 'Then query the DB to verify columns:'
+  - '`sqlite3 data/kb.db "SELECT vault_path, project, status, key_topics FROM documents WHERE vault_path LIKE ''%test-db-columns%''"`'
   expected:
-    - "DB row has project=Alpha"
-    - "key_topics contains a JSON array of topic tags"
-    - "status column present (may be NULL)"
-  spec_ref: "roadmap §Phase-Pre-2 'TD-008 documents columns'"
-  human_reviewed: yes
-  last_tested: "2026-06-07"
-  last_result: "passed"
-  pytest_ref: "tests/test_pipelines/test_capture_phase12.py::test_store_nonmd_located_happy_path_documents_row"
+  - DB row has project=Alpha
+  - key_topics contains a JSON array of topic tags
+  - status column present (may be NULL)
+  spec_ref: roadmap §Phase-Pre-2 'TD-008 documents columns'
+  human_reviewed: true
+  last_tested: '2026-06-07'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_capture_phase12.py::test_store_nonmd_located_happy_path_documents_row
   status: active
   retired: null
-
 - id: PRE2-DOM-01
-  behavior: "Old domain: scalar stripped by reconcile (lazy migration — Stage 5)"
+  behavior: 'Old domain: scalar stripped by reconcile (lazy migration — Stage 5)'
   tier: phase
   phase: pre-2
   origin: implementation
   granularity: outcome
-  trigger: "kms reconcile (Stage 5 — stale-tags sweep writes file, dumps() strips deprecated key)"
+  trigger: kms reconcile (Stage 5 — stale-tags sweep writes file, dumps() strips deprecated key)
   fixtures:
-    - Domain/Finance/test-pre2-dom-01.md
-  fixture_frontmatter: |
-    domain: finance
+  - Domain/Finance/test-pre2-dom-01.md
+  fixture_frontmatter: 'domain: finance
+
     tags:
+
     - domain/Finance
+
     - type/capture
+
+    '
   steps:
-    - "Run reconcile:"
-    - "`uv run kms reconcile`"
-    - "Open `Domain/Finance/test-pre2-dom-01.md` and inspect frontmatter:"
+  - 'Run reconcile:'
+  - '`uv run kms reconcile`'
+  - 'Open `Domain/Finance/test-pre2-dom-01.md` and inspect frontmatter:'
   expected:
-    - "domain: scalar key GONE from frontmatter"
-    - "domain/Finance still present in tags: list"
-    - "type/capture still present in tags: list"
-    - "Body content unchanged"
-  spec_ref: "roadmap §Phase-Pre-2 'TD-038 deprecated keys filter'; TD-042 (Stage 5 must mark dirty for deprecated keys)"
-  human_reviewed: yes
-  last_tested: "2026-06-07"
-  last_result: "failed - all frontmatter changed"
-  pytest_ref: "tests/test_pipelines/test_reconcile.py::test_reconcile_stale_tags_strips_deprecated_key"
+  - 'domain: scalar key GONE from frontmatter'
+  - 'domain/Finance still present in tags: list'
+  - 'type/capture still present in tags: list'
+  - Body content unchanged
+  spec_ref: roadmap §Phase-Pre-2 'TD-038 deprecated keys filter'; TD-042 (Stage 5 must mark dirty for deprecated keys)
+  human_reviewed: true
+  last_tested: '2026-06-07'
+  last_result: failed - all frontmatter changed
+  pytest_ref: tests/test_pipelines/test_reconcile.py::test_reconcile_stale_tags_strips_deprecated_key
   status: active
   retired: null
-
-# ═══════════════════════════════════════════════════════════════
-# VAULT-RESTRUCTURE — Editable/No-Edit Split (IMPLEMENTED — merged 2026-06-04)
-# ═══════════════════════════════════════════════════════════════
-
 - id: VR-PLACE-01
-  behavior: "No-edit binary (PDF/PNG/JPG) routed to attachment/"
+  behavior: No-edit binary (PDF/PNG/JPG) routed to attachment/
   tier: phase
   phase: vault-restructure
   origin: implementation
   granularity: outcome
-  trigger: "kms capture <no-edit binary>"
+  trigger: kms capture <no-edit binary>
   fixtures:
-    - Projects/Alpha/vr-place-01-test.pdf
+  - Projects/Alpha/vr-place-01-test.pdf
   steps:
-    - "`uv run kms capture Projects/Alpha/vr-place-01-test.pdf`"
+  - '`uv run kms capture Projects/Alpha/vr-place-01-test.pdf`'
   expected:
-    - "vr-place-01-test.pdf GONE from Projects/Alpha/ (moved to attachment/)"
-    - "Binary appears at Projects/Alpha/attachment/vr-place-01-test.pdf"
-    - "Sibling .md at Projects/Alpha/attachment/.summaries/vr-place-01-test.pdf.md"
-    - "Sibling frontmatter has type: attachment-summary"
-  spec_ref: "ADR-0006 'no-edit → attachment/'"
-  human_reviewed: no
+  - vr-place-01-test.pdf GONE from Projects/Alpha/ (moved to attachment/)
+  - Binary appears at Projects/Alpha/attachment/vr-place-01-test.pdf
+  - Sibling .md at Projects/Alpha/attachment/.summaries/vr-place-01-test.pdf.md
+  - 'Sibling frontmatter has type: attachment-summary'
+  spec_ref: ADR-0006 'no-edit → attachment/'
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_capture.py::test_noedit_in_attachment_no_move"
+  pytest_ref: tests/test_pipelines/test_capture.py::test_noedit_in_attachment_no_move
   status: active
   retired: null
-
 - id: VR-PLACE-02
-  behavior: "Editable binary (XLSX/DOCX/PPTX) routed to project/domain root"
+  behavior: Editable binary (XLSX/DOCX/PPTX) routed to project/domain root
   tier: phase
   phase: vault-restructure
   origin: implementation
   granularity: outcome
-  trigger: "kms capture <editable binary in Projects/>"
+  trigger: kms capture <editable binary in Projects/>
   fixtures:
-    - Projects/Alpha/vr-place-02-test.xlsx
+  - Projects/Alpha/vr-place-02-test.xlsx
   steps:
-    - "Run capture on the editable binary:"
-    - "`uv run kms capture Projects/Alpha/vr-place-02-test.xlsx`"
+  - 'Run capture on the editable binary:'
+  - '`uv run kms capture Projects/Alpha/vr-place-02-test.xlsx`'
   expected:
-    - "Binary still at Projects/Alpha/vr-place-02-test.xlsx (NOT moved to attachment/)"
-    - "Sibling .md written (NOT under attachment/ — editable stays at root)"
-  spec_ref: "ADR-0006 'editable → root'"
-  human_reviewed: no
-  last_tested: null
-  last_result: null
-  pytest_ref: "tests/test_pipelines/test_capture.py::test_editable_in_attachment_moved_to_root"
+  - Binary still at Projects/Alpha/vr-place-02-test.xlsx (NOT moved to attachment/)
+  - Sibling .md written (NOT under attachment/ — editable stays at root)
+  spec_ref: ADR-0006 'editable → root'
+  human_reviewed: 'yes'
+  last_tested: '2026-06-10'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_capture.py::test_editable_in_attachment_moved_to_root
   status: active
   retired: null
-
 - id: VR-SKIP-01
-  behavior: "Watcher and scan skip AI-output folders (Briefings/Synthesis/Documentation)"
+  behavior: Watcher and scan skip AI-output folders (Briefings/Synthesis/Documentation)
   tier: phase
   phase: vault-restructure
   origin: implementation
   granularity: outcome
-  trigger: "kms capture --scan or kms watch"
+  trigger: kms capture --scan or kms watch
   fixtures:
-    - Briefings/vr-skip-01-test.md
+  - Briefings/vr-skip-01-test.md
   steps:
-    - "Run scan:"
-    - "`uv run kms capture --scan`"
-    - "Verify no DB row created for the Briefings/ file:"
-    - "`sqlite3 data/kb.db \"SELECT count(*) FROM documents WHERE vault_path LIKE 'Briefings/%'\"`"
+  - 'Run scan:'
+  - '`uv run kms capture --scan`'
+  - 'Verify no DB row created for the Briefings/ file:'
+  - '`sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path LIKE ''Briefings/%''"`'
   expected:
-    - "File in Briefings/ NOT captured (skipped)"
-    - "No DB row created in documents table for the file (count = 0)"
-  spec_ref: "ADR-0006 'capture-excluded folders'"
-  human_reviewed: no
-  last_tested: null
-  last_result: null
-  pytest_ref: "tests/test_vault/test_watcher.py::test_should_skip_logs_debug_for_ai_output"
+  - File in Briefings/ NOT captured (skipped)
+  - No DB row created in documents table for the file (count = 0)
+  spec_ref: ADR-0006 'capture-excluded folders'
+  human_reviewed: 'yes'
+  last_tested: '2026-06-10'
+  last_result: Passed
+  pytest_ref: tests/test_vault/test_watcher.py::test_should_skip_logs_debug_for_ai_output
   status: active
   retired: null
-
 - id: VR-REHOME-01
-  behavior: "Misplaced binary re-homed to correct placement"
+  behavior: Misplaced binary re-homed to correct placement
   tier: phase
   phase: vault-restructure
   origin: implementation
   granularity: outcome
-  trigger: "kms reconcile (stage 7)"
+  trigger: kms reconcile (stage 7)
   fixtures:
-    - Projects/Alpha/attachment/vr-rehome-01-test.xlsx
+  - Projects/Alpha/attachment/vr-rehome-01-test.xlsx
   steps:
-    - "Run reconcile (stage 7 detects editable binary in attachment/ and moves it to root):"
-    - "`uv run kms reconcile`"
+  - 'Run reconcile (stage 7 detects editable binary in attachment/ and moves it to root):'
+  - '`uv run kms reconcile`'
   expected:
-    - "vr-rehome-01-test.xlsx GONE from Projects/Alpha/attachment/"
-    - "File appears at Projects/Alpha/vr-rehome-01-test.xlsx (project root, visible in Obsidian)"
-    - "Sibling .md path updated to reflect new location"
-  spec_ref: "ADR-0006 'reconcile_editable_migration'"
-  human_reviewed: no
-  last_tested: null
-  last_result: null
-  pytest_ref: "tests/test_pipelines/test_reconcile_editable_migration.py::test_editable_to_no_edit_migration"
+  - vr-rehome-01-test.xlsx GONE from Projects/Alpha/attachment/
+  - File appears at Projects/Alpha/vr-rehome-01-test.xlsx (project root, visible in Obsidian)
+  - Sibling .md path updated to reflect new location
+  spec_ref: ADR-0006 'reconcile_editable_migration'
+  human_reviewed: 'yes'
+  last_tested: '2026-06-10'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_reconcile_editable_migration.py::test_editable_to_no_edit_migration
   status: active
   retired: null
-
 - id: VR-CONTENT-01
-  behavior: "Binary content change detected and re-summarized"
+  behavior: Binary content change detected and re-summarized
   tier: full
   phase: vault-restructure
   origin: implementation
   granularity: mechanism
-  trigger: "kms watch + binary file edited"
+  trigger: kms watch + binary file edited
   fixtures:
-    - Projects/Alpha/attachment/vr-content-01-test.xlsx
+  - Projects/Alpha/attachment/vr-content-01-test.xlsx
   steps:
-    - "Ensure the binary has been captured first (creates sibling in .summaries/):"
-    - "`uv run kms capture Projects/Alpha/attachment/vr-content-01-test.xlsx`"
-    - "Record the current content_hash:"
-    - "`sqlite3 data/kb.db \"SELECT vault_path, content_hash FROM documents WHERE vault_path LIKE '%vr-content-01%'\"`"
-    - "In Terminal 1, start the watcher:"
-    - "`uv run kms watch`"
-    - "In Terminal 2, edit the XLSX content (actual data change, not just touch) and wait ~5 seconds for watcher to detect SHA-256 change."
-    - "Verify content_hash changed:"
-    - "`sqlite3 data/kb.db \"SELECT vault_path, content_hash FROM documents WHERE vault_path LIKE '%vr-content-01%'\"`"
+  - 'Ensure the binary has been captured first (creates sibling in .summaries/):'
+  - '`uv run kms capture Projects/Alpha/attachment/vr-content-01-test.xlsx`'
+  - 'Record the current content_hash:'
+  - '`sqlite3 data/kb.db "SELECT vault_path, content_hash FROM documents WHERE vault_path LIKE ''%vr-content-01%''"`'
+  - 'In Terminal 1, start the watcher:'
+  - '`uv run kms watch`'
+  - In Terminal 2, edit the XLSX content (actual data change, not just touch) and wait ~5 seconds for watcher to detect SHA-256 change.
+  - 'Verify content_hash changed:'
+  - '`sqlite3 data/kb.db "SELECT vault_path, content_hash FROM documents WHERE vault_path LIKE ''%vr-content-01%''"`'
   expected:
-    - "Sibling .md re-summarized with updated content"
-    - "source_hash updated in sibling frontmatter (open .summaries/vr-content-01-test.xlsx.md to verify)"
-    - "content_hash in DB row differs from pre-edit value"
-  spec_ref: "ADR-0006 'content_change_detect'"
-  human_reviewed: no
+  - Sibling .md re-summarized with updated content
+  - source_hash updated in sibling frontmatter (open .summaries/vr-content-01-test.xlsx.md to verify)
+  - content_hash in DB row differs from pre-edit value
+  spec_ref: ADR-0006 'content_change_detect'
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_vault/test_watcher_binary_modify.py::test_hash_differs_updates_source_hash"
+  pytest_ref: tests/test_vault/test_watcher_binary_modify.py::test_hash_differs_updates_source_hash
   status: active
   retired: null
-
-# ═══════════════════════════════════════════════════════════════
-# PHASE 2-BAT — TD-040 + TD-041 Batch-ID Fix
-# ID prefix: P2-BAT
-# Design doc: docs/1_design/td040-td041-batch-id-fix.md
-# ═══════════════════════════════════════════════════════════════
-
 - id: P2-BAT-01
-  behavior: "Single file captured into a project subfolder gets batch_id set in the documents row"
+  behavior: Single file captured into a project subfolder gets batch_id set in the documents row
   tier: full
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "kms capture <Projects/Alpha/subdir/report.pdf>"
+  trigger: kms capture <Projects/Alpha/subdir/report.pdf>
   fixtures: []
-  steps: "Drop a file into Projects/Alpha/subdir/ and run `uv run kms capture Projects/Alpha/subdir/report.pdf`. Query the DB: `sqlite3 data/kb.db 'SELECT vault_path, batch_id FROM documents WHERE vault_path LIKE \"%report%\"'`"
+  steps: 'Drop a file into Projects/Alpha/subdir/ and run `uv run kms capture Projects/Alpha/subdir/report.pdf`. Query the DB: `sqlite3 data/kb.db ''SELECT vault_path, batch_id FROM documents WHERE vault_path
+    LIKE "%report%"''`'
   expected:
-    - "batch_id column is non-NULL; the value references a row in the batches table with folder_path = 'Projects/Alpha/subdir'"
-  spec_ref: "docs/1_design/td040-td041-batch-id-fix.md §Success criteria"
-  human_reviewed: no
+  - batch_id column is non-NULL; the value references a row in the batches table with folder_path = 'Projects/Alpha/subdir'
+  spec_ref: docs/1_design/td040-td041-batch-id-fix.md §Success criteria
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_capture.py::test_batch_stamp_sets_batch_id_on_subfolder_capture"
+  pytest_ref: tests/test_pipelines/test_capture.py::test_batch_stamp_sets_batch_id_on_subfolder_capture
   status: active
   retired: null
-
 - id: P2-BAT-02
-  behavior: "Two files dropped separately into the same subfolder share the same batch_id"
+  behavior: Two files dropped separately into the same subfolder share the same batch_id
   tier: full
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "kms capture <file1>; kms capture <file2> (same folder)"
+  trigger: kms capture <file1>; kms capture <file2> (same folder)
   fixtures: []
-  steps: "Capture two files from the same subfolder in separate CLI invocations. Query batch_id for both vault_path rows."
+  steps: Capture two files from the same subfolder in separate CLI invocations. Query batch_id for both vault_path rows.
   expected:
-    - "Both documents rows have identical batch_id values; the batches row for that folder_path has file_count >= 2"
-  spec_ref: "docs/1_design/td040-td041-batch-id-fix.md §Success criteria"
-  human_reviewed: no
+  - Both documents rows have identical batch_id values; the batches row for that folder_path has file_count >= 2
+  spec_ref: docs/1_design/td040-td041-batch-id-fix.md §Success criteria
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_capture.py::test_batch_stamp_reuses_existing_batch"
+  pytest_ref: tests/test_pipelines/test_capture.py::test_batch_stamp_reuses_existing_batch
   status: active
   retired: null
-
 - id: P2-BAT-03
-  behavior: "Single file captured directly into inbox root or vault root gets no batch_id"
+  behavior: Single file captured directly into inbox root or vault root gets no batch_id
   tier: full
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "kms capture <inbox/report.pdf>"
+  trigger: kms capture <inbox/report.pdf>
   fixtures: []
-  steps: "Capture a file dropped directly into inbox/ (not inside a subfolder). Query batch_id for the resulting documents row."
+  steps: Capture a file dropped directly into inbox/ (not inside a subfolder). Query batch_id for the resulting documents row.
   expected:
-    - "batch_id column is NULL — inbox root is not batch-worthy"
-  spec_ref: "docs/1_design/td040-td041-batch-id-fix.md §Success criteria"
-  human_reviewed: no
+  - batch_id column is NULL — inbox root is not batch-worthy
+  spec_ref: docs/1_design/td040-td041-batch-id-fix.md §Success criteria
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_capture_folder.py::test_single_file_capture_leaves_batch_id_null"
+  pytest_ref: tests/test_pipelines/test_capture_folder.py::test_single_file_capture_leaves_batch_id_null
   status: active
   retired: null
-
 - id: P2-BAT-04
-  behavior: "scan_capture detects and batch-captures an unprocessed inbox subfolder"
+  behavior: scan_capture detects and batch-captures an unprocessed inbox subfolder
   tier: smoke
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "kms capture --scan"
+  trigger: kms capture --scan
   fixtures:
-    - inbox/test-batch-drop/note-a.md
-    - inbox/test-batch-drop/note-b.md
+  - inbox/test-batch-drop/note-a.md
+  - inbox/test-batch-drop/note-b.md
   steps:
-    - "Create the subfolder and two files: `mkdir -p <vault>/inbox/test-batch-drop` then drop any two .md files inside it (can be blank or with a line of text)."
-    - "Run `uv run kms capture --scan` from the repo root."
-    - "Check both files were indexed: `sqlite3 data/kb.db \"SELECT vault_path, batch_id FROM documents WHERE vault_path LIKE 'inbox/test-batch-drop/%' ORDER BY vault_path\"`"
-    - "Check a batch row was created: `sqlite3 data/kb.db \"SELECT folder_path, status FROM batches WHERE folder_path LIKE '%test-batch-drop%'\"`"
+  - 'Create the subfolder and two files: `mkdir -p <vault>/inbox/test-batch-drop` then drop any two .md files inside it (can be blank or with a line of text).'
+  - Run `uv run kms capture --scan` from the repo root.
+  - 'Check both files were indexed: `sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE vault_path LIKE ''inbox/test-batch-drop/%'' ORDER BY vault_path"`'
+  - 'Check a batch row was created: `sqlite3 data/kb.db "SELECT folder_path, status FROM batches WHERE folder_path LIKE ''%test-batch-drop%''"`'
   expected:
-    - "Both vault_path rows returned by the first query, both with the same non-NULL batch_id (a UUID-style string)."
-    - "The batches query returns exactly one row with folder_path containing 'test-batch-drop'."
-  spec_ref: "docs/1_design/td040-td041-batch-id-fix.md §Success criteria"
-  human_reviewed: no
+  - Both vault_path rows returned by the first query, both with the same non-NULL batch_id (a UUID-style string).
+  - The batches query returns exactly one row with folder_path containing 'test-batch-drop'.
+  spec_ref: docs/1_design/td040-td041-batch-id-fix.md §Success criteria
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_capture_folder.py::test_project_drop_writes_batch_id_on_document_rows"
+  pytest_ref: tests/test_pipelines/test_capture_folder.py::test_project_drop_writes_batch_id_on_document_rows
   status: active
   retired: null
-
 - id: P2-BAT-05
-  behavior: "scan_capture skips a subfolder already captured by the watcher (no duplicate batch)"
+  behavior: scan_capture skips a subfolder already captured by the watcher (no duplicate batch)
   tier: full
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "kms capture --scan (after watcher already processed the folder)"
+  trigger: kms capture --scan (after watcher already processed the folder)
   fixtures: []
-  steps: "Start watcher, drop a subfolder into inbox/. After watcher captures it, stop watcher and run `kms capture --scan`."
+  steps: Start watcher, drop a subfolder into inbox/. After watcher captures it, stop watcher and run `kms capture --scan`.
   expected:
-    - "No second batches row created for the same folder_path. Existing documents rows unchanged. Log shows subfolder skipped."
-  spec_ref: "docs/1_design/td040-td041-batch-id-fix.md §Success criteria"
-  human_reviewed: no
+  - No second batches row created for the same folder_path. Existing documents rows unchanged. Log shows subfolder skipped.
+  spec_ref: docs/1_design/td040-td041-batch-id-fix.md §Success criteria
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_capture_folder.py::test_folder_path_nfc_matches_batch_lookup"
+  pytest_ref: tests/test_pipelines/test_capture_folder.py::test_folder_path_nfc_matches_batch_lookup
   status: active
   retired: null
-
 - id: P2-BAT-06
-  behavior: "File moved into a batch-worthy subfolder by the watcher gets batch_id updated in-place"
+  behavior: File moved into a batch-worthy subfolder by the watcher gets batch_id updated in-place
   tier: full
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "kms watch + file moved into Projects/Alpha/subdir/"
+  trigger: kms watch + file moved into Projects/Alpha/subdir/
   fixtures: []
-  steps: "Start watcher. Move a previously-captured file from inbox/ into Projects/Alpha/subdir/. Query batch_id for the updated documents row."
+  steps: Start watcher. Move a previously-captured file from inbox/ into Projects/Alpha/subdir/. Query batch_id for the updated documents row.
   expected:
-    - "batch_id updated to the batch for Projects/Alpha/subdir. No re-capture triggered (summary and content_hash unchanged)."
-  spec_ref: "docs/1_design/td040-td041-batch-id-fix.md §Success criteria"
-  human_reviewed: no
+  - batch_id updated to the batch for Projects/Alpha/subdir. No re-capture triggered (summary and content_hash unchanged).
+  spec_ref: docs/1_design/td040-td041-batch-id-fix.md §Success criteria
+  human_reviewed: false
   last_tested: null
   last_result: null
   pytest_ref: null
   status: active
   retired: null
-
 - id: P2-REC-01
-  behavior: "reconcile strips deprecated frontmatter key from a note that already has valid tags and correct project field"
+  behavior: reconcile strips deprecated frontmatter key from a note that already has valid tags and correct project field
   tier: phase
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "kms reconcile"
-  fixtures: ["Projects/Alpha/note.md"]
-  fixture_frontmatter: |
-    type: note
+  trigger: kms reconcile
+  fixtures:
+  - Projects/Alpha/note.md
+  fixture_frontmatter: 'type: note
+
     tags: []
+
     project: Alpha
+
     domain: finance
+
+    '
   steps:
-    - "Run reconcile:"
-    - "`uv run kms reconcile`"
-    - "Open `Projects/Alpha/note.md` and inspect frontmatter."
+  - 'Run reconcile:'
+  - '`uv run kms reconcile`'
+  - Open `Projects/Alpha/note.md` and inspect frontmatter.
   expected:
-    - "`domain: finance` key absent from frontmatter"
-    - "`project: Alpha` unchanged"
-    - "`tags:` list unchanged (still empty)"
-  spec_ref: "docs/3_specs/td042-deprecated-key-strip-mini.md"
-  human_reviewed: no
-  last_tested: null
-  last_result: null
-  pytest_ref: "tests/test_pipelines/test_reconcile.py::test_reconcile_stale_tags_strips_deprecated_key"
+  - '`domain: finance` key absent from frontmatter'
+  - '`project: Alpha` unchanged'
+  - '`tags:` list unchanged (still empty)'
+  spec_ref: docs/3_specs/td042-deprecated-key-strip-mini.md
+  human_reviewed: 'yes'
+  last_tested: '2026-06-10'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_reconcile.py::test_reconcile_stale_tags_strips_deprecated_key
   status: active
   retired: null
-
 - id: P2-REC-02
-  behavior: "reconcile leaves a human-locked note untouched even if it has a deprecated frontmatter key"
+  behavior: reconcile leaves a human-locked note untouched even if it has a deprecated frontmatter key
   tier: phase
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "kms reconcile"
-  fixtures: ["Projects/Alpha/locked.md"]
-  fixture_frontmatter: |
-    type: note
+  trigger: kms reconcile
+  fixtures:
+  - Projects/Alpha/locked.md
+  fixture_frontmatter: 'type: note
+
     tags: []
+
     project: Alpha
+
     domain: finance
+
     updated_by_human: true
+
+    '
   steps:
-    - "Run reconcile:"
-    - "`uv run kms reconcile`"
-    - "Open `Projects/Alpha/locked.md` and inspect frontmatter."
+  - 'Run reconcile:'
+  - '`uv run kms reconcile`'
+  - Open `Projects/Alpha/locked.md` and inspect frontmatter.
   expected:
-    - "`domain: finance` still present in frontmatter (not stripped)"
-    - "`updated_by_human: true` unchanged"
-    - "No other frontmatter fields modified"
-  spec_ref: "docs/3_specs/td042-deprecated-key-strip-mini.md"
-  human_reviewed: no
-  last_tested: null
-  last_result: null
-  pytest_ref: "tests/test_pipelines/test_reconcile.py::test_reconcile_stale_tags_leaves_deprecated_key_on_human_locked_note"
+  - '`domain: finance` still present in frontmatter (not stripped)'
+  - '`updated_by_human: true` unchanged'
+  - No other frontmatter fields modified
+  spec_ref: docs/3_specs/td042-deprecated-key-strip-mini.md
+  human_reviewed: 'yes'
+  last_tested: '2026-06-10'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_reconcile.py::test_reconcile_stale_tags_leaves_deprecated_key_on_human_locked_note
   status: active
   retired: null
-
 - id: P2-REC-03
-  behavior: "reconcile does not write a note that has no deprecated keys and no other dirty reason"
+  behavior: reconcile does not write a note that has no deprecated keys and no other dirty reason
   tier: phase
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "kms reconcile"
-  fixtures: ["Projects/Alpha/clean.md"]
-  fixture_frontmatter: |
-    type: note
+  trigger: kms reconcile
+  fixtures:
+  - Projects/Alpha/clean.md
+  fixture_frontmatter: 'type: note
+
     tags: []
+
     project: Alpha
+
+    '
   steps:
-    - "Run reconcile:"
-    - "`uv run kms reconcile`"
-    - "Check the note's last-modified timestamp before and after — it should not change."
+  - 'Run reconcile:'
+  - '`uv run kms reconcile`'
+  - Check the note's last-modified timestamp before and after — it should not change.
   expected:
-    - "Note frontmatter unchanged (no unexpected fields added or removed)"
-    - "File modification time unchanged (reconcile did not rewrite it)"
-  spec_ref: "docs/3_specs/td042-deprecated-key-strip-mini.md"
-  human_reviewed: no
-  last_tested: null
-  last_result: null
-  pytest_ref: "tests/test_pipelines/test_reconcile.py::test_reconcile_stale_tags_does_not_write_note_without_deprecated_key"
+  - Note frontmatter unchanged (no unexpected fields added or removed)
+  - File modification time unchanged (reconcile did not rewrite it)
+  spec_ref: docs/3_specs/td042-deprecated-key-strip-mini.md
+  human_reviewed: 'yes'
+  last_tested: '2026-06-10'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_reconcile.py::test_reconcile_stale_tags_does_not_write_note_without_deprecated_key
   status: active
   retired: null
-
-# ═══════════════════════════════════════════════════════════════
-# PHASE 2-REG — Project Registry
-# ID prefix: P2-REG
-# Design doc: docs/1_design/project-registry.md
-# ═══════════════════════════════════════════════════════════════
-
 - id: P2-REG-01
-  behavior: "Registry returns all Projects/<A>/ folders grouped under their declared domain"
+  behavior: Registry returns all Projects/<A>/ folders grouped under their declared domain
   tier: smoke
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "python -c 'from vault.registry import build_registry; ...' or internal pipeline call"
+  trigger: python -c 'from vault.registry import build_registry; ...' or internal pipeline call
   fixtures:
-    - Projects/Alpha/CLAUDE.md
-    - Projects/Beta/CLAUDE.md
-    - Domain/Finance/CLAUDE.md
-  fixture_frontmatter: |
-    tags:
+  - Projects/Alpha/CLAUDE.md
+  - Projects/Beta/CLAUDE.md
+  - Domain/Finance/CLAUDE.md
+  fixture_frontmatter: 'tags:
+
     - domain/Finance
+
+    '
   steps:
-    - "Set up Projects/Alpha/CLAUDE.md with tags: [domain/Finance] and Projects/Beta/CLAUDE.md with no domain tag."
-    - "Ensure Domain/Finance/ folder exists."
-    - "Call build_registry(vault_cfg) and inspect the returned structure."
+  - 'Set up Projects/Alpha/CLAUDE.md with tags: [domain/Finance] and Projects/Beta/CLAUDE.md with no domain tag.'
+  - Ensure Domain/Finance/ folder exists.
+  - Call build_registry(vault_cfg) and inspect the returned structure.
   expected:
-    - "Finance group contains Alpha (has matching Domain/Finance/ folder and domain/Finance tag)"
-    - "Uncategorized group contains Beta (no domain tag)"
-    - "Domain/Finance/ listed as a direct destination"
-    - "Domain/Finance/Archive/ NOT included as a destination"
-  spec_ref: "docs/1_design/project-registry.md §Success criteria"
-  human_reviewed: no
+  - Finance group contains Alpha (has matching Domain/Finance/ folder and domain/Finance tag)
+  - Uncategorized group contains Beta (no domain tag)
+  - Domain/Finance/ listed as a direct destination
+  - Domain/Finance/Archive/ NOT included as a destination
+  spec_ref: docs/1_design/project-registry.md §Success criteria
+  human_reviewed: false
   last_tested: null
   last_result: null
   pytest_ref: null
   status: planned
   retired: null
-
 - id: P2-REG-02
-  behavior: "Project with stale domain tag (domain folder deleted) moves to Uncategorized"
+  behavior: Project with stale domain tag (domain folder deleted) moves to Uncategorized
   tier: smoke
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "build_registry(vault_cfg) after domain folder removed"
+  trigger: build_registry(vault_cfg) after domain folder removed
   fixtures:
-    - Projects/Gamma/CLAUDE.md
-  fixture_frontmatter: |
-    tags:
+  - Projects/Gamma/CLAUDE.md
+  fixture_frontmatter: 'tags:
+
     - domain/OldDomain
+
+    '
   steps:
-    - "Set up Projects/Gamma/CLAUDE.md with tags: [domain/OldDomain]."
-    - "Ensure Domain/OldDomain/ does NOT exist."
-    - "Call build_registry(vault_cfg) and inspect the Uncategorized group."
+  - 'Set up Projects/Gamma/CLAUDE.md with tags: [domain/OldDomain].'
+  - Ensure Domain/OldDomain/ does NOT exist.
+  - Call build_registry(vault_cfg) and inspect the Uncategorized group.
   expected:
-    - "Gamma appears in Uncategorized (not in any domain group)"
-    - "No error raised — stale domain tag handled gracefully"
-  spec_ref: "docs/1_design/project-registry.md §Success criteria"
-  human_reviewed: no
+  - Gamma appears in Uncategorized (not in any domain group)
+  - No error raised — stale domain tag handled gracefully
+  spec_ref: docs/1_design/project-registry.md §Success criteria
+  human_reviewed: false
   last_tested: null
   last_result: null
   pytest_ref: null
   status: planned
   retired: null
-
 - id: P2-REG-03
-  behavior: "Project with no CLAUDE.md appears in Uncategorized"
+  behavior: Project with no CLAUDE.md appears in Uncategorized
   tier: smoke
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "build_registry(vault_cfg) for project missing CLAUDE.md"
+  trigger: build_registry(vault_cfg) for project missing CLAUDE.md
   fixtures:
-    - Projects/NoIndex/placeholder.md
+  - Projects/NoIndex/placeholder.md
   steps:
-    - "Create Projects/NoIndex/ folder with a file but NO CLAUDE.md."
-    - "Call build_registry(vault_cfg) and inspect the Uncategorized group."
+  - Create Projects/NoIndex/ folder with a file but NO CLAUDE.md.
+  - Call build_registry(vault_cfg) and inspect the Uncategorized group.
   expected:
-    - "NoIndex appears in Uncategorized"
-    - "No error raised — missing CLAUDE.md treated as no domain mapping"
-  spec_ref: "docs/1_design/project-registry.md §Success criteria"
-  human_reviewed: no
+  - NoIndex appears in Uncategorized
+  - No error raised — missing CLAUDE.md treated as no domain mapping
+  spec_ref: docs/1_design/project-registry.md §Success criteria
+  human_reviewed: false
   last_tested: null
   last_result: null
   pytest_ref: null
   status: planned
   retired: null
-
 - id: P2-REG-04
-  behavior: "Only the first domain/D tag is used when CLAUDE.md has multiple domain tags"
+  behavior: Only the first domain/D tag is used when CLAUDE.md has multiple domain tags
   tier: phase
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "build_registry(vault_cfg)"
+  trigger: build_registry(vault_cfg)
   fixtures:
-    - Projects/Multi/CLAUDE.md
-  fixture_frontmatter: |
-    tags:
+  - Projects/Multi/CLAUDE.md
+  fixture_frontmatter: 'tags:
+
     - domain/Finance
+
     - domain/Operations
+
+    '
   steps:
-    - "Set up Projects/Multi/CLAUDE.md with two domain/ tags."
-    - "Ensure both Domain/Finance/ and Domain/Operations/ exist."
-    - "Call build_registry(vault_cfg) and check which group Multi appears in."
+  - Set up Projects/Multi/CLAUDE.md with two domain/ tags.
+  - Ensure both Domain/Finance/ and Domain/Operations/ exist.
+  - Call build_registry(vault_cfg) and check which group Multi appears in.
   expected:
-    - "Multi appears in exactly ONE group (the first domain tag: Finance)"
-    - "Multi does NOT appear in Operations group"
-    - "Multi does NOT appear in Uncategorized"
-  spec_ref: "docs/1_design/project-registry.md §Success criteria (ADR-0009 one-domain rule)"
-  human_reviewed: no
+  - 'Multi appears in exactly ONE group (the first domain tag: Finance)'
+  - Multi does NOT appear in Operations group
+  - Multi does NOT appear in Uncategorized
+  spec_ref: docs/1_design/project-registry.md §Success criteria (ADR-0009 one-domain rule)
+  human_reviewed: false
   last_tested: null
   last_result: null
   pytest_ref: null
   status: planned
   retired: null
-
 - id: P2-REG-05
-  behavior: "Watcher live-update: new project folder added to registry without restart"
+  behavior: 'Watcher live-update: new project folder added to registry without restart'
   tier: full
   phase: 2
   origin: design
   granularity: mechanism
-  trigger: "kms watch + mkdir Projects/NewProject/ in vault"
+  trigger: kms watch + mkdir Projects/NewProject/ in vault
   fixtures: []
   steps:
-    - "Start kms watch."
-    - "Create Projects/NewProject/ directory in vault."
-    - "Wait for watcher to detect DirCreatedEvent (~3s)."
-    - "Inspect registry state (log line or direct object check)."
+  - Start kms watch.
+  - Create Projects/NewProject/ directory in vault.
+  - Wait for watcher to detect DirCreatedEvent (~3s).
+  - Inspect registry state (log line or direct object check).
   expected:
-    - "Registry now includes NewProject in Uncategorized (no CLAUDE.md yet)"
-    - "No kms watch restart required"
-    - "Audit log entry written for registry update"
-  spec_ref: "docs/1_design/project-registry.md §Success criteria"
-  human_reviewed: no
+  - Registry now includes NewProject in Uncategorized (no CLAUDE.md yet)
+  - No kms watch restart required
+  - Audit log entry written for registry update
+  spec_ref: docs/1_design/project-registry.md §Success criteria
+  human_reviewed: false
   last_tested: null
   last_result: null
   pytest_ref: null
   status: planned
   retired: null
-
 - id: P2-REG-06
-  behavior: "Watcher live-update: project CLAUDE.md created or updated changes domain grouping"
+  behavior: 'Watcher live-update: project CLAUDE.md created or updated changes domain grouping'
   tier: full
   phase: 2
   origin: design
   granularity: mechanism
-  trigger: "kms watch + write/update Projects/<A>/CLAUDE.md with domain tag"
+  trigger: kms watch + write/update Projects/<A>/CLAUDE.md with domain tag
   fixtures:
-    - Projects/Alpha/placeholder.md
-    - Domain/Finance/placeholder.md
+  - Projects/Alpha/placeholder.md
+  - Domain/Finance/placeholder.md
   steps:
-    - "Start kms watch with Projects/Alpha/ folder present but no CLAUDE.md."
-    - "Verify Alpha is in Uncategorized group."
-    - "Create Projects/Alpha/CLAUDE.md with tags: [domain/Finance]."
-    - "Wait for watcher to detect FileCreatedEvent (~3s)."
-    - "Inspect registry state."
+  - Start kms watch with Projects/Alpha/ folder present but no CLAUDE.md.
+  - Verify Alpha is in Uncategorized group.
+  - 'Create Projects/Alpha/CLAUDE.md with tags: [domain/Finance].'
+  - Wait for watcher to detect FileCreatedEvent (~3s).
+  - Inspect registry state.
   expected:
-    - "Alpha moved from Uncategorized to Finance group in registry"
-    - "No restart required"
-  spec_ref: "docs/1_design/project-registry.md §Success criteria"
-  human_reviewed: no
+  - Alpha moved from Uncategorized to Finance group in registry
+  - No restart required
+  spec_ref: docs/1_design/project-registry.md §Success criteria
+  human_reviewed: false
   last_tested: null
   last_result: null
   pytest_ref: null
   status: planned
   retired: null
-
-# ═══════════════════════════════════════════════════════════════
-# ID prefix: P2-CPROMPT
-# Design doc: docs/2_specs/classify-prompt-mini.md
-# NOTE: All P2-CPROMPT entries RETIRED 2026-06-09 — classify engine reshaped in P2-CIC Phase 3
-# (target_type/target_name → project/domains/primary_domain). P2-CIC entries cover classify behavior.
-# ═══════════════════════════════════════════════════════════════
-
 - id: P2-CPROMPT-01
-  behavior: "Classify prompt returns valid JSON with target_type, target_name, confidence, and reasoning fields"
+  behavior: Classify prompt returns valid JSON with target_type, target_name, confidence, and reasoning fields
   tier: smoke
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "kms classify <file> or direct Classify pipeline call with real LLM"
+  trigger: kms classify <file> or direct Classify pipeline call with real LLM
   fixtures:
-    - inbox/sample-note.md
+  - inbox/sample-note.md
   steps:
-    - "Place a note in inbox/ with title, summary, and tags already set."
-    - "Call the Classify pipeline with a valid valid_destinations string."
-    - "Inspect the raw LLM response."
+  - Place a note in inbox/ with title, summary, and tags already set.
+  - Call the Classify pipeline with a valid valid_destinations string.
+  - Inspect the raw LLM response.
   expected:
-    - "Response is valid JSON — no markdown fences, no prose"
-    - "JSON contains exactly: target_type, target_name, confidence, reasoning"
-    - "target_type is either 'domain' or 'project'"
-    - "confidence is a float between 0.0 and 1.0"
-    - "reasoning is a non-empty string"
-  spec_ref: "docs/2_specs/classify-prompt-mini.md §Done when #3"
-  human_reviewed: no
+  - Response is valid JSON — no markdown fences, no prose
+  - 'JSON contains exactly: target_type, target_name, confidence, reasoning'
+  - target_type is either 'domain' or 'project'
+  - confidence is a float between 0.0 and 1.0
+  - reasoning is a non-empty string
+  spec_ref: 'docs/2_specs/classify-prompt-mini.md §Done when #3'
+  human_reviewed: false
   last_tested: null
   last_result: null
   pytest_ref: null
   status: retired
-  retired: "2026-06-09: classify engine reshaped in P2-CIC Phase 3 — old target_type/target_name API replaced with project/domains/primary_domain. P2-CIC entries now cover classify behavior."
-
+  retired: '2026-06-09: classify engine reshaped in P2-CIC Phase 3 — old target_type/target_name API replaced with project/domains/primary_domain. P2-CIC entries now cover classify behavior.'
 - id: P2-CPROMPT-02
-  behavior: "Classify prompt routes active-work notes to a project and general-knowledge notes to a domain"
+  behavior: Classify prompt routes active-work notes to a project and general-knowledge notes to a domain
   tier: smoke
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "kms classify <file> with two distinct note types and a vault with both project and domain destinations"
+  trigger: kms classify <file> with two distinct note types and a vault with both project and domain destinations
   fixtures:
-    - inbox/meeting-notes.md
-    - inbox/industry-report.md
-    - Projects/Alpha/CLAUDE.md
-    - Domain/Finance/placeholder.md
+  - inbox/meeting-notes.md
+  - inbox/industry-report.md
+  - Projects/Alpha/CLAUDE.md
+  - Domain/Finance/placeholder.md
   steps:
-    - "Classify a note whose summary describes active project work (e.g. meeting notes, deliverable)."
-    - "Classify a note whose summary describes general reference material (e.g. industry report, background research)."
+  - Classify a note whose summary describes active project work (e.g. meeting notes, deliverable).
+  - Classify a note whose summary describes general reference material (e.g. industry report, background research).
   expected:
-    - "Active-work note: target_type='project'"
-    - "General-knowledge note: target_type='domain'"
-  spec_ref: "docs/2_specs/classify-prompt-mini.md §Done when #4"
-  human_reviewed: no
+  - 'Active-work note: target_type=''project'''
+  - 'General-knowledge note: target_type=''domain'''
+  spec_ref: 'docs/2_specs/classify-prompt-mini.md §Done when #4'
+  human_reviewed: false
   last_tested: null
   last_result: null
   pytest_ref: null
   status: retired
-  retired: "2026-06-09: classify engine reshaped in P2-CIC Phase 3 — old target_type/target_name API replaced with project/domains/primary_domain. P2-CIC entries now cover classify behavior."
-
+  retired: '2026-06-09: classify engine reshaped in P2-CIC Phase 3 — old target_type/target_name API replaced with project/domains/primary_domain. P2-CIC entries now cover classify behavior.'
 - id: P2-CPROMPT-03
-  behavior: "Classify prompt never returns target_name='Uncategorized' — routes to actual project name within that group"
+  behavior: Classify prompt never returns target_name='Uncategorized' — routes to actual project name within that group
   tier: smoke
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "kms classify <file> when valid_destinations contains an Uncategorized group with one or more projects"
+  trigger: kms classify <file> when valid_destinations contains an Uncategorized group with one or more projects
   fixtures:
-    - inbox/sample-note.md
+  - inbox/sample-note.md
   steps:
-    - "Build a valid_destinations string that includes an Uncategorized group containing 'OrphanProject'."
-    - "Classify a note that best matches OrphanProject."
-    - "Inspect target_name in the response."
+  - Build a valid_destinations string that includes an Uncategorized group containing 'OrphanProject'.
+  - Classify a note that best matches OrphanProject.
+  - Inspect target_name in the response.
   expected:
-    - "target_name is 'OrphanProject', not 'Uncategorized'"
-    - "target_type is 'project'"
-  spec_ref: "docs/2_specs/classify-prompt-mini.md §Done when #6"
-  human_reviewed: no
+  - target_name is 'OrphanProject', not 'Uncategorized'
+  - target_type is 'project'
+  spec_ref: 'docs/2_specs/classify-prompt-mini.md §Done when #6'
+  human_reviewed: false
   last_tested: null
   last_result: null
   pytest_ref: null
   status: retired
-  retired: "2026-06-09: classify engine reshaped in P2-CIC Phase 3 — old target_type/target_name API replaced with project/domains/primary_domain. P2-CIC entries now cover classify behavior."
-
+  retired: '2026-06-09: classify engine reshaped in P2-CIC Phase 3 — old target_type/target_name API replaced with project/domains/primary_domain. P2-CIC entries now cover classify behavior.'
 - id: P2-CPROMPT-04
-  behavior: "Classify prompt returns low confidence rather than a forced answer when no destination fits well"
+  behavior: Classify prompt returns low confidence rather than a forced answer when no destination fits well
   tier: smoke
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "kms classify <file> with a note whose content has no clear match in valid_destinations"
+  trigger: kms classify <file> with a note whose content has no clear match in valid_destinations
   fixtures:
-    - inbox/ambiguous-note.md
+  - inbox/ambiguous-note.md
   steps:
-    - "Classify a note whose summary is vague or covers a topic absent from valid_destinations."
-    - "Inspect confidence in the response."
+  - Classify a note whose summary is vague or covers a topic absent from valid_destinations.
+  - Inspect confidence in the response.
   expected:
-    - "confidence is below 0.7"
-    - "target_name is still populated (best guess, not null)"
-  spec_ref: "docs/2_specs/classify-prompt-mini.md §Done when #5"
-  human_reviewed: no
+  - confidence is below 0.7
+  - target_name is still populated (best guess, not null)
+  spec_ref: 'docs/2_specs/classify-prompt-mini.md §Done when #5'
+  human_reviewed: false
   last_tested: null
   last_result: null
   pytest_ref: null
   status: retired
-  retired: "2026-06-09: classify engine reshaped in P2-CIC Phase 3 — old target_type/target_name API replaced with project/domains/primary_domain. P2-CIC entries now cover classify behavior."
-
+  retired: '2026-06-09: classify engine reshaped in P2-CIC Phase 3 — old target_type/target_name API replaced with project/domains/primary_domain. P2-CIC entries now cover classify behavior.'
 - id: P2-CL-01
-  behavior: "classify() returns Success(ClassifyResult) with all four fields when AI returns valid JSON"
+  behavior: classify() returns Success(ClassifyResult) with all four fields when AI returns valid JSON
   tier: unit
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "classify() called with valid title, summary, tags, valid_destinations and AI returns valid JSON"
+  trigger: classify() called with valid title, summary, tags, valid_destinations and AI returns valid JSON
   fixtures:
-    - inbox/sample-note.md
+  - inbox/sample-note.md
   steps:
-    - "Call classify() with a note's title, summary, tags, and a formatted destinations string."
-    - "Mock the AI provider to return valid JSON with target_type, target_name, confidence, reasoning."
-    - "Inspect the return value."
+  - Call classify() with a note's title, summary, tags, and a formatted destinations string.
+  - Mock the AI provider to return valid JSON with target_type, target_name, confidence, reasoning.
+  - Inspect the return value.
   expected:
-    - "Returns Success(ClassifyResult)"
-    - "ClassifyResult.target_type is 'project' or 'domain'"
-    - "ClassifyResult.target_name is a non-empty string"
-    - "ClassifyResult.confidence is a float between 0.0 and 1.0"
-    - "ClassifyResult.reasoning is a non-empty string"
-  spec_ref: "docs/1_design/phase2/classify.md §P2-CL-01"
-  human_reviewed: no
+  - Returns Success(ClassifyResult)
+  - ClassifyResult.target_type is 'project' or 'domain'
+  - ClassifyResult.target_name is a non-empty string
+  - ClassifyResult.confidence is a float between 0.0 and 1.0
+  - ClassifyResult.reasoning is a non-empty string
+  spec_ref: docs/1_design/phase2/classify.md §P2-CL-01
+  human_reviewed: false
   last_tested: null
   last_result: null
   pytest_ref: null
   status: retired
-  retired: "2026-06-09: ClassifyResult schema reshaped in P2-CIC Phase 3 — old target_type/target_name fields replaced with project/domains/primary_domain."
-
+  retired: '2026-06-09: ClassifyResult schema reshaped in P2-CIC Phase 3 — old target_type/target_name fields replaced with project/domains/primary_domain.'
 - id: P2-CL-02
-  behavior: "classify() returns Failure(recoverable=True) when AI returns malformed JSON"
+  behavior: classify() returns Failure(recoverable=True) when AI returns malformed JSON
   tier: unit
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "classify() called and AI returns a response that is not valid JSON"
+  trigger: classify() called and AI returns a response that is not valid JSON
   fixtures: []
   steps:
-    - "Call classify() with valid inputs."
-    - "Mock the AI provider to return a plain-text string (not JSON)."
-    - "Inspect the return value."
+  - Call classify() with valid inputs.
+  - Mock the AI provider to return a plain-text string (not JSON).
+  - Inspect the return value.
   expected:
-    - "Returns Failure"
-    - "Failure.recoverable is True"
-    - "No exception raised"
-  spec_ref: "docs/1_design/phase2/classify.md §P2-CL-02"
-  human_reviewed: no
+  - Returns Failure
+  - Failure.recoverable is True
+  - No exception raised
+  spec_ref: docs/1_design/phase2/classify.md §P2-CL-02
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_classify.py::test_bad_json_returns_retryable"
+  pytest_ref: tests/test_pipelines/test_classify.py::test_bad_json_returns_retryable
   status: active
   retired: null
-
 - id: P2-CL-03
-  behavior: "classify() returns Failure(recoverable=True) when JSON is valid but target_type is not 'project' or 'domain'"
+  behavior: classify() returns Failure(recoverable=True) when JSON is valid but target_type is not 'project' or 'domain'
   tier: unit
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "classify() called and AI returns JSON with an invalid target_type value"
+  trigger: classify() called and AI returns JSON with an invalid target_type value
   fixtures: []
   steps:
-    - "Call classify() with valid inputs."
-    - "Mock the AI provider to return JSON where target_type is 'folder' or missing."
-    - "Inspect the return value."
+  - Call classify() with valid inputs.
+  - Mock the AI provider to return JSON where target_type is 'folder' or missing.
+  - Inspect the return value.
   expected:
-    - "Returns Failure"
-    - "Failure.recoverable is True"
-    - "No exception raised"
-  spec_ref: "docs/1_design/phase2/classify.md §P2-CL-03"
-  human_reviewed: no
+  - Returns Failure
+  - Failure.recoverable is True
+  - No exception raised
+  spec_ref: docs/1_design/phase2/classify.md §P2-CL-03
+  human_reviewed: false
   last_tested: null
   last_result: null
   pytest_ref: null
   status: retired
-  retired: "2026-06-09: ClassifyResult schema reshaped in P2-CIC Phase 3 — old target_type/target_name fields replaced with project/domains/primary_domain."
-
+  retired: '2026-06-09: ClassifyResult schema reshaped in P2-CIC Phase 3 — old target_type/target_name fields replaced with project/domains/primary_domain.'
 - id: P2-CL-04
-  behavior: "classify() never raises an exception and never returns None"
+  behavior: classify() never raises an exception and never returns None
   tier: unit
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "classify() called under any failure condition (AI failure, bad JSON, network error)"
+  trigger: classify() called under any failure condition (AI failure, bad JSON, network error)
   fixtures: []
   steps:
-    - "Call classify() with valid inputs."
-    - "Mock the AI provider to raise an exception."
-    - "Inspect the return value."
+  - Call classify() with valid inputs.
+  - Mock the AI provider to raise an exception.
+  - Inspect the return value.
   expected:
-    - "Returns Failure — no exception propagates to the caller"
-    - "Return value is never None"
-  spec_ref: "docs/1_design/phase2/classify.md §P2-CL-04"
-  human_reviewed: no
+  - Returns Failure — no exception propagates to the caller
+  - Return value is never None
+  spec_ref: docs/1_design/phase2/classify.md §P2-CL-04
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_classify.py::test_never_raises"
+  pytest_ref: tests/test_pipelines/test_classify.py::test_never_raises
   status: active
   retired: null
-
 - id: P2-CL-05
-  behavior: "classify() loads prompt from prompts/classify.yaml — no prompt string in Python code"
+  behavior: classify() loads prompt from prompts/classify.yaml — no prompt string in Python code
   tier: unit
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "Code review: inspect pipelines/classify.py for any hardcoded prompt strings"
+  trigger: 'Code review: inspect pipelines/classify.py for any hardcoded prompt strings'
   fixtures: []
   steps:
-    - "Read src/pipelines/classify.py (or wherever classify() lives)."
-    - "Search for any string literals that look like AI instructions."
+  - Read src/pipelines/classify.py (or wherever classify() lives).
+  - Search for any string literals that look like AI instructions.
   expected:
-    - "No prompt string found in Python source"
-    - "Prompt is loaded via PROMPTS['classify'] from prompt_loader"
-  spec_ref: "docs/1_design/phase2/classify.md §P2-CL-05"
-  human_reviewed: no
+  - No prompt string found in Python source
+  - Prompt is loaded via PROMPTS['classify'] from prompt_loader
+  spec_ref: docs/1_design/phase2/classify.md §P2-CL-05
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_classify.py::test_no_prompt_in_source"
+  pytest_ref: tests/test_pipelines/test_classify.py::test_no_prompt_in_source
   status: active
   retired: null
-
 - id: P2-CL-06
-  behavior: "classify() calls the AI via llm/provider.py get_provider() — no direct AI library import"
+  behavior: classify() calls the AI via llm/provider.py get_provider() — no direct AI library import
   tier: unit
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "Code review: inspect classify() implementation for direct anthropic or openai imports"
+  trigger: 'Code review: inspect classify() implementation for direct anthropic or openai imports'
   fixtures: []
   steps:
-    - "Read src/pipelines/classify.py (or wherever classify() lives)."
-    - "Check imports for anthropic, openai, or other AI library direct calls."
+  - Read src/pipelines/classify.py (or wherever classify() lives).
+  - Check imports for anthropic, openai, or other AI library direct calls.
   expected:
-    - "No direct AI library import in classify() module"
-    - "AI call goes through get_provider() from llm/provider.py"
-  spec_ref: "docs/1_design/phase2/classify.md §P2-CL-06"
-  human_reviewed: no
+  - No direct AI library import in classify() module
+  - AI call goes through get_provider() from llm/provider.py
+  spec_ref: docs/1_design/phase2/classify.md §P2-CL-06
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_classify.py::test_no_direct_ai_import"
+  pytest_ref: tests/test_pipelines/test_classify.py::test_no_direct_ai_import
   status: active
   retired: null
-
-# ═══════════════════════════════════════════════════════════════
-# PHASE 2-CIC — Classify Inline in Single-File Capture
-# ID prefix: P2-CIC (Classify-In-Capture)
-# Design doc: docs/1_design/phase2/classify-inline-capture.md
-# ═══════════════════════════════════════════════════════════════
-
 - id: P2-CIC-01
-  behavior: "Loose inbox .md note with a confident destination is moved into the project/domain folder DERIVED from its assigned tags+project (AUTO)"
+  behavior: Loose inbox .md note with a confident destination is moved into the project/domain folder DERIVED from its assigned tags+project (AUTO)
   tier: phase
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "kms capture <inbox/note.md>"
+  trigger: kms capture <inbox/note.md>
   fixtures:
-    - inbox/p2cic-01-clear-project-note.md
+  - inbox/p2cic-01-clear-project-note.md
   steps:
-    - "Place a note in inbox/ whose content clearly belongs to an existing project (e.g. meeting notes for Projects/Alpha)."
-    - "Ensure Projects/Alpha/ exists with a CLAUDE.md domain tag."
-    - "`uv run kms capture inbox/p2cic-01-clear-project-note.md`"
+  - Place a note in inbox/ whose content clearly belongs to an existing project (e.g. meeting notes for Projects/Alpha).
+  - Ensure Projects/Alpha/ exists with a CLAUDE.md domain tag.
+  - '`uv run kms capture inbox/p2cic-01-clear-project-note.md`'
   expected:
-    - "Note is GONE from inbox/ (moved to the DERIVED folder, e.g. Projects/Alpha/p2cic-01-clear-project-note.md)"
-    - "Frontmatter has project: Alpha AND the destination folder matches that project field (location derived from the field, not picked independently)"
-    - "No status: needs-review field (AUTO acted, not suggested)"
-  spec_ref: "docs/1_design/phase2/classify-inline-capture.md §Routing model"
-  human_reviewed: no
+  - Note is GONE from inbox/ (moved to the DERIVED folder, e.g. Projects/Alpha/p2cic-01-clear-project-note.md)
+  - 'Frontmatter has project: Alpha AND the destination folder matches that project field (location derived from the field, not picked independently)'
+  - 'No status: needs-review field (AUTO acted, not suggested)'
+  spec_ref: docs/1_design/phase2/classify-inline-capture.md §Routing model
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_auto_md_moves_to_project_folder"
+  pytest_ref: tests/test_pipelines/test_classify_step.py::test_auto_md_moves_to_project_folder
   status: active
   retired: null
-
 - id: P2-CIC-02
-  behavior: "Loose inbox note with a medium-confidence destination stays in inbox with suggested destination recorded (SUGGEST)"
+  behavior: Loose inbox note with a medium-confidence destination stays in inbox with suggested destination recorded (SUGGEST)
   tier: phase
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "kms capture <inbox/note.md>"
+  trigger: kms capture <inbox/note.md>
   fixtures:
-    - inbox/p2cic-02-ambiguous-note.md
+  - inbox/p2cic-02-ambiguous-note.md
   steps:
-    - "Place a note in inbox/ whose content plausibly fits a destination but is not clear-cut."
-    - "`uv run kms capture inbox/p2cic-02-ambiguous-note.md`"
+  - Place a note in inbox/ whose content plausibly fits a destination but is not clear-cut.
+  - '`uv run kms capture inbox/p2cic-02-ambiguous-note.md`'
   expected:
-    - "Note STAYS at inbox/p2cic-02-ambiguous-note.md (not moved)"
-    - "Frontmatter records a suggested destination (e.g. status: needs-review plus a suggested-destination field)"
-    - "Frontmatter records the AI confidence and one-sentence reasoning"
-  spec_ref: "docs/1_design/phase2/classify-inline-capture.md §Success criteria"
-  human_reviewed: no
+  - Note STAYS at inbox/p2cic-02-ambiguous-note.md (not moved)
+  - 'Frontmatter records a suggested destination (e.g. status: needs-review plus a suggested-destination field)'
+  - Frontmatter records the AI confidence and one-sentence reasoning
+  spec_ref: docs/1_design/phase2/classify-inline-capture.md §Success criteria
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_classify_step_inbox_suggest"
+  pytest_ref: tests/test_pipelines/test_classify_step.py::test_classify_step_inbox_suggest
   status: active
   retired: null
-
 - id: P2-CIC-03
-  behavior: "Loose inbox note the AI cannot place stays in inbox marked stuck (CLUELESS)"
+  behavior: Loose inbox note the AI cannot place stays in inbox marked stuck (CLUELESS)
   tier: phase
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "kms capture <inbox/note.md>"
+  trigger: kms capture <inbox/note.md>
   fixtures:
-    - inbox/p2cic-03-no-match-note.md
+  - inbox/p2cic-03-no-match-note.md
   steps:
-    - "Place a note in inbox/ whose topic matches no existing project or domain."
-    - "`uv run kms capture inbox/p2cic-03-no-match-note.md`"
+  - Place a note in inbox/ whose topic matches no existing project or domain.
+  - '`uv run kms capture inbox/p2cic-03-no-match-note.md`'
   expected:
-    - "Note STAYS at inbox/p2cic-03-no-match-note.md (not moved)"
-    - "Frontmatter records that the AI was stuck (low/no candidate) with its reasoning"
-    - "No destination move occurred"
-  spec_ref: "docs/1_design/phase2/classify-inline-capture.md §Success criteria"
-  human_reviewed: no
+  - Note STAYS at inbox/p2cic-03-no-match-note.md (not moved)
+  - Frontmatter records that the AI was stuck (low/no candidate) with its reasoning
+  - No destination move occurred
+  spec_ref: docs/1_design/phase2/classify-inline-capture.md §Success criteria
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_classify_step_inbox_clueless"
+  pytest_ref: tests/test_pipelines/test_classify_step.py::test_classify_step_inbox_clueless
   status: active
   retired: null
-
 - id: P2-CIC-04
-  behavior: "A file dropped directly into a project/domain folder is filed by location WITHOUT any AI classify call"
+  behavior: A file dropped directly into a project/domain folder is filed by location WITHOUT any AI classify call
   tier: phase
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "kms capture <Projects/Alpha/note.md>"
+  trigger: kms capture <Projects/Alpha/note.md>
   fixtures:
-    - Projects/Alpha/p2cic-04-located-note.md
+  - Projects/Alpha/p2cic-04-located-note.md
   steps:
-    - "Place a note directly inside Projects/Alpha/."
-    - "`uv run kms capture Projects/Alpha/p2cic-04-located-note.md`"
+  - Place a note directly inside Projects/Alpha/.
+  - '`uv run kms capture Projects/Alpha/p2cic-04-located-note.md`'
   expected:
-    - "Note stays in Projects/Alpha/ (location wins; no move)"
-    - "Frontmatter has project: Alpha"
-    - "No suggested-destination / needs-review fields written (classify was skipped)"
-  spec_ref: "docs/1_design/phase2/classify-inline-capture.md §Success criteria (LOCATED symmetry)"
-  human_reviewed: no
-  last_tested: null
-  last_result: null
-  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_classify_step_located_project_passthrough"
+  - Note stays in Projects/Alpha/ (location wins; no move)
+  - 'Frontmatter has project: Alpha'
+  - No suggested-destination / needs-review fields written (classify was skipped)
+  spec_ref: docs/1_design/phase2/classify-inline-capture.md §Success criteria (LOCATED symmetry)
+  human_reviewed: 'yes'
+  last_tested: '2026-06-10'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_classify_step.py::test_classify_step_located_project_passthrough
   status: active
   retired: null
-
 - id: P2-CIC-05
-  behavior: "Loose inbox PDF gets a rich attachment summary AND is classified at drop time (two AI calls; pending-routing marker retired)"
+  behavior: Loose inbox PDF gets a rich attachment summary AND is classified at drop time (two AI calls; pending-routing marker retired)
   tier: phase
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "kms capture <inbox/report.pdf>"
+  trigger: kms capture <inbox/report.pdf>
   fixtures:
-    - inbox/p2cic-05-clear-project-report.pdf
+  - inbox/p2cic-05-clear-project-report.pdf
   steps:
-    - "Place a PDF in inbox/ whose content clearly belongs to an existing project."
-    - "`uv run kms capture inbox/p2cic-05-clear-project-report.pdf`"
+  - Place a PDF in inbox/ whose content clearly belongs to an existing project.
+  - '`uv run kms capture inbox/p2cic-05-clear-project-report.pdf`'
   expected:
-    - "Sibling .md has a real summary (NOT the one-line pending-routing placeholder)"
-    - "On AUTO: binary moved to the chosen folder's attachment/, sibling moved alongside, both findable"
-    - "On SUGGEST/CLUELESS: binary stays in inbox; sibling records the suggested destination or stuck state"
-  spec_ref: "docs/1_design/phase2/classify-inline-capture.md §Success criteria"
-  human_reviewed: no
+  - Sibling .md has a real summary (NOT the one-line pending-routing placeholder)
+  - 'On AUTO: binary moved to the chosen folder''s attachment/, sibling moved alongside, both findable'
+  - 'On SUGGEST/CLUELESS: binary stays in inbox; sibling records the suggested destination or stuck state'
+  spec_ref: docs/1_design/phase2/classify-inline-capture.md §Success criteria
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_auto_binary_end_to_end_placement"
+  pytest_ref: tests/test_pipelines/test_classify_step.py::test_auto_binary_end_to_end_placement
   status: active
   retired: null
-
 - id: P2-CIC-06
-  behavior: "Every classify outcome (AUTO/SUGGEST/CLUELESS) writes exactly one decision-log audit row"
+  behavior: Every classify outcome (AUTO/SUGGEST/CLUELESS) writes exactly one decision-log audit row
   tier: full
   phase: 2
   origin: design
   granularity: mechanism
-  trigger: "kms capture <inbox/note.md>"
+  trigger: kms capture <inbox/note.md>
   fixtures:
-    - inbox/p2cic-06-audit-note.md
+  - inbox/p2cic-06-audit-note.md
   steps:
-    - "`uv run kms capture inbox/p2cic-06-audit-note.md`"
-    - "`sqlite3 data/kb.db \"SELECT pipeline, stage, outcome, reasoning, source_ids FROM audit_log WHERE stage='classify' ORDER BY rowid DESC LIMIT 3\"`"
+  - '`uv run kms capture inbox/p2cic-06-audit-note.md`'
+  - '`sqlite3 data/kb.db "SELECT pipeline, stage, outcome, reasoning, source_ids FROM audit_log WHERE stage=''classify'' ORDER BY rowid DESC LIMIT 3"`'
   expected:
-    - "An audit_log row exists with pipeline=capture, stage=classify"
-    - "outcome is one of AUTO | SUGGEST | CLUELESS"
-    - "reasoning is non-empty; source_ids contains the note's vault path"
-  spec_ref: "CONSTRAINTS.md C-13 'audit log non-negotiable'"
-  human_reviewed: no
+  - An audit_log row exists with pipeline=capture, stage=classify
+  - outcome is one of AUTO | SUGGEST | CLUELESS
+  - reasoning is non-empty; source_ids contains the note's vault path
+  spec_ref: CONSTRAINTS.md C-13 'audit log non-negotiable'
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_auto_human_locked_fallback"
+  pytest_ref: tests/test_pipelines/test_classify_step.py::test_auto_human_locked_fallback
   status: active
   retired: null
-
 - id: P2-CIC-07
-  behavior: "A classify AUTO-move to a project/domain root leaves batch_id NULL; index location stays consistent"
+  behavior: A classify AUTO-move to a project/domain root leaves batch_id NULL; index location stays consistent
   tier: full
   phase: 2
   origin: design
   granularity: mechanism
-  trigger: "kms capture <inbox/note.md> (AUTO routes to Projects/Alpha root)"
+  trigger: kms capture <inbox/note.md> (AUTO routes to Projects/Alpha root)
   fixtures:
-    - inbox/p2cic-07-batch-note.md
+  - inbox/p2cic-07-batch-note.md
   steps:
-    - "Capture a loose inbox note that AUTO-routes to a project ROOT (e.g. Projects/Alpha/)."
-    - "`sqlite3 data/kb.db \"SELECT vault_path, batch_id FROM documents WHERE vault_path LIKE '%p2cic-07-batch-note%'\"`"
+  - Capture a loose inbox note that AUTO-routes to a project ROOT (e.g. Projects/Alpha/).
+  - '`sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE vault_path LIKE ''%p2cic-07-batch-note%''"`'
   expected:
-    - "documents.vault_path equals the new in-folder path (e.g. Projects/Alpha/p2cic-07-batch-note.md) — matches disk"
-    - "batch_id is NULL (a tree root is not a batch-worthy subfolder)"
-    - "Exactly one documents row exists for the note (no orphan row at the old inbox path)"
-  spec_ref: "docs/1_design/phase2/classify-inline-capture.md §Risks R2/R3"
-  human_reviewed: no
+  - documents.vault_path equals the new in-folder path (e.g. Projects/Alpha/p2cic-07-batch-note.md) — matches disk
+  - batch_id is NULL (a tree root is not a batch-worthy subfolder)
+  - Exactly one documents row exists for the note (no orphan row at the old inbox path)
+  spec_ref: docs/1_design/phase2/classify-inline-capture.md §Risks R2/R3
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_auto_binary_batch_id_null"
+  pytest_ref: tests/test_pipelines/test_classify_step.py::test_auto_binary_batch_id_null
   status: active
   retired: null
-
 - id: P2-CIC-08
-  behavior: "A classify AUTO-move under the running watcher does not double-fire re-home or create a duplicate row"
+  behavior: A classify AUTO-move under the running watcher does not double-fire re-home or create a duplicate row
   tier: full
   phase: 2
   origin: design
   granularity: mechanism
-  trigger: "kms watch + a loose inbox file that classify AUTO-routes"
+  trigger: kms watch + a loose inbox file that classify AUTO-routes
   fixtures: []
   steps:
-    - "Start kms watch."
-    - "Drop a loose inbox file whose content clearly belongs to a project, wait for capture to AUTO-route it."
-    - "`sqlite3 data/kb.db \"SELECT count(*), vault_path FROM documents WHERE vault_path LIKE '%<that-file>%' GROUP BY vault_path\"`"
+  - Start kms watch.
+  - Drop a loose inbox file whose content clearly belongs to a project, wait for capture to AUTO-route it.
+  - '`sqlite3 data/kb.db "SELECT count(*), vault_path FROM documents WHERE vault_path LIKE ''%<that-file>%'' GROUP BY vault_path"`'
   expected:
-    - "Exactly one documents row, pointing at the new destination path"
-    - "Watcher re-home was suppressed for the pipeline-initiated move (log shows rehome_skip reason=pipeline_initiated)"
-    - "No second move back to inbox; the file stays at its classified destination"
-  spec_ref: "docs/1_design/phase2/classify-inline-capture.md §Risks R1/R4"
-  human_reviewed: no
+  - Exactly one documents row, pointing at the new destination path
+  - Watcher re-home was suppressed for the pipeline-initiated move (log shows rehome_skip reason=pipeline_initiated)
+  - No second move back to inbox; the file stays at its classified destination
+  spec_ref: docs/1_design/phase2/classify-inline-capture.md §Risks R1/R4
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_auto_md_move_guard_registered"
+  pytest_ref: tests/test_pipelines/test_classify_step.py::test_auto_md_move_guard_registered
   status: active
   retired: null
-
 - id: P2-CIC-09
-  behavior: "A file captured as part of a dropped folder is fully captured but NOT individually re-classified (SUPPRESS — the folder is the routing unit)"
+  behavior: A file captured as part of a dropped folder is fully captured but NOT individually re-classified (SUPPRESS — the folder is the routing unit)
   tier: full
   phase: 2
   origin: design
   granularity: mechanism
-  trigger: "kms watch / capture_folder on a folder dropped in inbox/"
+  trigger: kms watch / capture_folder on a folder dropped in inbox/
   fixtures: []
   steps:
-    - "Drop a folder containing 2-3 loose files into inbox/ (a folder the system routes or marks CLUELESS)."
-    - "Let the folder capture flow process it (watcher stable-folder event, or capture_folder)."
-    - "`sqlite3 data/kb.db \"SELECT count(*) FROM audit_log WHERE stage='classify'\"` and inspect each file's frontmatter."
+  - Drop a folder containing 2-3 loose files into inbox/ (a folder the system routes or marks CLUELESS).
+  - Let the folder capture flow process it (watcher stable-folder event, or capture_folder).
+  - '`sqlite3 data/kb.db "SELECT count(*) FROM audit_log WHERE stage=''classify''"` and inspect each file''s frontmatter.'
   expected:
-    - "Each file inside the folder is summarized + frontmatter-stamped + batch-stamped (full capture ran)"
-    - "NO file inside the folder carries suggested_type / suggested_name / classify_confidence / status: needs-review from an individual classify call"
-    - "No per-file stage='classify' audit row is written for the folder's files (the folder verdict is the only classify decision)"
-  spec_ref: "docs/2_specs/phase2/classify-inline-capture.md §Component 3 (SUPPRESS); locked Decision 3"
-  human_reviewed: no
+  - Each file inside the folder is summarized + frontmatter-stamped + batch-stamped (full capture ran)
+  - 'NO file inside the folder carries suggested_type / suggested_name / classify_confidence / status: needs-review from an individual classify call'
+  - No per-file stage='classify' audit row is written for the folder's files (the folder verdict is the only classify decision)
+  spec_ref: docs/2_specs/phase2/classify-inline-capture.md §Component 3 (SUPPRESS); locked Decision 3
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_classify_step_suppress_passthrough"
+  pytest_ref: tests/test_pipelines/test_classify_step.py::test_classify_step_suppress_passthrough
   status: active
   retired: null
-
 - id: P2-CIC-10
-  behavior: "A single file dropped in a project/domain folder is still summarized + frontmatter-stamped; only the classify step and the move are skipped (LOCATED is NOT a no-op)"
+  behavior: A single file dropped in a project/domain folder is still summarized + frontmatter-stamped; only the classify step and the move are skipped (LOCATED is NOT a no-op)
   tier: phase
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "kms capture <Projects/Alpha/note.md>"
+  trigger: kms capture <Projects/Alpha/note.md>
   fixtures:
-    - Projects/Alpha/p2cic-10-located-summary-note.md
+  - Projects/Alpha/p2cic-10-located-summary-note.md
   steps:
-    - "Place a note directly inside Projects/Alpha/ with body content worth summarizing."
-    - "`uv run kms capture Projects/Alpha/p2cic-10-located-summary-note.md`"
+  - Place a note directly inside Projects/Alpha/ with body content worth summarizing.
+  - '`uv run kms capture Projects/Alpha/p2cic-10-located-summary-note.md`'
   expected:
-    - "Note stays in Projects/Alpha/ (no move)"
-    - "Frontmatter has a real AI summary and project: Alpha (earlier capture stages ran)"
-    - "No suggested-destination / classify_confidence / needs-review fields (classify step was skipped)"
-    - "No stage='classify' audit row for this file (LOCATED — no classify AI call)"
-  spec_ref: "docs/2_specs/phase2/classify-inline-capture.md §Feature overview (LOCATED); locked Decision 4"
-  human_reviewed: no
+  - Note stays in Projects/Alpha/ (no move)
+  - 'Frontmatter has a real AI summary and project: Alpha (earlier capture stages ran)'
+  - No suggested-destination / classify_confidence / needs-review fields (classify step was skipped)
+  - No stage='classify' audit row for this file (LOCATED — no classify AI call)
+  spec_ref: docs/2_specs/phase2/classify-inline-capture.md §Feature overview (LOCATED); locked Decision 4
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_classify_step_located_project_passthrough"
+  pytest_ref: tests/test_pipelines/test_classify_step.py::test_classify_step_located_project_passthrough
   status: active
   retired: null
-
 - id: P2-CIC-11
-  behavior: "When the AI assigns a project, the note moves to that Project folder even though it also carries domain tags (project beats domain — precedence)"
+  behavior: When the AI assigns a project, the note moves to that Project folder even though it also carries domain tags (project beats domain — precedence)
   tier: phase
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "kms capture <inbox/note.md>"
+  trigger: kms capture <inbox/note.md>
   fixtures:
-    - inbox/p2cic-11-project-and-domain-note.md
+  - inbox/p2cic-11-project-and-domain-note.md
   steps:
-    - "Place a loose inbox note that clearly belongs to an existing project AND carries one or more domain tags (e.g. a deliverable for Projects/Alpha that is also about domain/Finance)."
-    - "Ensure both Projects/Alpha/ and Domain/Finance/ exist."
-    - "`uv run kms capture inbox/p2cic-11-project-and-domain-note.md`"
+  - Place a loose inbox note that clearly belongs to an existing project AND carries one or more domain tags (e.g. a deliverable for Projects/Alpha that is also about domain/Finance).
+  - Ensure both Projects/Alpha/ and Domain/Finance/ exist.
+  - '`uv run kms capture inbox/p2cic-11-project-and-domain-note.md`'
   expected:
-    - "Note moves to Projects/Alpha/ (the Project root), NOT Domain/Finance/ — project field wins over the domain tag"
-    - "Frontmatter still carries the domain/Finance tag (tags are not stripped; only the move follows precedence)"
-    - "Frontmatter project: Alpha"
-  spec_ref: "docs/1_design/phase2/classify-inline-capture.md §Routing model (precedence)"
-  human_reviewed: no
+  - Note moves to Projects/Alpha/ (the Project root), NOT Domain/Finance/ — project field wins over the domain tag
+  - Frontmatter still carries the domain/Finance tag (tags are not stripped; only the move follows precedence)
+  - 'Frontmatter project: Alpha'
+  spec_ref: docs/1_design/phase2/classify-inline-capture.md §Routing model (precedence)
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_classify_step_project_beats_domain"
+  pytest_ref: tests/test_pipelines/test_classify_step.py::test_classify_step_project_beats_domain
   status: active
   retired: null
-
 - id: P2-CIC-12
-  behavior: "A loose note with NO project and MULTIPLE domain tags moves to the AI's designated PRIMARY domain folder while keeping all its domain tags"
+  behavior: A loose note with NO project and MULTIPLE domain tags moves to the AI's designated PRIMARY domain folder while keeping all its domain tags
   tier: phase
   phase: 2
   origin: design
   granularity: outcome
-  trigger: "kms capture <inbox/note.md>"
+  trigger: kms capture <inbox/note.md>
   fixtures:
-    - inbox/p2cic-12-multi-domain-note.md
+  - inbox/p2cic-12-multi-domain-note.md
   steps:
-    - "Place a loose inbox note that spans two existing domains (e.g. tagged domain/Finance and domain/Legal) and ties to no specific project."
-    - "Ensure Domain/Finance/ and Domain/Legal/ both exist."
-    - "`uv run kms capture inbox/p2cic-12-multi-domain-note.md`"
+  - Place a loose inbox note that spans two existing domains (e.g. tagged domain/Finance and domain/Legal) and ties to no specific project.
+  - Ensure Domain/Finance/ and Domain/Legal/ both exist.
+  - '`uv run kms capture inbox/p2cic-12-multi-domain-note.md`'
   expected:
-    - "Note moves to exactly ONE domain folder — the AI's designated primary (e.g. Domain/Finance/), not both"
-    - "Frontmatter still lists BOTH domain tags (domain/Finance AND domain/Legal) — only the move uses the primary"
-    - "Frontmatter records no project (no project field set)"
-  spec_ref: "docs/1_design/phase2/classify-inline-capture.md §Routing model (primary domain)"
-  human_reviewed: no
+  - Note moves to exactly ONE domain folder — the AI's designated primary (e.g. Domain/Finance/), not both
+  - Frontmatter still lists BOTH domain tags (domain/Finance AND domain/Legal) — only the move uses the primary
+  - Frontmatter records no project (no project field set)
+  spec_ref: docs/1_design/phase2/classify-inline-capture.md §Routing model (primary domain)
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_classify_step_multi_domain_primary_routing"
+  pytest_ref: tests/test_pipelines/test_classify_step.py::test_classify_step_multi_domain_primary_routing
   status: active
   retired: null
-
 - id: P2-CIC-13
-  behavior: "Structural consistency: an AUTO-filed note's on-disk folder always matches its stamped project/primary-domain (no free pick that could disagree)"
+  behavior: 'Structural consistency: an AUTO-filed note''s on-disk folder always matches its stamped project/primary-domain (no free pick that could disagree)'
   tier: full
   phase: 2
   origin: design
   granularity: mechanism
-  trigger: "kms capture <inbox/note.md> (any AUTO route)"
+  trigger: kms capture <inbox/note.md> (any AUTO route)
   fixtures:
-    - inbox/p2cic-13-consistency-note.md
+  - inbox/p2cic-13-consistency-note.md
   steps:
-    - "Capture any loose inbox note that AUTO-routes."
-    - "`sqlite3 data/kb.db \"SELECT vault_path, project FROM documents WHERE vault_path LIKE '%p2cic-13-consistency-note%'\"` and read the note's frontmatter."
-    - "Compare the folder portion of vault_path against the stamped project (or primary domain) field."
+  - Capture any loose inbox note that AUTO-routes.
+  - '`sqlite3 data/kb.db "SELECT vault_path, project FROM documents WHERE vault_path LIKE ''%p2cic-13-consistency-note%''"` and read the note''s frontmatter.'
+  - Compare the folder portion of vault_path against the stamped project (or primary domain) field.
   expected:
-    - "If a project is stamped, vault_path is under Projects/<that project>/"
-    - "If no project but a primary domain, vault_path is under Domain/<that primary domain>/"
-    - "The folder NEVER points at a project/domain the frontmatter does not name (derived, not free pick)"
-  spec_ref: "docs/1_design/phase2/classify-inline-capture.md §Routing model (structural consistency)"
-  human_reviewed: no
+  - If a project is stamped, vault_path is under Projects/<that project>/
+  - If no project but a primary domain, vault_path is under Domain/<that primary domain>/
+  - The folder NEVER points at a project/domain the frontmatter does not name (derived, not free pick)
+  spec_ref: docs/1_design/phase2/classify-inline-capture.md §Routing model (structural consistency)
+  human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: "tests/test_pipelines/test_classify_step.py::test_auto_md_replace_path_atomic"
+  pytest_ref: tests/test_pipelines/test_classify_step.py::test_auto_md_replace_path_atomic
   status: active
   retired: null

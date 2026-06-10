@@ -8,7 +8,7 @@
 #   STAGING = parent of VAULT — staging files the tester copies/drags into VAULT
 #
 # IMPORTANT: This script operates on the TEST vault, never the real vault.
-# Last generated: 2026-06-09
+# Last generated: 2026-06-10
 
 set -euo pipefail
 
@@ -119,7 +119,20 @@ setup_P15_LOC_02() {
 
 # smoke | P2-BAT-04: scan_capture detects and batch-captures an unprocessed inbox subfolder
 setup_P2_BAT_04() {
-    echo "P2-BAT-04: No pre-created fixtures. Trigger: kms capture --scan"
+    # ── cleanup ──
+    rm -f "$VAULT/inbox/test-batch-drop/note-a.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/test-batch-drop/note-a.md'" 2>/dev/null || true
+    rm -f "$VAULT/inbox/test-batch-drop/note-b.md"
+    sqlite3 "$DB" "DELETE FROM documents WHERE vault_path = 'inbox/test-batch-drop/note-b.md'" 2>/dev/null || true
+    # ── create ──
+    write_md "$VAULT/inbox/test-batch-drop/note-a.md" \
+    "scan_capture detects and batch-captures an unprocessed inbox subfolder.
+
+    Test fixture for P2-BAT-04."
+    write_md "$VAULT/inbox/test-batch-drop/note-b.md" \
+    "scan_capture detects and batch-captures an unprocessed inbox subfolder.
+
+    Test fixture for P2-BAT-04."
 }
 # ─── Phase 1 — Capture Pipeline (phase) ────────────────────────────────────
 
