@@ -195,9 +195,7 @@ def all_paths(db_path: Path | None = None) -> Result[list[tuple[str, str]]]:
         )
 
 
-def delete_by_path(
-    vault_path: str, db_path: Path | None = None
-) -> Result[int]:
+def delete_by_path(vault_path: str, db_path: Path | None = None) -> Result[int]:
     """
     Delete the documents row for vault_path.
 
@@ -210,6 +208,10 @@ def delete_by_path(
     """
     try:
         with get_connection(db_path) as conn:
+            conn.execute(
+                "DELETE FROM embeddings_vec WHERE vault_path = ?", (vault_path,)
+            )
+            conn.execute("DELETE FROM notes_fts WHERE vault_path = ?", (vault_path,))
             cur = conn.execute(
                 "DELETE FROM documents WHERE vault_path = ?", (vault_path,)
             )
@@ -250,7 +252,15 @@ def replace_path(
 
     try:
         with get_connection(db_path) as conn:
-            conn.execute("DELETE FROM documents WHERE vault_path = ?", (old_vault_path,))
+            conn.execute(
+                "DELETE FROM embeddings_vec WHERE vault_path = ?", (old_vault_path,)
+            )
+            conn.execute(
+                "DELETE FROM notes_fts WHERE vault_path = ?", (old_vault_path,)
+            )
+            conn.execute(
+                "DELETE FROM documents WHERE vault_path = ?", (old_vault_path,)
+            )
             conn.execute(
                 """
                 INSERT OR REPLACE INTO documents
@@ -280,7 +290,11 @@ def replace_path(
         return Failure(
             error=str(exc),
             recoverable=False,
-            context={"old_vault_path": old_vault_path, "new_vault_path": outcome.vault_path, "op": "replace_path"},
+            context={
+                "old_vault_path": old_vault_path,
+                "new_vault_path": outcome.vault_path,
+                "op": "replace_path",
+            },
         )
 
 
@@ -306,6 +320,28 @@ def rename(old: str, new: str, db_path: Path | None = None) -> Result[int]:
                 "UPDATE documents SET vault_path = ? WHERE vault_path = ?",
                 (new, old),
             )
+            # vec0: copy embedding, delete old, insert new (PK update not supported)
+            row = conn.execute(
+                "SELECT embedding FROM embeddings_vec WHERE vault_path = ?", (old,)
+            ).fetchone()
+            if row:
+                conn.execute("DELETE FROM embeddings_vec WHERE vault_path = ?", (old,))
+                conn.execute(
+                    "INSERT INTO embeddings_vec(vault_path, embedding) VALUES (?, ?)",
+                    (new, row[0]),
+                )
+            # FTS5: copy content, delete old, insert new
+            fts_row = conn.execute(
+                "SELECT title, summary, body FROM notes_fts WHERE vault_path = ?",
+                (old,),
+            ).fetchone()
+            if fts_row:
+                conn.execute("DELETE FROM notes_fts WHERE vault_path = ?", (old,))
+                conn.execute(
+                    "INSERT INTO notes_fts(vault_path, title, summary, body) "
+                    "VALUES (?, ?, ?, ?)",
+                    (new, *fts_row),
+                )
             return Success(cur.rowcount)
     except sqlite3.Error as exc:
         return Failure(
