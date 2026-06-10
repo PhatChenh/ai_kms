@@ -125,6 +125,9 @@ VALID_JSON = (
 
 VALID_DESTINATIONS = "Projects:\n  - Alpha\nDomains:\n  - Finance"
 
+PROJECT_NAMES: frozenset[str] = frozenset({"Alpha"})
+DOMAIN_NAMES: frozenset[str] = frozenset({"Finance"})
+
 
 # ---------------------------------------------------------------------------
 # Phase 2 (CIC) tests — build_subject() pure function
@@ -267,6 +270,8 @@ class TestClassify:
         result = await classify(
             subject="Title: Q1 Review\nSummary: Financial overview\nTags: finance, quarterly",
             valid_destinations=VALID_DESTINATIONS,
+            project_names=PROJECT_NAMES,
+            domain_names=DOMAIN_NAMES,
             config=_make_config(),
         )
 
@@ -290,6 +295,8 @@ class TestClassify:
         result = await classify(
             subject="Title: Q1 Review\nSummary: Financial overview\nTags: finance",
             valid_destinations=VALID_DESTINATIONS,
+            project_names=PROJECT_NAMES,
+            domain_names=DOMAIN_NAMES,
             config=_make_config(),
         )
 
@@ -310,6 +317,8 @@ class TestClassify:
         result = await classify(
             subject="Title: Ambiguous note\nSummary: Something confusing\nTags: misc",
             valid_destinations=VALID_DESTINATIONS,
+            project_names=PROJECT_NAMES,
+            domain_names=DOMAIN_NAMES,
             config=_make_config(),
         )
 
@@ -333,6 +342,8 @@ class TestClassify:
         result = await classify(
             subject="Title: Note\nSummary: Summary\nTags: tag",
             valid_destinations=VALID_DESTINATIONS,
+            project_names=PROJECT_NAMES,
+            domain_names=DOMAIN_NAMES,
             config=_make_config(),
         )
 
@@ -360,6 +371,8 @@ class TestClassify:
         result = await classify(
             subject="Title: Test\nSummary: S\nTags: t",
             valid_destinations=VALID_DESTINATIONS,
+            project_names=PROJECT_NAMES,
+            domain_names=DOMAIN_NAMES,
             config=_make_config(),
         )
 
@@ -384,6 +397,8 @@ class TestClassify:
         r1 = await classify(
             subject="Title: T1\nSummary: S1\nTags: t",
             valid_destinations="D",
+            project_names=PROJECT_NAMES,
+            domain_names=DOMAIN_NAMES,
             config=_make_config(),
         )
         assert isinstance(r1, Failure)
@@ -397,6 +412,8 @@ class TestClassify:
         r2 = await classify(
             subject="Title: T2\nSummary: S2\nTags: t",
             valid_destinations="D",
+            project_names=PROJECT_NAMES,
+            domain_names=DOMAIN_NAMES,
             config=_make_config(),
         )
         assert isinstance(r2, Failure)
@@ -416,6 +433,8 @@ class TestClassify:
         r3 = await classify(
             subject="Title: T3\nSummary: S3\nTags: t",
             valid_destinations="D",
+            project_names=PROJECT_NAMES,
+            domain_names=DOMAIN_NAMES,
             config=_make_config(),
         )
         assert isinstance(r3, Failure)
@@ -437,6 +456,8 @@ class TestClassify:
         r4 = await classify(
             subject="Title: T4\nSummary: S4\nTags: t",
             valid_destinations="Projects:\n  - Alpha",
+            project_names=PROJECT_NAMES,
+            domain_names=DOMAIN_NAMES,
             config=_make_config(),
         )
         assert isinstance(r4, Failure)
@@ -509,6 +530,8 @@ class TestClassify:
         result = await classify(
             subject="Title: Finance Overview\nSummary: General finance knowledge\nTags: finance",
             valid_destinations=VALID_DESTINATIONS,
+            project_names=PROJECT_NAMES,
+            domain_names=DOMAIN_NAMES,
             config=_make_config(),
         )
 
@@ -535,13 +558,15 @@ class TestClassify:
         result = await classify(
             subject="Title: Note\nSummary: Some note\nTags: finance",
             valid_destinations=VALID_DESTINATIONS,
+            project_names=PROJECT_NAMES,
+            domain_names=DOMAIN_NAMES,
             config=_make_config(),
         )
 
         assert isinstance(result, Failure)
         assert result.recoverable is True
         assert "GhostProject" in result.error
-        assert "destination" in result.error.lower()
+        assert "cross-type" in result.error.lower()
 
     @pytest.mark.asyncio
     async def test_classify_result_validates_primary_domain(self, monkeypatch):
@@ -559,13 +584,15 @@ class TestClassify:
         result = await classify(
             subject="Title: Note\nSummary: Some note\nTags: ghost",
             valid_destinations=VALID_DESTINATIONS,
+            project_names=PROJECT_NAMES,
+            domain_names=DOMAIN_NAMES,
             config=_make_config(),
         )
 
         assert isinstance(result, Failure)
         assert result.recoverable is True
         assert "GhostDomain" in result.error
-        assert "destination" in result.error.lower()
+        assert "cross-type" in result.error.lower()
 
     @pytest.mark.asyncio
     async def test_classify_result_no_project_no_domain(self, monkeypatch):
@@ -583,6 +610,8 @@ class TestClassify:
         result = await classify(
             subject="Title: Misc\nSummary: Vague note\nTags: unknown",
             valid_destinations=VALID_DESTINATIONS,
+            project_names=PROJECT_NAMES,
+            domain_names=DOMAIN_NAMES,
             config=_make_config(),
         )
 
@@ -613,13 +642,15 @@ class TestClassify:
         result = await classify(
             subject="Title: Note\nSummary: Some note\nTags: finance",
             valid_destinations=VALID_DESTINATIONS,
+            project_names=PROJECT_NAMES,
+            domain_names=DOMAIN_NAMES,
             config=_make_config(),
         )
 
         assert isinstance(result, Failure)
         assert result.recoverable is True
         assert "Alph" in result.error
-        assert "destination" in result.error.lower()
+        assert "cross-type" in result.error.lower()
 
     @pytest.mark.asyncio
     async def test_classify_rejects_substring_primary_domain(self, monkeypatch):
@@ -641,10 +672,120 @@ class TestClassify:
         result = await classify(
             subject="Title: Note\nSummary: Some note\nTags: finance",
             valid_destinations=VALID_DESTINATIONS,
+            project_names=PROJECT_NAMES,
+            domain_names=DOMAIN_NAMES,
             config=_make_config(),
         )
 
         assert isinstance(result, Failure)
         assert result.recoverable is True
         assert "inance" in result.error
-        assert "destination" in result.error.lower()
+        assert "cross-type" in result.error.lower()
+
+    # --------------------------------------------------------------------
+    # Phase 7 — Cross-type validation (TD-051)
+    # --------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_classify_rejects_domain_as_project(self, monkeypatch):
+        """AI returns a domain name as project → Failure with cross-type error."""
+        json_domain_as_project = (
+            '{"project": "Finance", "domains": ["finance"], '
+            '"primary_domain": "Finance", "confidence": 0.8, '
+            '"reasoning": "Finance is a domain, not a project."}'
+        )
+        mock_provider = _make_mock_provider(
+            Success(LLMResponse(content=json_domain_as_project, model="test", usage={}))
+        )
+        _patch_get_provider(monkeypatch, mock_provider)
+
+        result = await classify(
+            subject="Title: Finance Report\nSummary: Quarterly financials\nTags: finance",
+            valid_destinations=VALID_DESTINATIONS,
+            project_names=PROJECT_NAMES,
+            domain_names=DOMAIN_NAMES,
+            config=_make_config(),
+        )
+
+        assert isinstance(result, Failure)
+        assert result.recoverable is True
+        assert "Finance" in result.error
+        assert "cross-type" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_classify_rejects_project_as_domain(self, monkeypatch):
+        """AI returns a project name as primary_domain → Failure with cross-type error."""
+        json_project_as_domain = (
+            '{"project": "Alpha", "domains": ["finance"], '
+            '"primary_domain": "Alpha", "confidence": 0.8, '
+            '"reasoning": "Alpha is a project, not a domain."}'
+        )
+        mock_provider = _make_mock_provider(
+            Success(LLMResponse(content=json_project_as_domain, model="test", usage={}))
+        )
+        _patch_get_provider(monkeypatch, mock_provider)
+
+        result = await classify(
+            subject="Title: Alpha Project\nSummary: Project update\nTags: finance",
+            valid_destinations=VALID_DESTINATIONS,
+            project_names=PROJECT_NAMES,
+            domain_names=DOMAIN_NAMES,
+            config=_make_config(),
+        )
+
+        assert isinstance(result, Failure)
+        assert result.recoverable is True
+        assert "Alpha" in result.error
+        assert "cross-type" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_classify_accepts_project_in_correct_field(self, monkeypatch):
+        """AI returns project in project field, domain in domain field → Success."""
+        json_correct = (
+            '{"project": "Alpha", "domains": ["finance"], '
+            '"primary_domain": "Finance", "confidence": 0.9, '
+            '"reasoning": "Correct project and domain assignment."}'
+        )
+        mock_provider = _make_mock_provider(
+            Success(LLMResponse(content=json_correct, model="test", usage={}))
+        )
+        _patch_get_provider(monkeypatch, mock_provider)
+
+        result = await classify(
+            subject="Title: Alpha Budget\nSummary: Budget review for Alpha project\nTags: finance",
+            valid_destinations=VALID_DESTINATIONS,
+            project_names=PROJECT_NAMES,
+            domain_names=DOMAIN_NAMES,
+            config=_make_config(),
+        )
+
+        assert isinstance(result, Success)
+        assert result.value.project == "Alpha"
+        assert result.value.primary_domain == "Finance"
+        assert result.value.domains == ["finance"]
+        assert result.value.confidence == 0.9
+
+    @pytest.mark.asyncio
+    async def test_classify_backward_compat_without_typed_name_sets(self, monkeypatch):
+        """Calling classify() without project_names/domain_names falls back to pooled _destination_names()."""
+        # AI returns a project that IS in VAlign_DESTINATIONS (pooled set)
+        json_valid = (
+            '{"project": "Alpha", "domains": ["finance"], '
+            '"primary_domain": "Finance", "confidence": 0.85, '
+            '"reasoning": "Valid project and domain in pooled destinations."}'
+        )
+        mock_provider = _make_mock_provider(
+            Success(LLMResponse(content=json_valid, model="test", usage={}))
+        )
+        _patch_get_provider(monkeypatch, mock_provider)
+
+        result = await classify(
+            subject="Title: Alpha Budget\nSummary: Budget review for Alpha project\nTags: finance",
+            valid_destinations=VALID_DESTINATIONS,
+            config=_make_config(),
+            # project_names and domain_names intentionally omitted
+        )
+
+        assert isinstance(result, Success)
+        assert result.value.project == "Alpha"
+        assert result.value.primary_domain == "Finance"

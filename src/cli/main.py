@@ -106,10 +106,173 @@ def classify(file: str) -> None:
 
 
 @cli.command()
-@click.argument("query")
-def search(query: str) -> None:
-    """Semantic + keyword search, hot tier first."""
-    raise NotImplementedError("Phase 3 — not yet built")
+@click.argument("query", required=False, default=None)
+@click.option("--project", default=None, help="Filter by project name")
+@click.option(
+    "--since",
+    default=None,
+    help="Filter by date: 7d, 30d, or YYYY-MM-DD",
+)
+@click.option("--max", "max_results", default=None, type=int, help="Max results")
+@click.option(
+    "--reindex",
+    is_flag=True,
+    default=False,
+    help="Rebuild search indexes (standalone — no query or options)",
+)
+def search(
+    query: str | None,
+    project: str | None,
+    since: str | None,
+    max_results: int | None,
+    reindex: bool,
+) -> None:
+    """Semantic + keyword search.  Use --reindex to rebuild search indexes."""
+    # ------------------------------------------------------------------
+    # --reindex mode: standalone maintenance, no query allowed
+    # ------------------------------------------------------------------
+    if reindex:
+        if query is not None:
+            raise click.UsageError("--reindex cannot be combined with a query.")
+        _run_reindex()
+        return
+
+    # ------------------------------------------------------------------
+    # Parse --since into a date_range tuple
+    # ------------------------------------------------------------------
+    date_range: tuple | None = None
+    if since is not None:
+        date_range = _parse_since(since)
+
+    # ------------------------------------------------------------------
+    # Run search
+    # ------------------------------------------------------------------
+    from core.result import Failure, Success
+    from retrieval.search import search as _search
+
+    match _search(
+        query=query,
+        project=project,
+        date_range=date_range,
+        max_results=max_results,
+    ):
+        case Success(cards):
+            if not cards:
+                click.echo("(no results)")
+            else:
+                for card in cards:
+                    _print_result_card(card)
+        case Failure(error=e):
+            click.echo(f"FAILED: {e}", err=True)
+            raise SystemExit(1)
+
+
+# ---------------------------------------------------------------------------
+# Search helpers
+# ---------------------------------------------------------------------------
+
+
+def _parse_since(since: str) -> tuple:
+    """Parse a ``--since`` value into a ``(lower, None)`` date_range tuple.
+
+    Supported formats: ``"7d"``, ``"30d"``, ``"YYYY-MM-DD"``.
+    """
+    from datetime import datetime, timedelta
+
+    since = since.strip()
+    if since.endswith("d"):
+        try:
+            days = int(since[:-1])
+        except ValueError:
+            raise click.BadParameter(
+                f"Invalid --since format: {since!r} (expected 7d, 30d, or YYYY-MM-DD)",
+                param_hint="--since",
+            )
+        return (datetime.now() - timedelta(days=days), None)
+
+    try:
+        return (datetime.strptime(since, "%Y-%m-%d"), None)
+    except ValueError:
+        raise click.BadParameter(
+            f"Invalid --since format: {since!r} (expected 7d, 30d, or YYYY-MM-DD)",
+            param_hint="--since",
+        )
+
+
+def _print_result_card(card) -> None:
+    """Print a single ``SearchResult`` card to stdout."""
+    meta = card.metadata or {}
+    title = meta.get("title", card.vault_path)
+    project = meta.get("project", "")
+    note_type = meta.get("note_type", "")
+    tags = meta.get("tags", "")
+
+    click.echo(f"{title}")
+    click.echo(f"  score={card.score:.4f}  project={project}  type={note_type}")
+    if tags:
+        click.echo(f"  tags: {tags}")
+    if card.snippet:
+        click.echo(f"  {card.snippet}")
+    if card.summary:
+        click.echo(f"  {card.summary[:200]}")
+    click.echo()
+
+
+def _run_reindex() -> None:
+    """Rebuild search indexes from every note in the document catalog."""
+    from pathlib import Path
+
+    from core.config import CONFIG
+    from core.result import Failure, Success
+    from retrieval.embeddings import index_embedding
+    from retrieval.keyword import index_keywords
+    from storage.documents import all_paths
+    from vault.reader import read_note
+
+    db_path = CONFIG.main.database.path
+    vault_root = CONFIG.main.vault.root
+
+    match all_paths(db_path):
+        case Failure(error=e):
+            click.echo(f"FAILED: cannot enumerate notes: {e}", err=True)
+            raise SystemExit(1)
+        case Success(rows):
+            pass
+
+    success_count = 0
+    total = len(rows)
+
+    for vault_path, _hash in rows:
+        note_path = vault_root / vault_path
+        match read_note(note_path):
+            case Failure(error=e):
+                click.echo(f"SKIP {vault_path}: read failed — {e}", err=True)
+                continue
+            case Success(note):
+                pass
+
+        meta = note.metadata
+        title = meta.title or Path(vault_path).stem
+        note_type = meta.type or ""
+        tags = meta.tags or []
+        summary = meta.summary or ""
+        body = note.content or ""
+
+        match index_embedding(
+            vault_path, title, note_type, tags, summary, db_path=db_path
+        ):
+            case Failure(error=e):
+                click.echo(f"SKIP {vault_path}: embedding index failed — {e}", err=True)
+                continue
+
+        match index_keywords(vault_path, title, summary, body, db_path=db_path):
+            case Failure(error=e):
+                click.echo(f"SKIP {vault_path}: keyword index failed — {e}", err=True)
+                continue
+
+        success_count += 1
+
+    click.echo(f"Reindexed {success_count}/{total} note(s)")
 
 
 @cli.command()

@@ -674,13 +674,16 @@ class TestVaultContextIntegration:
             tags=["domain/Finance"],
         )
 
-        output = _build_vault_context(vault_config)
+        output, project_names, domain_names = _build_vault_context(vault_config)
 
         # Should use format_for_prompt format (not raw folder listing)
         assert "Finance:" in output
         assert "Alpha" in output
         # Should show project under its domain
         assert "  - Alpha" in output
+        # Should return non-empty typed name sets
+        assert isinstance(project_names, frozenset)
+        assert isinstance(domain_names, frozenset)
 
     def test_build_vault_context_fallback_on_missing_projects(self, vault_config):
         """_build_vault_context falls back to flat listing if registry fails."""
@@ -689,9 +692,12 @@ class TestVaultContextIntegration:
 
         shutil.rmtree(vault_config.root / "Projects")
 
-        output = _build_vault_context(vault_config)
+        output, project_names, domain_names = _build_vault_context(vault_config)
 
         # Should NOT crash — fallback to flat listing
         assert isinstance(output, str)
         assert "Domains:" in output
         assert "Projects:" in output
+        # Fallback should return None to trigger backward-compat pooled validation
+        assert project_names is None
+        assert domain_names is None
