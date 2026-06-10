@@ -1,17 +1,27 @@
 """Tests for core/tags.py — TagTaxonomy, validate_tags, load_taxonomy."""
+
 from __future__ import annotations
 
 from pathlib import Path
 
 import yaml
 
-from core.tags import TagTaxonomy, load_taxonomy, validate_tags
+from core.tags import TagTaxonomy, load_taxonomy, normalize_tag_segment, validate_tags
 
 TAGS_YAML = Path(__file__).parent.parent.parent / "src" / "config" / "tags.yaml"
 
 SAMPLE_TAXONOMY = TagTaxonomy(
     allowed_types=frozenset(
-        ["meeting-note", "email", "report", "article", "reflection", "task-list", "transcript", "capture"]
+        [
+            "meeting-note",
+            "email",
+            "report",
+            "article",
+            "reflection",
+            "task-list",
+            "transcript",
+            "capture",
+        ]
     ),
     valid_domains=frozenset(["finance", "strategy"]),
 )
@@ -42,12 +52,16 @@ class TestValidateTags:
         assert "type/bad-value" not in valid
 
     def test_unknown_domain_tag_is_dropped_with_violation(self) -> None:
-        valid, violations = validate_tags(["type/report", "domain/nonexistent"], SAMPLE_TAXONOMY)
+        valid, violations = validate_tags(
+            ["type/report", "domain/nonexistent"], SAMPLE_TAXONOMY
+        )
         assert any("unknown domain tag" in v for v in violations)
         assert "domain/nonexistent" not in valid
 
     def test_namespaced_free_tag_is_dropped_with_violation(self) -> None:
-        valid, violations = validate_tags(["type/report", "status/active"], SAMPLE_TAXONOMY)
+        valid, violations = validate_tags(
+            ["type/report", "status/active"], SAMPLE_TAXONOMY
+        )
         assert any("namespace prefix" in v for v in violations)
         assert "status/active" not in valid
 
@@ -75,6 +89,20 @@ class TestValidateTags:
         assert "domain/anything" not in valid
 
 
+class TestNormalizeTagSegment:
+    def test_spaces_become_hyphens(self) -> None:
+        assert normalize_tag_segment("AI Competition") == "AI-Competition"
+
+    def test_no_spaces_unchanged(self) -> None:
+        assert normalize_tag_segment("Engineering") == "Engineering"
+
+    def test_multiple_spaces(self) -> None:
+        assert normalize_tag_segment("My Cool Domain") == "My-Cool-Domain"
+
+    def test_empty_string(self) -> None:
+        assert normalize_tag_segment("") == ""
+
+
 class TestLoadTaxonomy:
     def test_load_taxonomy_returns_correct_taxonomy(self) -> None:
         taxonomy = load_taxonomy(TAGS_YAML, frozenset(["finance"]))
@@ -91,3 +119,23 @@ class TestLoadTaxonomy:
     def test_attachment_summary_in_allowed_types(self) -> None:
         taxonomy = load_taxonomy(TAGS_YAML, frozenset())
         assert "attachment-summary" in taxonomy.allowed_types
+
+    def test_load_taxonomy_normalizes_spaced_domain_to_slug(self) -> None:
+        taxonomy = load_taxonomy(TAGS_YAML, frozenset(["AI Competition"]))
+        assert "AI-Competition" in taxonomy.valid_domains
+        assert "AI Competition" not in taxonomy.valid_domains
+
+    def test_load_taxonomy_builds_folder_name_map(self) -> None:
+        taxonomy = load_taxonomy(
+            TAGS_YAML, frozenset(["AI Competition", "Engineering"])
+        )
+        assert taxonomy.domain_folder_names["AI-Competition"] == "AI Competition"
+        assert taxonomy.domain_folder_names["Engineering"] == "Engineering"
+
+    def test_spaced_domain_tag_accepted_after_normalization(self) -> None:
+        taxonomy = load_taxonomy(TAGS_YAML, frozenset(["AI Competition"]))
+        valid, violations = validate_tags(
+            ["type/report", "domain/AI-Competition"], taxonomy
+        )
+        assert "domain/AI-Competition" in valid
+        assert not any("AI-Competition" in v for v in violations)

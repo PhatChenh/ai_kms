@@ -352,17 +352,13 @@ async def test_classify_step_inbox_suggest(tmp_path: Path, monkeypatch):
     result = await classify_step(mr, ctx)
 
     assert isinstance(result, Success)
-    # Returns original mr (unchanged — no ai_project stamp)
-    assert result.value is mr
-
-    # Verify candidate fields written via write_note
-    write_note_mock.assert_called_once()
-    written_meta = write_note_mock.call_args.args[2]
-    assert written_meta.status == "needs-review"
-    assert written_meta.suggested_project == "Alpha"
-    assert written_meta.suggested_primary_domain == "Finance"
-    assert written_meta.classify_confidence == 0.7
-    assert written_meta.classify_reasoning == "Plausible match."
+    # Returns new mr with classify fields stamped (not the original identity)
+    assert result.value.raw is mr.raw
+    assert result.value.classify_status == "needs-review"
+    assert result.value.suggested_project == "Alpha"
+    assert result.value.suggested_primary_domain == "Finance"
+    assert result.value.classify_confidence == 0.7
+    assert result.value.classify_reasoning == "Plausible match."
 
     # Verify SUGGEST audit row
     audit_mock.assert_called_once()
@@ -410,17 +406,14 @@ async def test_classify_step_inbox_clueless(tmp_path: Path, monkeypatch):
     result = await classify_step(mr, ctx)
 
     assert isinstance(result, Success)
-    assert result.value is mr
-
-    write_note_mock.assert_called_once()
-    written_meta = write_note_mock.call_args.args[2]
-    assert written_meta.status == "needs-review"
-    assert written_meta.suggested_project is None
-    assert written_meta.suggested_primary_domain is None
-    assert written_meta.classify_confidence == 0.4
+    assert result.value.raw is mr.raw
+    assert result.value.classify_status == "needs-review"
+    assert result.value.suggested_project is None
+    assert result.value.suggested_primary_domain is None
+    assert result.value.classify_confidence == 0.4
     # OQ-CIC-4 appends suffix when project + primary_domain are both None
-    assert "Too vague to classify." in written_meta.classify_reasoning
-    assert "no project or domain identified" in written_meta.classify_reasoning
+    assert "Too vague to classify." in result.value.classify_reasoning
+    assert "no project or domain identified" in result.value.classify_reasoning
 
     audit_mock.assert_called_once()
     assert audit_mock.call_args.kwargs["outcome"] == "CLUELESS"
@@ -476,11 +469,9 @@ async def test_classify_step_no_project_no_domain_is_clueless(
     audit_mock.assert_called_once()
     assert audit_mock.call_args.kwargs["outcome"] == "CLUELESS"
 
-    write_note_mock.assert_called_once()
-    written_meta = write_note_mock.call_args.args[2]
-    assert written_meta.status == "needs-review"
-    assert written_meta.suggested_project is None
-    assert written_meta.suggested_primary_domain is None
+    assert result.value.classify_status == "needs-review"
+    assert result.value.suggested_project is None
+    assert result.value.suggested_primary_domain is None
 
 
 # ---------------------------------------------------------------------------
@@ -635,10 +626,8 @@ async def test_classify_step_retry_then_clueless(tmp_path: Path, monkeypatch):
         or "failed" in audit_decision.reasoning.lower()
     )
 
-    # Candidate fields written
-    write_note_mock.assert_called_once()
-    written_meta = write_note_mock.call_args.args[2]
-    assert written_meta.status == "needs-review"
+    # Candidate fields stamped on result mr
+    assert result.value.classify_status == "needs-review"
 
 
 # ---------------------------------------------------------------------------
@@ -1179,14 +1168,12 @@ async def test_auto_human_locked_fallback(vault_root: Path, pipeline_ctx, monkey
     expected_dst = vault_root / "Projects" / "Alpha" / "locked-note.md"
     assert not expected_dst.exists(), "Locked file must NOT be moved"
 
-    # Candidate fields written (SUGGEST-style fallback).
-    write_note_mock.assert_called_once()
-    written_meta = write_note_mock.call_args.args[2]
-    assert written_meta.status == "needs-review"
-    assert written_meta.suggested_project == "Alpha"
-    assert written_meta.suggested_primary_domain == "Finance"
+    # Candidate fields stamped on result mr (SUGGEST-style fallback).
+    assert result.value.classify_status == "needs-review"
+    assert result.value.suggested_project == "Alpha"
+    assert result.value.suggested_primary_domain == "Finance"
     # Reasoning includes the block reason.
-    assert "blocked" in written_meta.classify_reasoning.lower()
+    assert "blocked" in result.value.classify_reasoning.lower()
 
     # Audit must record SUGGEST, NOT AUTO — the file stayed in inbox, so an
     # AUTO row would make the briefing report it as auto-filed (the #1 fix).

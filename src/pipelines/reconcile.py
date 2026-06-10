@@ -341,13 +341,15 @@ async def reconcile_stale_tags(
     Args:
         entries: Pre-scanned VaultEntry list from reconcile() entry point.
     """
+    from core.tags import normalize_tag_segment
     from vault.frontmatter import _DEPRECATED_KEYS
     from vault.paths import _location_context, load_valid_domains
     from vault.reader import read_note
     from vault.writer import write_note
 
     vault_cfg = ctx.config.vault
-    valid_domains = load_valid_domains(vault_cfg.root)
+    _raw_domains = load_valid_domains(vault_cfg.root)
+    valid_domain_slugs = frozenset(normalize_tag_segment(d) for d in _raw_domains)
     tags_updated = 0
 
     for entry in entries:
@@ -374,12 +376,14 @@ async def reconcile_stale_tags(
         new_tags = list(note.metadata.tags)
         new_project = note.metadata.project
 
-        # Remove stale domain/<X> tags (domains that no longer exist as folders)
+        # Remove stale domain/<X> tags (domains that no longer exist as folders).
+        # Tags use normalized slugs (e.g. "AI-Competition"); compare against slug set.
         cleaned_tags = [
             t
             for t in new_tags
             if not (
-                t.startswith("domain/") and t[len("domain/") :] not in valid_domains
+                t.startswith("domain/")
+                and t[len("domain/") :] not in valid_domain_slugs
             )
         ]
         if len(cleaned_tags) != len(new_tags):
@@ -389,7 +393,7 @@ async def reconcile_stale_tags(
         # Apply location context: add missing domain tag or fix project field
         loc_type, loc_name = _location_context(entry.path, vault_cfg)
         if loc_type == "domain" and loc_name is not None:
-            domain_tag = f"domain/{loc_name}"
+            domain_tag = f"domain/{normalize_tag_segment(loc_name)}"
             if domain_tag not in new_tags:
                 new_tags.append(domain_tag)
                 dirty = True

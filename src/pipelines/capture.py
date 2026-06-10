@@ -84,6 +84,11 @@ class MetadataResult:
     ai_project: str | None = None
     target_type: str | None = None
     target_name: str | None = None
+    classify_confidence: float | None = None
+    classify_reasoning: str | None = None
+    suggested_project: str | None = None
+    suggested_primary_domain: str | None = None
+    classify_status: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -237,9 +242,16 @@ async def metadata(sr: SummarizeResult, ctx: PipelineContext) -> Result[Metadata
             ai_type = next(
                 (t[len("type/") :] for t in ai_tags if t.startswith("type/")), None
             )
-            ai_domain = next(
+            _domain_slug = next(
                 (t[len("domain/") :] for t in ai_tags if t.startswith("domain/")), None
             )
+            # Denormalize slug → actual folder name (e.g. "AI-Competition" → "AI Competition")
+            if _domain_slug and ctx.taxonomy:
+                ai_domain = ctx.taxonomy.domain_folder_names.get(
+                    _domain_slug, _domain_slug
+                )
+            else:
+                ai_domain = _domain_slug
 
             source_id = to_vault_path(sr.raw.source_path)
             decision = AIDecision(
@@ -322,17 +334,20 @@ async def apply_location_tags(
     )
 
     if location_type == "domain" and location_name is not None:
+        from core.tags import normalize_tag_segment
+
         valid_domains = (
             ctx.taxonomy.valid_domains if ctx.taxonomy is not None else frozenset()
         )
-        if location_name not in valid_domains:
+        location_slug = normalize_tag_segment(location_name)
+        if location_slug not in valid_domains:
             logger.warning(
                 "apply_location_tags.invalid_domain",
                 path=str(mr.raw.source_path),
                 domain=location_name,
             )
             return Success(mr)
-        tag = f"domain/{location_name}"
+        tag = f"domain/{location_slug}"
         if tag in mr.ai_tags:
             return Success(mr)
         new_tags = list(mr.ai_tags) + [tag]
@@ -348,52 +363,6 @@ async def apply_location_tags(
 # ---------------------------------------------------------------------------
 # Stage 5.5: Classify (P2-CIC Phase 5)
 # ---------------------------------------------------------------------------
-
-
-def _write_classify_candidate(
-    path: Path,
-    suggested_project: str | None,
-    suggested_primary_domain: str | None,
-    classify_confidence: float,
-    classify_reasoning: str,
-) -> None:
-    """Write SUGGEST/CLUELESS candidate fields to a note's frontmatter.
-
-    Reads existing note to preserve all fields, then writes back with candidate
-    fields added.  Best-effort — failures are logged and silently discarded.
-    """
-    match read_note(path):
-        case Success(note):
-            existing = note.metadata
-            body = note.content
-        case Failure():
-            return
-
-    candidate_meta = NoteMetadata(
-        type=existing.type,
-        tags=existing.tags,
-        project=existing.project,
-        confidence=existing.confidence,
-        summary=existing.summary,
-        source=existing.source,
-        source_file=existing.source_file,
-        attachment_path=existing.attachment_path,
-        status="needs-review",
-        source_hash=existing.source_hash,
-        suggested_project=suggested_project,
-        suggested_primary_domain=suggested_primary_domain,
-        classify_confidence=classify_confidence,
-        classify_reasoning=classify_reasoning,
-        extra=existing.extra,
-    )
-
-    match write_note(path, body, candidate_meta, actor="ai"):
-        case Failure(error=e):
-            logger.warning(
-                "classify_step.candidate_write_failed", path=str(path), error=e
-            )
-        case Success():
-            pass
 
 
 def _write_classify_audit(
@@ -473,13 +442,19 @@ def _classify_auto_md_move(
         )
         # Fall back to SUGGEST — candidate fields, file stays in inbox.
         reason = cr.reasoning + " (AUTO move skipped: destination collision)"
-        _write_classify_candidate(
-            src, cr.project, cr.primary_domain, cr.confidence, reason
-        )
         _write_classify_audit(
             ctx, _suggest_action(cr), cr.confidence, reason, source_id, "SUGGEST"
         )
-        return Success(mr)
+        return Success(
+            replace(
+                mr,
+                classify_confidence=cr.confidence,
+                classify_reasoning=reason,
+                suggested_project=cr.project,
+                suggested_primary_domain=cr.primary_domain,
+                classify_status="needs-review",
+            )
+        )
 
     # Register destination with move guard so watcher doesn't re-home.
     _g = get_active()
@@ -498,13 +473,19 @@ def _classify_auto_md_move(
                 error=f.error,
             )
             reason = cr.reasoning + f" (AUTO move blocked: {f.error})"
-            _write_classify_candidate(
-                src, cr.project, cr.primary_domain, cr.confidence, reason
-            )
             _write_classify_audit(
                 ctx, _suggest_action(cr), cr.confidence, reason, source_id, "SUGGEST"
             )
-            return Success(mr)
+            return Success(
+                replace(
+                    mr,
+                    classify_confidence=cr.confidence,
+                    classify_reasoning=reason,
+                    suggested_project=cr.project,
+                    suggested_primary_domain=cr.primary_domain,
+                    classify_status="needs-review",
+                )
+            )
         case Failure(error=err):
             # Other error — log, CLUELESS-style fallback
             logger.error(
@@ -514,11 +495,19 @@ def _classify_auto_md_move(
                 error=err,
             )
             reason = cr.reasoning + f" (AUTO move failed: {err})"
-            _write_classify_candidate(src, None, None, cr.confidence, reason)
             _write_classify_audit(
                 ctx, "classify:clueless", cr.confidence, reason, source_id, "CLUELESS"
             )
-            return Success(mr)
+            return Success(
+                replace(
+                    mr,
+                    classify_confidence=cr.confidence,
+                    classify_reasoning=reason,
+                    suggested_project=None,
+                    suggested_primary_domain=None,
+                    classify_status="needs-review",
+                )
+            )
         case Success(value=outcome):
             pass
 
@@ -547,13 +536,19 @@ def _classify_auto_md_move(
                     pass
             # Fall back to SUGGEST — candidate fields, file back in inbox.
             reason = cr.reasoning + " (AUTO move failed: DB error)"
-            _write_classify_candidate(
-                src, cr.project, cr.primary_domain, cr.confidence, reason
-            )
             _write_classify_audit(
                 ctx, _suggest_action(cr), cr.confidence, reason, source_id, "SUGGEST"
             )
-            return Success(mr)
+            return Success(
+                replace(
+                    mr,
+                    classify_confidence=cr.confidence,
+                    classify_reasoning=reason,
+                    suggested_project=cr.project,
+                    suggested_primary_domain=cr.primary_domain,
+                    classify_status="needs-review",
+                )
+            )
         case Success():
             pass
 
@@ -573,7 +568,14 @@ def _classify_auto_md_move(
 
     # Update MetadataResult so store() operates on the new location.
     new_raw = replace(mr.raw, source_path=dst)
-    return Success(replace(mr, raw=new_raw))
+    return Success(
+        replace(
+            mr,
+            raw=new_raw,
+            classify_confidence=cr.confidence,
+            classify_reasoning=cr.reasoning,
+        )
+    )
 
 
 async def classify_step(
@@ -607,7 +609,9 @@ async def classify_step(
     title = mr.ai_title or mr.raw.source_path.stem
     tags = list(mr.ai_tags)
     if mr.ai_domain:
-        domain_tag = f"domain/{mr.ai_domain}"
+        from core.tags import normalize_tag_segment
+
+        domain_tag = f"domain/{normalize_tag_segment(mr.ai_domain)}"
         if domain_tag not in tags:
             tags.append(domain_tag)
     subject = build_subject(title, mr.summary or None, tags)
@@ -648,13 +652,6 @@ async def classify_step(
 
     # --- All retries exhausted or unrecoverable -> CLUELESS ---
     if cr is None:
-        _write_classify_candidate(
-            mr.raw.source_path,
-            None,
-            None,
-            0.0,
-            "Classification failed after 3 retry attempts.",
-        )
         _write_classify_audit(
             ctx,
             "classify:clueless",
@@ -663,18 +660,33 @@ async def classify_step(
             source_id,
             "CLUELESS",
         )
-        return Success(mr)
+        return Success(
+            replace(
+                mr,
+                classify_confidence=0.0,
+                classify_reasoning="Classification failed after 3 retry attempts.",
+                suggested_project=None,
+                suggested_primary_domain=None,
+                classify_status="needs-review",
+            )
+        )
 
     # --- OQ-CIC-4: no project AND no primary domain -> forced CLUELESS ---
     if cr.project is None and cr.primary_domain is None:
         reasoning = cr.reasoning + " (no project or domain identified)"
-        _write_classify_candidate(
-            mr.raw.source_path, None, None, cr.confidence, reasoning
-        )
         _write_classify_audit(
             ctx, "classify:clueless", cr.confidence, reasoning, source_id, "CLUELESS"
         )
-        return Success(mr)
+        return Success(
+            replace(
+                mr,
+                classify_confidence=cr.confidence,
+                classify_reasoning=reasoning,
+                suggested_project=None,
+                suggested_primary_domain=None,
+                classify_status="needs-review",
+            )
+        )
 
     # --- Confidence-gated routing ---
     from core.config import CONFIG as _CONFIG
@@ -684,9 +696,15 @@ async def classify_step(
 
     if decision == RouteDecision.AUTO:
         # AUTO — stamp MetadataResult (P2-CIC-01)
+        from core.tags import normalize_tag_segment
+
         new_tags = list(mr.ai_tags)
+        _valid_slugs = ctx.taxonomy.valid_domains if ctx.taxonomy is not None else None
         for domain in cr.domains:
-            tag = f"domain/{domain}"
+            slug = normalize_tag_segment(domain)
+            if _valid_slugs is not None and slug not in _valid_slugs:
+                continue  # drop domain tags not backed by an actual Domain/ folder
+            tag = f"domain/{slug}"
             if tag not in new_tags:
                 new_tags.append(tag)
 
@@ -695,6 +713,8 @@ async def classify_step(
             ai_project=cr.project,
             ai_domain=cr.primary_domain or mr.ai_domain,
             ai_tags=new_tags,
+            classify_confidence=cr.confidence,
+            classify_reasoning=cr.reasoning,
         )
 
         # Phase 6: AUTO move handoff.
@@ -720,29 +740,24 @@ async def classify_step(
             )
 
     elif decision == RouteDecision.SUGGEST:
-        # SUGGEST — write candidate fields, file stays (P2-CIC-02)
-        _write_classify_candidate(
-            mr.raw.source_path,
-            cr.project,
-            cr.primary_domain,
-            cr.confidence,
-            cr.reasoning,
-        )
+        # SUGGEST — stamp candidate fields on mr, file stays (P2-CIC-02)
         action = f"classify:suggest/{cr.project or cr.primary_domain}"
         _write_classify_audit(
             ctx, action, cr.confidence, cr.reasoning, source_id, "SUGGEST"
         )
-        return Success(mr)
+        return Success(
+            replace(
+                mr,
+                classify_confidence=cr.confidence,
+                classify_reasoning=cr.reasoning,
+                suggested_project=cr.project,
+                suggested_primary_domain=cr.primary_domain,
+                classify_status="needs-review",
+            )
+        )
 
     else:
-        # CLUELESS — write candidate fields with AI values (P2-CIC-03)
-        _write_classify_candidate(
-            mr.raw.source_path,
-            cr.project,
-            cr.primary_domain,
-            cr.confidence,
-            cr.reasoning,
-        )
+        # CLUELESS — stamp candidate fields on mr (P2-CIC-03)
         _write_classify_audit(
             ctx,
             "classify:clueless",
@@ -751,7 +766,16 @@ async def classify_step(
             source_id,
             "CLUELESS",
         )
-        return Success(mr)
+        return Success(
+            replace(
+                mr,
+                classify_confidence=cr.confidence,
+                classify_reasoning=cr.reasoning,
+                suggested_project=cr.project,
+                suggested_primary_domain=cr.primary_domain,
+                classify_status="needs-review",
+            )
+        )
 
 
 def _audit_rename_gate(
@@ -866,8 +890,12 @@ async def store(mr: MetadataResult, ctx: PipelineContext) -> Result[WriteOutcome
         summary=mr.summary,
         type=mr.ai_type,
         tags=mr.ai_tags,
-        confidence=mr.decision.confidence,
         project=mr.ai_project,
+        status=mr.classify_status,
+        suggested_project=mr.suggested_project,
+        suggested_primary_domain=mr.suggested_primary_domain,
+        classify_confidence=mr.classify_confidence,
+        classify_reasoning=mr.classify_reasoning,
     )
 
     if mr.raw.is_md:
@@ -1198,6 +1226,12 @@ async def _store_nonmd(
         summaries_dir.mkdir(parents=True, exist_ok=True)
         marker_path = summaries_dir / f"{final_src.name}.md"
         attachment_rel = to_vault_path(final_src)
+        # Use classify_step results when available (SUGGEST); fall back to CLUELESS defaults.
+        _classify_confidence = mr.classify_confidence or 0.0
+        _classify_reasoning = (
+            mr.classify_reasoning
+            or "No project/domain context — manual review required."
+        )
         marker_meta = NoteMetadata(
             type="attachment-summary",
             status="needs-review",
@@ -1205,10 +1239,10 @@ async def _store_nonmd(
             summary=mr.summary,
             source_hash=_source_hash,
             tags=["type/attachment-summary"],
-            suggested_project=None,
-            suggested_primary_domain=None,
-            classify_confidence=0.0,
-            classify_reasoning="No project/domain context — manual review required.",
+            suggested_project=mr.suggested_project,
+            suggested_primary_domain=mr.suggested_primary_domain,
+            classify_confidence=_classify_confidence,
+            classify_reasoning=_classify_reasoning,
         )
         match write_note(marker_path, rich_body, marker_meta, actor="ai"):
             case Failure() as f:

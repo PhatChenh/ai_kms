@@ -393,7 +393,7 @@ def to_vault_path(absolute: Path) -> str:
     """
     from core.config import CONFIG
 
-    rel = absolute.relative_to(CONFIG.main.vault.root).as_posix()
+    rel = absolute.resolve().relative_to(CONFIG.main.vault.root.resolve()).as_posix()
     return unicodedata.normalize("NFC", rel)
 
 

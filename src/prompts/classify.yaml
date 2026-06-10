@@ -19,6 +19,9 @@ system: |
     general domain knowledge or too vague to assign.
   - Domains are tag-level categories. List all that apply based on the note's
     content and any existing tags mentioned in the subject.
+  - If the subject already contains a domain/X tag, that domain has already been
+    assessed by the metadata stage. Treat it as strong evidence — prefer it as
+    primary_domain unless the note content clearly contradicts it.
   - Primary domain is the single most relevant domain from your domains list.
     Return null if no domain clearly applies.
   - The available destinations list shows valid project names and domain names.

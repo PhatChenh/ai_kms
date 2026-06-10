@@ -1325,10 +1325,17 @@
   origin: design
   granularity: outcome
   trigger: "kms capture --scan"
-  fixtures: []
-  steps: "Create a subfolder inside inbox/ with two files. Run `uv run kms capture --scan`. Inspect the documents table and vault."
+  fixtures:
+    - inbox/test-batch-drop/note-a.md
+    - inbox/test-batch-drop/note-b.md
+  steps:
+    - "Create the subfolder and two files: `mkdir -p <vault>/inbox/test-batch-drop` then drop any two .md files inside it (can be blank or with a line of text)."
+    - "Run `uv run kms capture --scan` from the repo root."
+    - "Check both files were indexed: `sqlite3 data/kb.db \"SELECT vault_path, batch_id FROM documents WHERE vault_path LIKE 'inbox/test-batch-drop/%' ORDER BY vault_path\"`"
+    - "Check a batch row was created: `sqlite3 data/kb.db \"SELECT folder_path, status FROM batches WHERE folder_path LIKE '%test-batch-drop%'\"`"
   expected:
-    - "Both files appear as documents rows with a shared non-NULL batch_id. A batches row exists with the subfolder name as folder_path."
+    - "Both vault_path rows returned by the first query, both with the same non-NULL batch_id (a UUID-style string)."
+    - "The batches query returns exactly one row with folder_path containing 'test-batch-drop'."
   spec_ref: "docs/1_design/td040-td041-batch-id-fix.md §Success criteria"
   human_reviewed: no
   last_tested: null

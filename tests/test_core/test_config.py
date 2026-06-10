@@ -1081,7 +1081,7 @@ class TestConfigSingleton:
         assert self.cfg.main.env in ("dev", "prod", "test")
 
     def test_default_provider_for_classify_is_valid(self):
-        assert self.cfg.main.providers.classify in ("claude", "ollama")
+        assert self.cfg.main.providers.classify in ("claude", "ollama", "claude_cli")
 
     def test_routing_pipelines_is_dict(self):
         assert isinstance(self.cfg.routing.pipelines, dict)
