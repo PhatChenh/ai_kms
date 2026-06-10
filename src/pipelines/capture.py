@@ -887,6 +887,7 @@ def _find_rename_dst(parent: Path, sanitized_stem: str) -> Path | None:
 async def store(mr: MetadataResult, ctx: PipelineContext) -> Result[WriteOutcome]:
     """Stage 6: write note to vault and upsert documents row."""
     note_meta = NoteMetadata(
+        title=mr.ai_title or None,
         summary=mr.summary,
         type=mr.ai_type,
         tags=mr.ai_tags,
@@ -1110,6 +1111,7 @@ async def _store_nonmd(
         _src_for_hash = src if placement.needs_move else attachment_dst
         _source_hash = hashlib.sha256(_src_for_hash.read_bytes()).hexdigest()
         sibling_meta = NoteMetadata(
+            title=mr.ai_title or None,
             type="attachment-summary",
             attachment_path=attachment_vault_path,
             summary=mr.summary,
@@ -1233,6 +1235,7 @@ async def _store_nonmd(
             or "No project/domain context — manual review required."
         )
         marker_meta = NoteMetadata(
+            title=mr.ai_title or None,
             type="attachment-summary",
             status="needs-review",
             attachment_path=attachment_rel,
