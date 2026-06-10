@@ -65,6 +65,7 @@ def pipeline_ctx(vault_root: Path, db_path: Path, monkeypatch):  # type: ignore[
         dns_resolve_timeout_seconds=5,
         max_redirects=5,
     )
+    config.search = MagicMock(embedding_model="all-MiniLM-L6-v2")
 
     import core.config as cfg_module
 

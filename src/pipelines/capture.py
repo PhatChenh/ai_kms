@@ -990,6 +990,38 @@ async def _store_md(
                             pass
                     return f
                 case Success():
+                    try:
+                        from retrieval.embeddings import index_embedding
+
+                        _title = mr.ai_title or Path(outcome.vault_path).stem
+                        index_embedding(
+                            vault_path=outcome.vault_path,
+                            title=_title,
+                            note_type=mr.ai_type,
+                            tags=mr.ai_tags,
+                            summary=mr.summary,
+                            db_path=ctx.db_path,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "store.embedding_index_failed",
+                            vault_path=outcome.vault_path,
+                        )
+                    try:
+                        from retrieval.keyword import index_keywords
+
+                        index_keywords(
+                            vault_path=outcome.vault_path,
+                            title=_title,
+                            summary=mr.summary or "",
+                            body=original_body,
+                            db_path=ctx.db_path,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "store.keyword_index_failed",
+                            vault_path=outcome.vault_path,
+                        )
                     return Success(outcome)
         else:
             logger.warning(
@@ -1008,6 +1040,38 @@ async def _store_md(
                 case Failure() as f:
                     return f
                 case Success():
+                    try:
+                        from retrieval.embeddings import index_embedding
+
+                        _title = mr.ai_title or Path(outcome.vault_path).stem
+                        index_embedding(
+                            vault_path=outcome.vault_path,
+                            title=_title,
+                            note_type=mr.ai_type,
+                            tags=mr.ai_tags,
+                            summary=mr.summary,
+                            db_path=ctx.db_path,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "store.embedding_index_failed",
+                            vault_path=outcome.vault_path,
+                        )
+                    try:
+                        from retrieval.keyword import index_keywords
+
+                        index_keywords(
+                            vault_path=outcome.vault_path,
+                            title=_title,
+                            summary=mr.summary or "",
+                            body=original_body,
+                            db_path=ctx.db_path,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "store.keyword_index_failed",
+                            vault_path=outcome.vault_path,
+                        )
                     return Success(outcome)
 
 
@@ -1171,6 +1235,37 @@ async def _store_nonmd(
             case Failure() as f:
                 return f
             case Success():
+                try:
+                    from retrieval.embeddings import index_embedding
+                    from retrieval.keyword import index_keywords
+
+                    _title = mr.ai_title or Path(sibling_outcome.vault_path).stem
+                    index_embedding(
+                        vault_path=sibling_outcome.vault_path,
+                        title=_title,
+                        note_type=mr.ai_type,
+                        tags=mr.ai_tags,
+                        summary=mr.summary,
+                        db_path=ctx.db_path,
+                    )
+                except Exception:
+                    logger.warning(
+                        "store.embedding_index_failed",
+                        vault_path=sibling_outcome.vault_path,
+                    )
+                try:
+                    index_keywords(
+                        vault_path=sibling_outcome.vault_path,
+                        title=_title,
+                        summary=mr.summary or "",
+                        body=rich_body,
+                        db_path=ctx.db_path,
+                    )
+                except Exception:
+                    logger.warning(
+                        "store.keyword_index_failed",
+                        vault_path=sibling_outcome.vault_path,
+                    )
                 return Success(sibling_outcome)
 
     else:
@@ -1275,6 +1370,37 @@ async def _store_nonmd(
             case Failure() as f:
                 return f
             case Success():
+                try:
+                    from retrieval.embeddings import index_embedding
+                    from retrieval.keyword import index_keywords
+
+                    _title = mr.ai_title or Path(marker_outcome.vault_path).stem
+                    index_embedding(
+                        vault_path=marker_outcome.vault_path,
+                        title=_title,
+                        note_type=mr.ai_type,
+                        tags=mr.ai_tags,
+                        summary=mr.summary,
+                        db_path=ctx.db_path,
+                    )
+                except Exception:
+                    logger.warning(
+                        "store.embedding_index_failed",
+                        vault_path=marker_outcome.vault_path,
+                    )
+                try:
+                    index_keywords(
+                        vault_path=marker_outcome.vault_path,
+                        title=_title,
+                        summary=mr.summary or "",
+                        body=rich_body,
+                        db_path=ctx.db_path,
+                    )
+                except Exception:
+                    logger.warning(
+                        "store.keyword_index_failed",
+                        vault_path=marker_outcome.vault_path,
+                    )
                 return Success(marker_outcome)
 
 
