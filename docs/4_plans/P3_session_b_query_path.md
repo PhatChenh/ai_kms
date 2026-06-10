@@ -481,7 +481,10 @@ These open questions from the spec/research are resolved here. Each was "leaning
 - [ ] `--max` is passed through as `max_results`
 - [ ] Failure from `search()` prints error and exits 1
 
-**Status:** [ ] pending
+**Status:** [x] done
+
+**Completed**: 2026-06-11
+**Notes**: Implemented via TDD. 9 tests, 1171+ total (0 regressions in relevant suites). Replaced the `NotImplementedError` stub with a real search command. Five Click decorators: optional `query` argument, `--project`, `--since` (7d/30d/YYYY-MM-DD), `--max` (max_results), `--reindex` (standalone flag). Three helpers: `_parse_since()` converts since string to date_range tuple; `_print_result_card()` formats SearchResult cards (title, score, project, type, tags, snippet, summary); `_run_reindex()` reindexes all notes via all_paths/read_note/index_embedding/index_keywords. Divergence: plan specified `asyncio.run(search(...))` but `search()` is synchronous -- called directly instead. C-10 only applies to async entry points. Clean lint (ruff 0 findings).
 
 ---
 
