@@ -630,13 +630,23 @@ async def classify_step(
                 dest_registry = ProjectRegistry()
     destinations = format_for_prompt(dest_registry)
 
+    # Cross-type validation sets (TD-051)
+    project_names = dest_registry.all_project_names
+    domain_names = frozenset(k for k in dest_registry.groups if k != "Uncategorized")
+
     # --- Retry loop ---
     cr: ClassifyResult | None = None
     max_attempts = 3
     base_delay = 1.0
 
     for attempt in range(1, max_attempts + 1):
-        result = await classify(subject, destinations, ctx.config)
+        result = await classify(
+            subject,
+            destinations,
+            ctx.config,
+            project_names=project_names,
+            domain_names=domain_names,
+        )
         match result:
             case Success(value=classify_result):
                 cr = classify_result
@@ -1691,14 +1701,17 @@ async def scan_capture(
 # ---------------------------------------------------------------------------
 
 
-def _build_vault_context(vault_cfg) -> str:
-    """Return a human-readable listing of domains and their projects.
+def _build_vault_context(vault_cfg) -> tuple[str, frozenset[str], frozenset[str]]:
+    """Return (valid_destinations, project_names, domain_names) for classify().
 
     Uses the Project Registry (build_registry) so the LLM sees which projects
     are already mapped to which domains.  Falls back to a flat folder listing
     on registry build failure.
 
-    Used to build valid_destinations for the classify() prompt.
+    Returns:
+        valid_destinations: human-readable prompt text for AI.
+        project_names: exact project-name set for cross-type validation (TD-051).
+        domain_names: exact domain-name set for cross-type validation (TD-051).
     """
     import logging
 
@@ -1708,7 +1721,9 @@ def _build_vault_context(vault_cfg) -> str:
 
     match build_registry(vault_cfg):
         case Success(reg):
-            return format_for_prompt(reg)
+            project_names = reg.all_project_names
+            domain_names = frozenset(k for k in reg.groups if k != "Uncategorized")
+            return format_for_prompt(reg), project_names, domain_names
         case Failure(error=e):
             _log.warning("capture.vault_context_registry_failed error=%s", e)
 
@@ -1722,7 +1737,11 @@ def _build_vault_context(vault_cfg) -> str:
 
     domains = ", ".join(_names(vault_cfg.domain_path)) or "(none)"
     projects = ", ".join(_names(vault_cfg.projects_path)) or "(none)"
-    return f"Domains: {domains}\nProjects: {projects}"
+    return (
+        f"Domains: {domains}\nProjects: {projects}",
+        frozenset(),
+        frozenset(),
+    )
 
 
 def _collect_folder_files(folder_path: Path, vault_cfg: VaultConfig) -> list[Path]:
@@ -1914,11 +1933,17 @@ async def capture_folder(
     # ── Case A: inbox (or unknown) drop — classify via unified engine. ──────
     file_manifest = "\n".join(f.name for f in files)
     subject = build_folder_subject(folder_path.name, file_manifest)
-    valid_destinations = _build_vault_context(vault_cfg)
+    valid_destinations, project_names, domain_names = _build_vault_context(vault_cfg)
 
     # classify() handles its own provider dispatch, JSON parsing, and validation.
     # Failure → treat as CLUELESS (confidence 0.0), never abort.
-    match await classify(subject, valid_destinations, ctx.config):
+    match await classify(
+        subject,
+        valid_destinations,
+        ctx.config,
+        project_names=project_names,
+        domain_names=domain_names,
+    ):
         case Failure(error=e):
             logger.warning(
                 "capture_folder.classify_failed",
