@@ -764,3 +764,28 @@ class TestClassify:
         assert result.value.primary_domain == "Finance"
         assert result.value.domains == ["finance"]
         assert result.value.confidence == 0.9
+
+    @pytest.mark.asyncio
+    async def test_classify_backward_compat_without_typed_name_sets(self, monkeypatch):
+        """Calling classify() without project_names/domain_names falls back to pooled _destination_names()."""
+        # AI returns a project that IS in VAlign_DESTINATIONS (pooled set)
+        json_valid = (
+            '{"project": "Alpha", "domains": ["finance"], '
+            '"primary_domain": "Finance", "confidence": 0.85, '
+            '"reasoning": "Valid project and domain in pooled destinations."}'
+        )
+        mock_provider = _make_mock_provider(
+            Success(LLMResponse(content=json_valid, model="test", usage={}))
+        )
+        _patch_get_provider(monkeypatch, mock_provider)
+
+        result = await classify(
+            subject="Title: Alpha Budget\nSummary: Budget review for Alpha project\nTags: finance",
+            valid_destinations=VALID_DESTINATIONS,
+            config=_make_config(),
+            # project_names and domain_names intentionally omitted
+        )
+
+        assert isinstance(result, Success)
+        assert result.value.project == "Alpha"
+        assert result.value.primary_domain == "Finance"

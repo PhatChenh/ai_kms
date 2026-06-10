@@ -1737,10 +1737,13 @@ def _build_vault_context(vault_cfg) -> tuple[str, frozenset[str], frozenset[str]
 
     domains = ", ".join(_names(vault_cfg.domain_path)) or "(none)"
     projects = ", ".join(_names(vault_cfg.projects_path)) or "(none)"
+    # Return None sentinels — classify() falls back to pooled _destination_names()
+    # when project_names and domain_names are None. Empty frozensets would route
+    # to the typed-set validation path, silently rejecting all AI assignments.
     return (
         f"Domains: {domains}\nProjects: {projects}",
-        frozenset(),
-        frozenset(),
+        None,
+        None,
     )
 
 
