@@ -12,7 +12,8 @@
       "Bash(uv run *)",
       "Bash(ls -la /Users/lap14806/.claude/skills/draw-diagram/)",
       "Bash(ls -la /Users/lap14806/.claude/skills/)",
-      "WebSearch"
+      "WebSearch",
+      "WebFetch(domain:esengine.github.io)"
     ]
   }
 }

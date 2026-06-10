@@ -66,6 +66,11 @@ self_learning:
   include_examples_in_prompt: true
   max_examples: 5
   min_evaluations: 20
+search:
+  embedding_model: "all-MiniLM-L6-v2"
+  reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  max_candidates: 20
+  max_results: 10
 env: test   # dev | prod = use vault.root | test = use testing.vault_path below
 testing:
   vault_path: /tmp/ai_kms_test_vault  # isolated vault for manual testing guide runs — never the real vault
