@@ -1,7 +1,7 @@
 # AI-KMS Testing Guide
 _For non-technical testers. No coding required for Smoke and Phase checks._
 _Auto-generated from `behavior_inventory.yaml`. Fill in **Current result** fields after testing. All other content is regenerated — do not edit._
-_Last generated: 2026-06-09_
+_Last generated: 2026-06-10_
 
 ---
 
@@ -11,10 +11,10 @@ Each check is tagged. Here is what the tags mean.
 
 ### Origin — who created this check?
 
-| Label            | Meaning                                                                                                      | What to do                                                                                                                                    |
-| ---------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `design`         | Created during design phase — captures what the human INTENDED the system to do, before any code was written | Treat as the human's stated requirement. If this conflicts with what the system actually does, the system might have a bug.                   |
-| `implementation` | Created after code was written — captures what the system ACTUALLY does                                      | Treat as ground truth for current behavior. If this conflicts with design intent, the code might be doing something the human didn't ask for. |
+| Label | Meaning | What to do |
+|-------|---------|------------|
+| `design` | Created during design phase — captures what the human INTENDED the system to do, before any code was written | Treat as the human's stated requirement. If this conflicts with what the system actually does, the system might have a bug. |
+| `implementation` | Created after code was written — captures what the system ACTUALLY does | Treat as ground truth for current behavior. If this conflicts with design intent, the code might be doing something the human didn't ask for. |
 
 ### Granularity — what level of detail?
 
@@ -126,16 +126,16 @@ uv run kms capture Projects/Alpha/sample-report.pdf
 ```
 
 **Check:**
-- [x] Projects/Alpha/sample-report.pdf is GONE from Projects/Alpha/ (moved to attachment/)
-- [x] Binary appears at `Projects/Alpha/attachment/sample-report.pdf`
-- [x] Sibling .md at `Projects/Alpha/attachment/.summaries/sample-report.pdf.md`
-- [x] Sibling frontmatter has attachment_path: pointing to binary location
-- [x] Sibling frontmatter has type: attachment-summary
-- [x] Sibling frontmatter has summary: (non-empty)
+- [ ] Projects/Alpha/sample-report.pdf is GONE from Projects/Alpha/ (moved to attachment/)
+- [ ] Binary appears at `Projects/Alpha/attachment/sample-report.pdf`
+- [ ] Sibling .md at `Projects/Alpha/attachment/.summaries/sample-report.pdf.md`
+- [ ] Sibling frontmatter has attachment_path: pointing to binary location
+- [ ] Sibling frontmatter has type: attachment-summary
+- [ ] Sibling frontmatter has summary: (non-empty)
 
-**Last tested:** 2026-06-07
+**Last tested:** 2026-06-10
 **Last result:** passed
-**Current result:** passed
+**Current result:** ___
 
 ---
 
@@ -155,13 +155,13 @@ uv run kms capture inbox/test-body-preservation.md
 ```
 
 **Check:**
-- [x] Body text below second --- is byte-identical to original
-- [x] classify_step runs on this inbox file — candidate fields (suggested_project etc.) may appear in frontmatter depending on AI confidence
-- [x] summary: appears only inside frontmatter (between --- markers), never in body
+- [ ] Body text below second --- is byte-identical to original
+- [ ] classify_step runs on this inbox file — candidate fields (suggested_project etc.) may appear in frontmatter depending on AI confidence
+- [ ] summary: appears only inside frontmatter (between --- markers), never in body
 
-**Last tested:** 2026-06-07
+**Last tested:** 2026-06-10
 **Last result:** passed
-**Current result:** passed
+**Current result:** ___
 
 ---
 
@@ -179,12 +179,12 @@ uv run kms capture Domain/Finance/test-domain-tag.md
 ```
 
 **Check:**
-- [x] Open file — frontmatter tags: contains domain/Finance
-- [x] No domain: scalar field in frontmatter (only the tag)
+- [ ] Open file — frontmatter tags: contains domain/Finance
+- [ ] No domain: scalar field in frontmatter (only the tag)
 
-**Last tested:** 2026-06-07
+**Last tested:** 2026-06-10
 **Last result:** passed
-**Current result:** passed
+**Current result:** ___
 
 ---
 
@@ -202,22 +202,34 @@ uv run kms capture Projects/Alpha/test-project-tag.md
 ```
 
 **Check:**
-- [x] Open file — frontmatter has project: Alpha
+- [ ] Open file — frontmatter has project: Alpha
 
-**Last tested:** 2026-06-07
+**Last tested:** 2026-06-10
 **Last result:** passed
-**Current result:** passed
+**Current result:** ___
 
 ---
 
 ### P2-BAT-04 · scan_capture detects and batch-captures an unprocessed inbox subfolder
 _Origin: design · Granularity: outcome_
 
+**Setup:**
+```bash
+bash docs/system_behavior/setup_test_vault.sh P2-BAT-04
+```
+
 **Run:**
-Create a subfolder inside inbox/ with two files. Run `uv run kms capture --scan`. Inspect the documents table and vault.
+Create the subfolder and two files: `mkdir -p /tmp/ai_kms_test_vault/inbox/test-batch-drop` then drop any two .md files inside it (can be blank or with a line of text).
+
+Run `uv run kms capture --scan` from the repo root.
+
+Check both files were indexed: `sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE vault_path LIKE 'inbox/test-batch-drop/%' ORDER BY vault_path"`
+
+Check a batch row was created: `sqlite3 data/kb.db "SELECT folder_path, status FROM batches WHERE folder_path LIKE '%test-batch-drop%'"`
 
 **Check:**
-- [ ] Both files appear as documents rows with a shared non-NULL batch_id. A batches row exists with the subfolder name as folder_path.
+- [ ] Both vault_path rows returned by the first query, both with the same non-NULL batch_id (a UUID-style string).
+- [ ] The batches query returns exactly one row with folder_path containing 'test-batch-drop'.
 
 **Last tested:** never
 **Last result:** none
@@ -849,14 +861,12 @@ uv run kms capture Projects/Alpha/vr-place-02-test.xlsx
 ```
 
 **Check:**
-- [x] Binary still at Projects/Alpha/vr-place-02-test.xlsx (NOT moved to attachment/)
-- [x] Sibling .md written (NOT under attachment/ — editable stays at root)
+- [ ] Binary still at Projects/Alpha/vr-place-02-test.xlsx (NOT moved to attachment/)
+- [ ] Sibling .md written (NOT under attachment/ — editable stays at root)
 
-**Last tested:** never
-**Last result:** none
-**Current result:** passed
-
-⚠ AI-authored — not yet human-verified.
+**Last tested:** 2026-06-10
+**Last result:** passed
+**Current result:** ___
 
 ---
 
@@ -882,14 +892,12 @@ sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path LIKE 'Briefi
 ```
 
 **Check:**
-- [x] File in Briefings/ NOT captured (skipped)
-- [x] No DB row created in documents table for the file (count = 0)
+- [ ] File in Briefings/ NOT captured (skipped)
+- [ ] No DB row created in documents table for the file (count = 0)
 
-**Last tested:** never
-**Last result:** none
-**Current result:** Passed
-
-⚠ AI-authored — not yet human-verified.
+**Last tested:** 2026-06-10
+**Last result:** Passed
+**Current result:** ___
 
 ---
 
@@ -909,15 +917,13 @@ uv run kms reconcile
 ```
 
 **Check:**
-- [x] vr-rehome-01-test.xlsx GONE from Projects/Alpha/attachment/
-- [x] File appears at Projects/Alpha/vr-rehome-01-test.xlsx (project root, visible in Obsidian)
-- [x] Sibling .md path updated to reflect new location
+- [ ] vr-rehome-01-test.xlsx GONE from Projects/Alpha/attachment/
+- [ ] File appears at Projects/Alpha/vr-rehome-01-test.xlsx (project root, visible in Obsidian)
+- [ ] Sibling .md path updated to reflect new location
 
-**Last tested:** never
-**Last result:** none
-**Current result:** passed
-
-⚠ AI-authored — not yet human-verified.
+**Last tested:** 2026-06-10
+**Last result:** passed
+**Current result:** ___
 
 ---
 
@@ -943,15 +949,13 @@ uv run kms reconcile
 Open `Projects/Alpha/note.md` and inspect frontmatter.
 
 **Check:**
-- [x] `domain: finance` key absent from frontmatter
-- [x] `project: Alpha` unchanged
-- [x] `tags:` list unchanged (still empty)
+- [ ] `domain: finance` key absent from frontmatter
+- [ ] `project: Alpha` unchanged
+- [ ] `tags:` list unchanged (still empty)
 
-**Last tested:** never
-**Last result:** none
-**Current result:** passed
-
-⚠ AI-authored — not yet human-verified.
+**Last tested:** 2026-06-10
+**Last result:** passed
+**Current result:** ___
 
 ---
 
@@ -973,15 +977,13 @@ uv run kms reconcile
 Open `Projects/Alpha/locked.md` and inspect frontmatter.
 
 **Check:**
-- [x] `domain: finance` still present in frontmatter (not stripped)
-- [x] `updated_by_human: true` unchanged
-- [x] No other frontmatter fields modified
+- [ ] `domain: finance` still present in frontmatter (not stripped)
+- [ ] `updated_by_human: true` unchanged
+- [ ] No other frontmatter fields modified
 
-**Last tested:** never
-**Last result:** none
-**Current result:** passed
-
-⚠ AI-authored — not yet human-verified.
+**Last tested:** 2026-06-10
+**Last result:** passed
+**Current result:** ___
 
 ---
 
@@ -1003,14 +1005,12 @@ uv run kms reconcile
 Check the note's last-modified timestamp before and after — it should not change.
 
 **Check:**
-- [x] Note frontmatter unchanged (no unexpected fields added or removed)
-- [x] File modification time unchanged (reconcile did not rewrite it)
+- [ ] Note frontmatter unchanged (no unexpected fields added or removed)
+- [ ] File modification time unchanged (reconcile did not rewrite it)
 
-**Last tested:** never
-**Last result:** none
-**Current result:** passed
-
-⚠ AI-authored — not yet human-verified.
+**Last tested:** 2026-06-10
+**Last result:** passed
+**Current result:** ___
 
 ---
 
@@ -1116,15 +1116,13 @@ uv run kms capture Projects/Alpha/p2cic-04-located-note.md
 ```
 
 **Check:**
-- [x] Note stays in Projects/Alpha/ (location wins; no move)
-- [x] Frontmatter has project: Alpha
-- [x] No suggested-destination / needs-review fields written (classify was skipped)
+- [ ] Note stays in Projects/Alpha/ (location wins; no move)
+- [ ] Frontmatter has project: Alpha
+- [ ] No suggested-destination / needs-review fields written (classify was skipped)
 
-**Last tested:** never
-**Last result:** none
-**Current result:** passed
-
-⚠ AI-authored — not yet human-verified.
+**Last tested:** 2026-06-10
+**Last result:** passed
+**Current result:** ___
 
 ---
 
