@@ -26,15 +26,40 @@ def write_file(tmp_path: Path, name: str, content: str) -> Path:
 
 
 def test_parse_minimal_note(tmp_path):
-    """Unknown key 'title' goes into extra; NoteMetadata fields stay default."""
+    """title routes to typed field; extra stays empty."""
     from vault.frontmatter import parse
 
     f = write_file(tmp_path, "n.md", "---\ntitle: T\n---\nbody")
     result = parse(f)
     assert isinstance(result, Success)
     meta, body = result.value
-    assert meta.extra == {"title": "T"}
+    assert meta.title == "T"
+    assert meta.extra == {}
     assert body.strip() == "body"
+
+
+def test_title_field_roundtrip(tmp_path):
+    """A populated title round-trips through dumps() -> parse() unchanged."""
+    from vault.frontmatter import NoteMetadata, dumps, parse
+
+    meta = NoteMetadata(title="Q3 Budget Report", type="meeting-notes")
+    rendered = dumps(meta, "body")
+    f = write_file(tmp_path, "n.md", rendered)
+    result = parse(f)
+    assert isinstance(result, Success)
+    meta2, body2 = result.value
+    assert meta2.title == "Q3 Budget Report"
+    assert meta2.extra == {}
+    assert body2.strip() == "body"
+
+
+def test_title_none_omitted_from_yaml():
+    """A None title must NOT write a title: line to YAML output."""
+    from vault.frontmatter import NoteMetadata, dumps
+
+    meta = NoteMetadata(title=None, type="meeting-notes")
+    rendered = dumps(meta, "body")
+    assert "title:" not in rendered
 
 
 def test_parse_no_frontmatter(tmp_path):

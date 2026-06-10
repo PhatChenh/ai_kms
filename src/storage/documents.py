@@ -67,7 +67,11 @@ def _row_from_sqlite(row: sqlite3.Row) -> DocumentRow:
 
 
 def _derive_title(outcome: WriteOutcome) -> str:
-    return outcome.metadata.extra.get("title") or Path(outcome.vault_path).stem
+    return (
+        outcome.metadata.title
+        or outcome.metadata.extra.get("title")
+        or Path(outcome.vault_path).stem
+    )
 
 
 def _derive_key_topics(tags: list[str]) -> str:
@@ -195,9 +199,7 @@ def all_paths(db_path: Path | None = None) -> Result[list[tuple[str, str]]]:
         )
 
 
-def delete_by_path(
-    vault_path: str, db_path: Path | None = None
-) -> Result[int]:
+def delete_by_path(vault_path: str, db_path: Path | None = None) -> Result[int]:
     """
     Delete the documents row for vault_path.
 
@@ -250,7 +252,9 @@ def replace_path(
 
     try:
         with get_connection(db_path) as conn:
-            conn.execute("DELETE FROM documents WHERE vault_path = ?", (old_vault_path,))
+            conn.execute(
+                "DELETE FROM documents WHERE vault_path = ?", (old_vault_path,)
+            )
             conn.execute(
                 """
                 INSERT OR REPLACE INTO documents
@@ -280,7 +284,11 @@ def replace_path(
         return Failure(
             error=str(exc),
             recoverable=False,
-            context={"old_vault_path": old_vault_path, "new_vault_path": outcome.vault_path, "op": "replace_path"},
+            context={
+                "old_vault_path": old_vault_path,
+                "new_vault_path": outcome.vault_path,
+                "op": "replace_path",
+            },
         )
 
 
