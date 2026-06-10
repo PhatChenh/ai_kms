@@ -1,6 +1,6 @@
 # Plan: P3 Session A -- Index Layer + Pre-flight Fixes
 _Last updated: 2026-06-10_
-_Status: [~] Phases 1-3 done, Phases 4-5 pending — SEE HANDOFF at bottom_
+_Status: [x] All 5 phases COMPLETE — 1147 tests, 2 commits on worktree_
 
 **Spec:** `docs/2_specs/p3_session_a_index_layer.md`
 **Research:** `docs/3_research/p3_session_a_index_layer.md`
@@ -396,7 +396,10 @@ Each site:
 - The classify step's `_classify_auto_md_move` calls `documents.replace_path` at line 515 BEFORE `_store_md`. At that point the note has no search entries (hasn't been indexed yet), so the Phase 4 cleanup in `replace_path` is a no-op (zero rows deleted). This is correct. See research "Edge Cases" item 1.
 - sqlite-vec extension loading on every `_connect()` call adds minor overhead to read-only paths. Acceptable for correctness -- any query might touch vec0 tables. See research "Edge Cases" item 2.
 
-**Status**: [ ] pending
+**Status**: [x] done
+
+**Completed**: 2026-06-10
+**Notes**: Both sub-components implemented. Component 8 (index maintenance): delete_by_path, rename, replace_path all clean up embeddings_vec + notes_fts in same transaction. Component 7 (capture wiring): 4 call sites with best-effort try/except blocks. Lazy imports, separate try blocks per indexer. 10 new tests (5 maintenance + 5 capture search). Code review finding fixed: keyword import moved to its own try block. Commit: 940a6c9 (docs) + 721f78b (capture).
 
 ---
 
@@ -417,7 +420,10 @@ Each site:
 - [ ] `ruff format --check .` clean
 - [ ] Test count delta matches expectation
 
-**Status**: [ ] pending
+**Status**: [x] done
+
+**Completed**: 2026-06-10
+**Notes**: Full suite: 1147 passed, 1 skipped, 1 warning (all pre-existing). Ruff clean on all changed files. Test count delta: +10 (5 maintenance + 5 capture search) from Phase 4. Format check: 70 pre-existing files would reformat (untouched by this phase). 2 commits on worktree branch `worktree-p3-phase4-index-wiring`, ready to merge to main.
 
 ---
 
