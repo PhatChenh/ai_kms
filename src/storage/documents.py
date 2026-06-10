@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from core.result import Failure, Result, Success
@@ -354,4 +355,61 @@ def update_batch_id(
             error=str(exc),
             recoverable=False,
             context={"vault_path": vault_path, "op": "update_batch_id"},
+        )
+
+
+def filter_paths(
+    project: str | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    db_path: Path | None = None,
+) -> Result[list[str] | None]:
+    """Return the set of vault_paths matching optional project and/or date filters.
+
+    If *project*, *since*, and *until* are all None, returns ``Success(None)`` —
+    the sentinel value that tells callers "all notes; do not build an IN clause."
+    This avoids SQLite variable limits on large vaults.
+
+    Args:
+        project: Optional project name to filter by (exact match on ``project``
+                 column).
+        since:   Optional inclusive lower bound on ``updated_at``.
+        until:   Optional inclusive upper bound on ``updated_at``.
+        db_path: Override DB path.
+
+    Returns:
+        ``Success(list_of_vault_paths)`` when a filter is applied (empty list
+        if no rows match), ``Success(None)`` when no filters are given (all-notes
+        sentinel), or ``Failure(recoverable=False)`` on sqlite3.Error.
+    """
+    if project is None and since is None and until is None:
+        return Success(None)
+
+    clauses: list[str] = []
+    params: list[str] = []
+
+    if project is not None:
+        clauses.append("project = ?")
+        params.append(project)
+
+    if since is not None:
+        clauses.append("updated_at >= ?")
+        params.append(since.strftime("%Y-%m-%d %H:%M:%S"))
+
+    if until is not None:
+        clauses.append("updated_at <= ?")
+        params.append(until.strftime("%Y-%m-%d %H:%M:%S"))
+
+    sql = f"SELECT vault_path FROM documents WHERE {' AND '.join(clauses)}"
+
+    try:
+        with get_connection(db_path, readonly=True) as conn:
+            cur = conn.execute(sql, params)
+            result: list[str] = [row[0] for row in cur.fetchall()]
+        return Success(result)
+    except sqlite3.Error as exc:
+        return Failure(
+            error=str(exc),
+            recoverable=False,
+            context={"project": project, "op": "filter_paths"},
         )
