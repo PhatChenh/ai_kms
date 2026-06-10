@@ -126,16 +126,16 @@ uv run kms capture Projects/Alpha/sample-report.pdf
 ```
 
 **Check:**
-- [ ] Projects/Alpha/sample-report.pdf is GONE from Projects/Alpha/ (moved to attachment/)
-- [ ] Binary appears at `Projects/Alpha/attachment/sample-report.pdf`
-- [ ] Sibling .md at `Projects/Alpha/attachment/.summaries/sample-report.pdf.md`
-- [ ] Sibling frontmatter has attachment_path: pointing to binary location
-- [ ] Sibling frontmatter has type: attachment-summary
-- [ ] Sibling frontmatter has summary: (non-empty)
+- [x] Projects/Alpha/sample-report.pdf is GONE from Projects/Alpha/ (moved to attachment/)
+- [x] Binary appears at `Projects/Alpha/attachment/sample-report.pdf`
+- [x] Sibling .md at `Projects/Alpha/attachment/.summaries/sample-report.pdf.md`
+- [x] Sibling frontmatter has attachment_path: pointing to binary location
+- [x] Sibling frontmatter has type: attachment-summary
+- [x] Sibling frontmatter has summary: (non-empty)
 
 **Last tested:** 2026-06-07
 **Last result:** passed
-**Current result:** ___
+**Current result:** passed
 
 ---
 
@@ -155,13 +155,13 @@ uv run kms capture inbox/test-body-preservation.md
 ```
 
 **Check:**
-- [ ] Body text below second --- is byte-identical to original
-- [ ] classify_step runs on this inbox file — candidate fields (suggested_project etc.) may appear in frontmatter depending on AI confidence
-- [ ] summary: appears only inside frontmatter (between --- markers), never in body
+- [x] Body text below second --- is byte-identical to original
+- [x] classify_step runs on this inbox file — candidate fields (suggested_project etc.) may appear in frontmatter depending on AI confidence
+- [x] summary: appears only inside frontmatter (between --- markers), never in body
 
 **Last tested:** 2026-06-07
 **Last result:** passed
-**Current result:** ___
+**Current result:** passed
 
 ---
 
@@ -179,12 +179,12 @@ uv run kms capture Domain/Finance/test-domain-tag.md
 ```
 
 **Check:**
-- [ ] Open file — frontmatter tags: contains domain/Finance
-- [ ] No domain: scalar field in frontmatter (only the tag)
+- [x] Open file — frontmatter tags: contains domain/Finance
+- [x] No domain: scalar field in frontmatter (only the tag)
 
 **Last tested:** 2026-06-07
 **Last result:** passed
-**Current result:** ___
+**Current result:** passed
 
 ---
 
@@ -202,11 +202,11 @@ uv run kms capture Projects/Alpha/test-project-tag.md
 ```
 
 **Check:**
-- [ ] Open file — frontmatter has project: Alpha
+- [x] Open file — frontmatter has project: Alpha
 
 **Last tested:** 2026-06-07
 **Last result:** passed
-**Current result:** ___
+**Current result:** passed
 
 ---
 
@@ -849,12 +849,12 @@ uv run kms capture Projects/Alpha/vr-place-02-test.xlsx
 ```
 
 **Check:**
-- [ ] Binary still at Projects/Alpha/vr-place-02-test.xlsx (NOT moved to attachment/)
-- [ ] Sibling .md written (NOT under attachment/ — editable stays at root)
+- [x] Binary still at Projects/Alpha/vr-place-02-test.xlsx (NOT moved to attachment/)
+- [x] Sibling .md written (NOT under attachment/ — editable stays at root)
 
 **Last tested:** never
 **Last result:** none
-**Current result:** ___
+**Current result:** passed
 
 ⚠ AI-authored — not yet human-verified.
 
@@ -882,12 +882,12 @@ sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path LIKE 'Briefi
 ```
 
 **Check:**
-- [ ] File in Briefings/ NOT captured (skipped)
-- [ ] No DB row created in documents table for the file (count = 0)
+- [x] File in Briefings/ NOT captured (skipped)
+- [x] No DB row created in documents table for the file (count = 0)
 
 **Last tested:** never
 **Last result:** none
-**Current result:** ___
+**Current result:** Passed
 
 ⚠ AI-authored — not yet human-verified.
 
@@ -909,13 +909,13 @@ uv run kms reconcile
 ```
 
 **Check:**
-- [ ] vr-rehome-01-test.xlsx GONE from Projects/Alpha/attachment/
-- [ ] File appears at Projects/Alpha/vr-rehome-01-test.xlsx (project root, visible in Obsidian)
-- [ ] Sibling .md path updated to reflect new location
+- [x] vr-rehome-01-test.xlsx GONE from Projects/Alpha/attachment/
+- [x] File appears at Projects/Alpha/vr-rehome-01-test.xlsx (project root, visible in Obsidian)
+- [x] Sibling .md path updated to reflect new location
 
 **Last tested:** never
 **Last result:** none
-**Current result:** ___
+**Current result:** passed
 
 ⚠ AI-authored — not yet human-verified.
 
@@ -943,13 +943,13 @@ uv run kms reconcile
 Open `Projects/Alpha/note.md` and inspect frontmatter.
 
 **Check:**
-- [ ] `domain: finance` key absent from frontmatter
-- [ ] `project: Alpha` unchanged
-- [ ] `tags:` list unchanged (still empty)
+- [x] `domain: finance` key absent from frontmatter
+- [x] `project: Alpha` unchanged
+- [x] `tags:` list unchanged (still empty)
 
 **Last tested:** never
 **Last result:** none
-**Current result:** ___
+**Current result:** passed
 
 ⚠ AI-authored — not yet human-verified.
 
@@ -973,13 +973,13 @@ uv run kms reconcile
 Open `Projects/Alpha/locked.md` and inspect frontmatter.
 
 **Check:**
-- [ ] `domain: finance` still present in frontmatter (not stripped)
-- [ ] `updated_by_human: true` unchanged
-- [ ] No other frontmatter fields modified
+- [x] `domain: finance` still present in frontmatter (not stripped)
+- [x] `updated_by_human: true` unchanged
+- [x] No other frontmatter fields modified
 
 **Last tested:** never
 **Last result:** none
-**Current result:** ___
+**Current result:** passed
 
 ⚠ AI-authored — not yet human-verified.
 
@@ -1003,12 +1003,12 @@ uv run kms reconcile
 Check the note's last-modified timestamp before and after — it should not change.
 
 **Check:**
-- [ ] Note frontmatter unchanged (no unexpected fields added or removed)
-- [ ] File modification time unchanged (reconcile did not rewrite it)
+- [x] Note frontmatter unchanged (no unexpected fields added or removed)
+- [x] File modification time unchanged (reconcile did not rewrite it)
 
 **Last tested:** never
 **Last result:** none
-**Current result:** ___
+**Current result:** passed
 
 ⚠ AI-authored — not yet human-verified.
 
@@ -1116,13 +1116,13 @@ uv run kms capture Projects/Alpha/p2cic-04-located-note.md
 ```
 
 **Check:**
-- [ ] Note stays in Projects/Alpha/ (location wins; no move)
-- [ ] Frontmatter has project: Alpha
-- [ ] No suggested-destination / needs-review fields written (classify was skipped)
+- [x] Note stays in Projects/Alpha/ (location wins; no move)
+- [x] Frontmatter has project: Alpha
+- [x] No suggested-destination / needs-review fields written (classify was skipped)
 
 **Last tested:** never
 **Last result:** none
-**Current result:** ___
+**Current result:** passed
 
 ⚠ AI-authored — not yet human-verified.
 

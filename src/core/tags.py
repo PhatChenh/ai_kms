@@ -1,17 +1,30 @@
 """Tag taxonomy validation and loading for the capture pipeline."""
+
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 
 
+def normalize_tag_segment(name: str) -> str:
+    """Convert a domain/project folder name to a valid Obsidian tag segment.
+
+    Replaces spaces with hyphens so 'AI Competition' → 'AI-Competition'.
+    Other characters are left unchanged — callers must ensure they are valid.
+    """
+    return name.replace(" ", "-")
+
+
 @dataclass(frozen=True)
 class TagTaxonomy:
     allowed_types: frozenset[str]
-    valid_domains: frozenset[str]
+    valid_domains: frozenset[str]  # normalized slugs (spaces replaced with hyphens)
+    domain_folder_names: dict[str, str] = field(
+        default_factory=dict
+    )  # slug → actual folder name
 
 
 # Obsidian tag rules: no spaces; only letters, digits, _, -, /, and accepted Unicode.
@@ -63,18 +76,20 @@ def validate_tags(
             continue
 
         if tag.startswith("type/"):
-            value = tag[len("type/"):]
+            value = tag[len("type/") :]
             if value in taxonomy.allowed_types:
                 valid.append(tag)
                 type_tags_seen += 1
             else:
                 violations.append(f"unknown type tag: {tag!r}")
         elif tag.startswith("domain/"):
-            value = tag[len("domain/"):]
+            value = tag[len("domain/") :]
             if value in taxonomy.valid_domains:
                 valid.append(tag)
             else:
-                violations.append(f"unknown domain tag: {tag!r} — not in Domain/ folders")
+                violations.append(
+                    f"unknown domain tag: {tag!r} — not in Domain/ folders"
+                )
         elif "/" in tag:
             violations.append(f"free tag has namespace prefix: {tag!r} — stripped")
         else:
@@ -83,7 +98,9 @@ def validate_tags(
     if type_tags_seen == 0:
         violations.append("no type/ tag found — AI must assign exactly one")
     elif type_tags_seen > 1:
-        violations.append(f"multiple type/ tags found ({type_tags_seen}) — only first kept")
+        violations.append(
+            f"multiple type/ tags found ({type_tags_seen}) — only first kept"
+        )
         seen_type = False
         deduped: list[str] = []
         for tag in valid:
@@ -103,13 +120,17 @@ def load_taxonomy(tags_yaml_path: Path, valid_domains: frozenset[str]) -> TagTax
 
     Args:
         tags_yaml_path: Path to config/tags.yaml.
-        valid_domains: Pre-scanned frozenset of Domain/ folder names.
+        valid_domains: Pre-scanned frozenset of Domain/ folder names (actual names,
+            may contain spaces). Normalized to valid Obsidian tag segments internally.
 
     Returns:
-        TagTaxonomy with allowed_types from file and caller-provided valid_domains.
+        TagTaxonomy with allowed_types from file, normalized valid_domains slugs,
+        and domain_folder_names mapping slug → actual folder name.
     """
     raw = yaml.safe_load(tags_yaml_path.read_text())
+    slug_map = {normalize_tag_segment(d): d for d in valid_domains}
     return TagTaxonomy(
         allowed_types=frozenset(raw.get("allowed_types", [])),
-        valid_domains=valid_domains,
+        valid_domains=frozenset(slug_map.keys()),
+        domain_folder_names=slug_map,
     )
