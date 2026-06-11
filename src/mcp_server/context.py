@@ -55,10 +55,17 @@ class ContextInjectionEngine:
 
     def build_search_response(
         self,
-        cards: list[SearchResult],
-        registry: ProjectRegistry,
+        cards: list[SearchResult] | None = None,
+        registry: ProjectRegistry | None = None,
         query: str | None = None,
+        *,
+        project: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        location: str | None = None,
         include_context: bool = False,
+        max_results: int | None = None,
+        db_path: Path | None = None,
     ) -> Result[list[dict]]:
         """Build a response for a search: context blocks first, result cards second.
 
@@ -66,16 +73,76 @@ class ContextInjectionEngine:
         the configured threshold, no context is attached.  At or above the
         threshold, the top few domain/project context files are injected.
 
+        Two calling modes:
+
+        1. **Direct mode** (existing, Phase 3) — pass ``cards`` + ``registry``:
+           ``build_search_response(cards_list, registry_obj, query="...")``
+
+        2. **Convenience mode** (Phase 6 MCP tools) — pass user-facing params:
+           ``build_search_response(query="...", project="Alpha", since="...")``
+           The engine performs the search and loads the registry internally.
+
         Args:
-            cards:           Search result cards from the Search Coordinator.
-            registry:        Live project→domain registry.
-            query:           The original search query (for logging only).
+            cards:           Search result cards (direct mode).  If ``None``,
+                             search is performed using *query* et al.
+            registry:        Live project→domain registry.  If ``None``, loaded
+                             from the vault automatically.
+            query:           Search query string (also used for logging in
+                             direct mode).
+            project:         Filter results to this project name.
+            since:           ISO-8601 lower-bound date (inclusive).
+            until:           ISO-8601 upper-bound date (inclusive).
+            location:        ``"Projects"``, ``"Domain"``, ``"inbox"``, or
+                             ``None`` (all locations).
             include_context: If ``True``, bypass dedup and force full injection.
+            max_results:     Maximum number of result cards to return.
+            db_path:         Optional DB path override (for tests).
 
         Returns:
             ``Success(list[dict])`` — each dict is a response block.
         """
         try:
+            # ---- Step 0: convenience mode — perform search internally ----
+            if cards is None:
+                from datetime import datetime  # noqa: C0415
+
+                from retrieval.search import (  # noqa: C0415
+                    search as do_search,
+                )
+
+                # Parse since/until strings to datetime
+                since_dt: datetime | None = None
+                if since is not None:
+                    since_dt = datetime.fromisoformat(since)
+                until_dt: datetime | None = None
+                if until is not None:
+                    until_dt = datetime.fromisoformat(until)
+
+                date_range: tuple | None = None
+                if since_dt is not None or until_dt is not None:
+                    date_range = (since_dt, until_dt)
+
+                match do_search(
+                    query=query,
+                    project=project,
+                    date_range=date_range,
+                    max_results=max_results,
+                    location=location,
+                    db_path=db_path,
+                ):
+                    case Success(value=found_cards):
+                        cards = found_cards
+                    case Failure() as f:
+                        return f
+
+            # ---- Step 0b: load registry if not provided ------------------
+            if registry is None:
+                from vault.registry import ProjectRegistry  # noqa: C0415
+
+                from core.config import CONFIG  # noqa: C0415
+
+                registry = ProjectRegistry(CONFIG.main.vault)
+
             if not cards:
                 return Success([])
 
@@ -118,20 +185,28 @@ class ContextInjectionEngine:
 
     def build_vault_info_response(
         self,
-        registry: ProjectRegistry,
+        registry: ProjectRegistry | None = None,
         db_path: Path | None = None,
     ) -> Result[list[dict]]:
         """Build a vault-overview response: domain/project listing, inbox
         stats, and vault-root CLAUDE.md.
 
         Args:
-            registry: Live project→domain registry.
+            registry: Live project→domain registry.  If ``None``, loaded
+                      from the vault automatically.
             db_path:  Optional DB path override (for tests).
 
         Returns:
             ``Success(list[dict])`` — context blocks describing the vault.
         """
         try:
+            if registry is None:
+                from vault.registry import ProjectRegistry  # noqa: C0415
+
+                from core.config import CONFIG  # noqa: C0415
+
+                registry = ProjectRegistry(CONFIG.main.vault)
+
             blocks: list[dict] = []
 
             # ---- Vault-overview text ------------------------------------
@@ -236,8 +311,9 @@ class ContextInjectionEngine:
         Args:
             paths:           Absolute paths to notes to read.
             registry:        Optional project→domain registry for context
-                             injection.  If ``None``, no domain context is
-                             injected.
+                             injection.  If ``None`` and *include_context*
+                             is ``True``, the registry is loaded from the
+                             vault automatically.
             include_context: If ``True``, inject domain context before notes
                              and bypass dedup (re-send already-provided files).
             db_path:         Optional DB path override.
@@ -251,7 +327,13 @@ class ContextInjectionEngine:
             blocks: list[dict] = []
 
             # ---- Optional: inject minority-domain context ---------------
-            if include_context and registry is not None:
+            if include_context:
+                if registry is None:
+                    from vault.registry import ProjectRegistry  # noqa: C0415
+
+                    from core.config import CONFIG  # noqa: C0415
+
+                    registry = ProjectRegistry(CONFIG.main.vault)
                 # Determine which domains the requested notes belong to
                 project_domain = self._build_project_domain_map(registry)
                 note_domains: set[str] = set()

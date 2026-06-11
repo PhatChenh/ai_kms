@@ -18,7 +18,9 @@ from mcp_server._resolve import inspect
 def kms_vault_info(ctx: Context) -> list[dict]:
     """Discover the vault: projects, domains, inbox stats, and global context."""
     return (
-        ctx.request_context.lifespan_context["engine"].build_vault_info_response().value
+        ctx.request_context.lifespan_context["engine"]
+        .build_vault_info_response()
+        .unwrap()
     )
 
 
@@ -42,7 +44,7 @@ def kms_search(
             location=location,
             include_context=include_context,
         )
-        .value
+        .unwrap()
     )
 
 
@@ -58,13 +60,13 @@ def kms_read(
             paths=[Path(p) for p in paths],
             include_context=include_context,
         )
-        .value
+        .unwrap()
     )
 
 
 def kms_inspect(path: str, ctx: Context = None) -> str:
     """Re-extract raw text from a binary source (via sibling .md or direct path). No AI call."""
-    return inspect(Path(path)).value
+    return inspect(Path(path)).unwrap()
 
 
 def kms_move(
@@ -74,7 +76,7 @@ def kms_move(
     ctx: Context = None,
 ) -> str:
     """Move a note to a project or domain folder. dest_kind is 'project' or 'domain'."""
-    return move(Path(src), dest_name, dest_kind).value
+    return move(Path(src), dest_name, dest_kind).unwrap()
 
 
 # ---------------------------------------------------------------------------
