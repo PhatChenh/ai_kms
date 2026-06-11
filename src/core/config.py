@@ -241,12 +241,23 @@ class ClaudeCliConfig(BaseModel):
     timeout: int = 60  # seconds passed to asyncio.wait_for
 
 
+class ContextInjectionConfig(BaseModel):
+    """Controls how the MCP server injects vault context into LLM conversations."""
+
+    frequency_threshold: float = Field(0.3, ge=0.0, le=1.0)
+    max_context_files: int = Field(3, ge=1)
+    include_context_yaml: bool = True
+
+
 class MCPConfig(BaseModel):
     """MCP server settings (Roadmap 9)."""
 
     port: int = 3838
     host: str = "0.0.0.0"
     enable_http: bool = False
+    context_injection: ContextInjectionConfig = Field(
+        default_factory=ContextInjectionConfig
+    )
 
 
 class SelfLearningConfig(BaseModel):
