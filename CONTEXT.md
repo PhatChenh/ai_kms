@@ -80,6 +80,55 @@ _Avoid_: "pending-routing marker" (that older binary-only concept retires; this 
 A catch-all group in the Project Registry output containing active projects whose `CLAUDE.md` has no domain tag, an unrecognised domain tag, or a stale domain tag (domain folder was deleted/renamed). Classify can still route to these projects; the AI prompt explains the gap and instructs semantic inference. Reconcile resolves the underlying CLAUDE.md issue.
 _Avoid_: "unknown domain", "unassigned project"
 
+### Phase 3 — Search / Retrieval
+
+**hybrid search:**
+The Phase 3 query strategy that combines two different ways of finding notes — a word/keyword match and a meaning/semantic match — and blends their rankings into one ordered list. Distinct from a single-index search; "hybrid" means both the keyword index (`notes_fts`) and the vector index (`embeddings_vec`) are consulted for the same query, then merged.
+_Avoid_: "combined search", "dual search"
+
+**Reciprocal Rank Fusion (RRF):**
+The rule that merges two ranked lists (keyword ranking + meaning ranking) into one fused order using each item's *rank position*, not its raw score: an item's fused score is the sum of `1 / (k + rank)` across the lists it appears in (k is a smoothing constant, conventionally 60). Used so the two indexes' incomparable score scales (BM25 vs vector distance) never have to be normalised and added.
+_Avoid_: "score averaging", "blended score"
+
+**cross-encoder reranker:**
+A small in-process model (ships inside `sentence-transformers` as `CrossEncoder`) that takes the top fused candidates and re-scores each one against the exact query text, producing the final ordering. Distinct from the embedding model: the embedder turns one text into a vector independently; the cross-encoder reads the query and a candidate *together* and outputs a relevance score. Runs locally; never an API call.
+_Avoid_: "the reranker model" (be specific — it is a cross-encoder), "second LLM"
+
+**metadata pre-filter:**
+The first stage of `search()` — it narrows the full note set down to a candidate list using structured filters (project and/or date range) read from the `documents` table, *before* any ranking runs. When no filter is given, all notes are candidates. The hybrid ranker only ever searches within this candidate set.
+_Avoid_: "the filter step", "pre-query"
+
+**filter-only mode:**
+The branch of `search()` taken when the caller supplies filters (project/date) but **no query term** — the candidates are sorted by most-recently-updated, capped, and returned with no ranking or reranking. Lets callers like weekly Synthesis ask "what landed in this project / this week?" without a search phrase.
+_Avoid_: "no-query search", "listing mode"
+
+**AI-triage payload:**
+The cheap structured card `search()` returns per result — a note handle (`vault_path`), summary, snippet, score, and a metadata block — carrying **no full note body**. Designed so the Phase 4 MCP AI can scan many results cheaply, judge relevance, and pull full content via `read_note` only for the few notes it needs. The `metadata` field is load-bearing (the AI triages on it), not decoration.
+_Avoid_: "search result object" (generic), "result row"
+
+### Phase 4 — MCP / Context Injection
+
+**context injection:**
+The Phase 4 behaviour where the MCP server embeds the relevant `CLAUDE.md` / `context.yaml` background files *inside* a search or read tool response, always ordered before the results/content they explain, so the AI client is briefed about the user's domains and projects without having to call a separate tool. Distinct from a plain result list: the response is an ordered list of blocks (context first, content second). The amount injected is gated by result concentration (see frequency threshold / cap).
+_Avoid_: "context prepend", "attaching context" (be specific — it is scoped + deduped, not a blanket attach)
+_Source_: ADR-0010 (proposed)
+
+**frequency threshold / cap:**
+The two tunable numbers that decide how much background to attach. The *threshold* (default 0.3) is the share of search results a single domain/project must reach before its context file is injected — below it, the query is too broad and no context is sent. The *cap* (default 3) is the maximum number of context files in any one response. Both live in `config.yaml` under `mcp.context_injection`, never in code (C-06).
+_Avoid_: "context limit", "30% rule" (name both the threshold and the cap)
+
+**hash-dedup session state:**
+The in-memory record the MCP server keeps of which context files it has already sent in the current conversation, keyed by each file's content fingerprint (a hash). If the same content was already sent, the server replaces it with a short "context for X already provided" note instead of resending the whole file. The record lives only for the life of the conversation's server process — a new chat starts with a clean slate. If a `CLAUDE.md` is edited mid-conversation its hash changes, so the new content is sent again (correct).
+_Avoid_: "context cache", "dedup table" (be specific — it is per-conversation, in-memory, hash-keyed)
+
+**two-tool progressive disclosure:**
+The industry-standard split where the AI first calls a cheap search tool to scan many summary cards, then calls a separate read tool to pull the full content of only the few notes it actually needs — instead of loading every full note up front. In this project: `kms_search` returns cards, `kms_read` returns full bodies. Saves large amounts of context window on broad queries.
+_Avoid_: "search-then-read" (acceptable shorthand, but name the pattern), "lazy loading"
+
+**kms_inspect re-extraction:**
+The behaviour of the `kms_inspect` MCP tool: when the AI needs the exact raw text of a binary source (a quote, a table) rather than the AI summary, the tool re-runs the original file's text extractor and returns the raw extracted text — no AI call, no new summary. It accepts either the sibling `.md` path or the binary path; given a sibling, it finds the binary via the sibling's `attachment_path` frontmatter field, then dispatches by extension through the handler registry.
+_Avoid_: "re-summarize", "re-capture" (inspect does NOT summarize or capture — it only extracts and returns raw text)
+
 ### Vault Layout
 
 **sibling `.md`:**

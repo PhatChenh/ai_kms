@@ -72,6 +72,13 @@ def search(
     Returns:
         ``Success(list[SearchResult])`` or ``Failure`` on error.
     """
+    # An empty/whitespace query is not a ranking query -- treat it as
+    # no query (filter-only mode).  Without this, ``rank("")`` errors on
+    # the FTS MATCH.  Done here so both the CLI and the future MCP tool
+    # share the contract.
+    if query is not None and not query.strip():
+        query = None
+
     # Lazy CONFIG import (C-17 compliant)
     from core.config import CONFIG  # noqa: C0415
 

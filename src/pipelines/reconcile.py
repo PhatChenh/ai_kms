@@ -70,7 +70,6 @@ async def reconcile_paths(
     """
     from vault.indexer import detect_changes
 
-    vault_root = ctx.config.vault.root
     db_path = ctx.db_path
 
     match detect_changes(entries, db_path=db_path):

@@ -2495,3 +2495,206 @@
   pytest_ref: tests/test_vault/test_frontmatter.py::test_title_field_roundtrip
   status: active
   retired: null
+- id: P4-MCP-01
+  behavior: Claude Desktop connects to the KMS MCP server over stdio and lists the
+    five MVP tools
+  tier: smoke
+  phase: 4
+  origin: design
+  granularity: outcome
+  trigger: claude desktop launches the configured stdio server entry point
+  fixtures: []
+  steps:
+  - Add the stdio server entry to claude_desktop_config.json and restart Claude Desktop.
+  - Open a chat and check the available KMS tools.
+  expected:
+  - 'Five tools are listed: kms_vault_info, kms_search, kms_read, kms_inspect, kms_move'
+  - No tool returns a connection error on a no-op call
+  spec_ref: docs/1_design/P4_mcp_context_injection.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P4-MCP-02
+  behavior: kms_vault_info returns the project list, domain list, inbox count, last
+    capture time, and vault-root context
+  tier: phase
+  phase: 4
+  origin: design
+  granularity: outcome
+  trigger: AI calls kms_vault_info (no arguments)
+  fixtures: []
+  steps:
+  - From chat, ask the AI to discover the vault structure.
+  expected:
+  - Response lists active project names and domain names taken from the live Project
+    Registry (NOT a meta.yaml file)
+  - Response includes an inbox note count and a last-capture timestamp
+  - If a vault-root CLAUDE.md exists, its content is included once (hash-deduped thereafter)
+  spec_ref: docs/1_design/P4_mcp_context_injection.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P4-MCP-03
+  behavior: kms_search returns context blocks before result cards for a domain/project-concentrated
+    query
+  tier: phase
+  phase: 4
+  origin: design
+  granularity: outcome
+  trigger: AI calls kms_search(query="...", project="...") on a focused query
+  fixtures: []
+  steps:
+  - Ask "what do I know about <a project that owns most matching notes>?"
+  expected:
+  - The response places the matching domain/project CLAUDE.md (and domain context.yaml
+    if present) BEFORE the result cards
+  - Each result card carries vault_path, title, summary, snippet, score, project,
+    note_type
+  spec_ref: docs/1_design/P4_mcp_context_injection.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P4-MCP-04
+  behavior: A broad query that concentrates no single domain/project injects zero
+    context files
+  tier: phase
+  phase: 4
+  origin: design
+  granularity: outcome
+  trigger: AI calls kms_search on a broad cross-cutting query
+  fixtures: []
+  steps:
+  - Ask "what happened this week?" against a vault whose recent notes span many projects.
+  expected:
+  - No domain/project reaches the configured frequency threshold
+  - The response contains result cards only, no context blocks
+  spec_ref: docs/1_design/P4_mcp_context_injection.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P4-MCP-05
+  behavior: kms_read returns minority-domain context then full note content for a
+    batch of paths
+  tier: phase
+  phase: 4
+  origin: design
+  granularity: outcome
+  trigger: AI calls kms_read(paths=[...]) after a search
+  fixtures: []
+  steps:
+  - From the search cards, read several notes including one from a domain whose context
+    was not yet sent.
+  expected:
+  - Context for the not-yet-sent domain/project appears BEFORE the full note content
+  - Each note returns metadata as a dict plus the body as markdown text
+  - For a binary-backed sibling note, the body is the AI summary (not the binary bytes)
+  spec_ref: docs/1_design/P4_mcp_context_injection.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P4-MCP-06
+  behavior: kms_inspect re-extracts raw text from a binary-backed note's original
+    file
+  tier: phase
+  phase: 4
+  origin: design
+  granularity: outcome
+  trigger: AI calls kms_inspect(path=<sibling .md path or binary path>)
+  fixtures: []
+  steps:
+  - Inspect a search result whose note_type is attachment-summary.
+  expected:
+  - The server resolves the sibling to its binary via the attachment_path frontmatter
+    field
+  - The response returns the raw extracted text from the binary (no new AI call)
+  - Passing the binary path directly yields the same result
+  spec_ref: docs/1_design/P4_mcp_context_injection.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P4-MCP-07
+  behavior: kms_move relocates a CLUELESS inbox note to a named project/domain and
+    updates its frontmatter + index
+  tier: phase
+  phase: 4
+  origin: design
+  granularity: outcome
+  trigger: AI calls kms_move(path=<inbox note>, destination=<project or domain name>)
+  fixtures: []
+  steps:
+  - Read a CLUELESS inbox note's classify_reasoning, then ask the AI to move it to
+    a named project.
+  expected:
+  - The note file moves into the named project/domain folder
+  - Its frontmatter project / primary-domain reflects the destination
+  - The documents index path is updated (old search rows cleared) and the watcher does
+    not re-home it
+  spec_ref: docs/1_design/P4_mcp_context_injection.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P4-MCP-08
+  behavior: A second search on an already-seen domain replaces full context with a
+    short already-provided note
+  tier: phase
+  phase: 4
+  origin: design
+  granularity: outcome
+  trigger: AI calls kms_search twice on the same domain within one conversation
+  fixtures: []
+  steps:
+  - Run a focused search, then run a second focused search on the same domain in the
+    same chat.
+  expected:
+  - The first response carries the full domain context
+  - The second response replaces it with a short "context for X already provided" note
+  - A new conversation (new process) sends the full context again
+  spec_ref: docs/1_design/P4_mcp_context_injection.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P4-MCP-09
+  behavior: include_context=true forces full context re-injection regardless of dedup
+    state
+  tier: phase
+  phase: 4
+  origin: design
+  granularity: outcome
+  trigger: AI calls kms_search or kms_read with include_context=true after context
+    was already sent
+  fixtures: []
+  steps:
+  - After context for a domain was already sent and deduped, call again with include_context=true.
+  expected:
+  - The full context content is re-injected even though its hash was already seen
+  spec_ref: docs/1_design/P4_mcp_context_injection.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null

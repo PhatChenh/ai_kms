@@ -113,7 +113,13 @@ def classify(file: str) -> None:
     default=None,
     help="Filter by date: 7d, 30d, or YYYY-MM-DD",
 )
-@click.option("--max", "max_results", default=None, type=int, help="Max results")
+@click.option(
+    "--max",
+    "max_results",
+    default=None,
+    type=click.IntRange(min=1),
+    help="Max results (must be >= 1)",
+)
 @click.option(
     "--reindex",
     is_flag=True,

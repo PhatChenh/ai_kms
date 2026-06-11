@@ -1,5 +1,5 @@
 # Phase 3 Session A — Index Layer + Pre-flight Fixes
-
+_Status: DONE_
 ## Context
 
 Phase 3 (Retrieval Infrastructure) is split into two sessions. This is Session A. Session B spec will be written after Session A ships.
@@ -143,12 +143,12 @@ Check whether existing `storage/documents.py` mechanisms (`delete_by_path`, `ren
 
 ## Acceptance criteria (Session A)
 
-- [ ] `uv sync` succeeds with `sentence-transformers` and `sqlite-vec` installed
-- [ ] `uv run pytest tests/` passes (1080+ tests, no regressions from pre-flight fixes)
-- [ ] `kms capture <file>` completes and a row appears in both `embeddings_vec` and `notes_fts`
-- [ ] Running capture twice on the same file produces no duplicate rows (idempotent)
+- [x] `uv sync` succeeds with `sentence-transformers` and `sqlite-vec` installed
+- [x] `uv run pytest tests/` passes (1080+ tests, no regressions from pre-flight fixes)
+- [x] `kms capture <file>` completes and a row appears in both `embeddings_vec` and `notes_fts`
+- [x] Running capture twice on the same file produces no duplicate rows (idempotent)
 - [x] TD-019: Already resolved — `validate_tags()` in `capture.py` line 240, `TAG_VIOLATION` audit at line 291. No work needed.
-- [ ] TD-050: `uv run pytest tests/test_vault/` passes 10 consecutive runs without intermittent failure
+- [x] TD-050: `uv run pytest tests/test_vault/` passes 10 consecutive runs without intermittent failure
 
 ---
 
@@ -166,129 +166,104 @@ Check whether existing `storage/documents.py` mechanisms (`delete_by_path`, `ren
 
 # Phase 3 Session B — Query Path + Post-Phase-3 Cleanup
 
+_Status: ALIGNED 2026-06-10 — grill-validated + code-grounded. **Supersedes the original pre-code-reference draft**, which used stale function names (`index_note`), a stale `notes_fts` schema (3 cols), a wrong `snippet()` column index, and signatures never checked against code._
+
 ## Context
 
-Session B picks up where Session A left off. Session A must be complete and merged before starting Session B. Both `embeddings_vec` and `notes_fts` tables must be populated and all pre-flight fixes confirmed passing.
+Session A is complete and merged (1147 tests). `embeddings_vec` (vec0) and `notes_fts` (FTS5) are populated at capture time via best-effort indexing. Session B builds the **query path** on top of that index layer: HYBRID RANKER → RERANKER → SEARCH FUNCTION → SEARCH CLI, plus post-Phase-3 debt cleanup.
 
-Full Phase 3 spec lives in `docs/roadmap/roadmap.md` under "## Phase 3 — Retrieval Infrastructure". Session B builds the last four components: HYBRID RANKER, RERANKER, SEARCH FUNCTION, SEARCH CLI. It also folds in post-Phase-3 debt cleanup.
+**Primary consumer of `search()` is the MCP AI (Phase 4) — NOT a human at a terminal.** The AI queries the vault to write reports, track project progress, and synthesize insights. So `search()` returns a structured **AI-triage payload** (`vault_path` handle + `summary` + `snippet` + `score` + `metadata`); the AI reads the cheap payload, then pulls full content via `read_note(vault_path)` only for the notes it judges relevant. The `metadata` field is therefore **load-bearing** (the AI triages on it), not optional. The `kms search` CLI is the **C-15/C-16 verification proxy** for what the MCP tool will later do — it is not the end-user reading surface (humans read in Obsidian).
 
----
+**The roadmap is stale — do NOT build from it.** The roadmap's "Phase 3 — Retrieval Infrastructure" narrative (TIER DISPATCHER, `max_cost` budget, hot/warm/cold escalation) is dead and explicitly disregarded. The ONLY living part of the roadmap is its **Stable Interfaces table** (`docs/roadmap/roadmap.md` lines 116–140). Build from THIS document.
 
-## Pre-flight checks (verify before writing any Session B code)
+## Architecture (locked — grill 2026-06-10)
 
-- Session A acceptance criteria all pass (1080+ tests, both indexes populated on capture)
-- `retrieval/embeddings.py` and `retrieval/keyword.py` exist and have passing unit tests
-- `embeddings_vec` and `notes_fts` virtual tables exist in the DB (migration 007 applied)
-- `CONFIG.main.search.max_candidates` and `CONFIG.main.search.max_results` are readable
+```
+search(query?, project?, date_range?, max_results?)
+   │
+   ▼
+[1] METADATA PRE-FILTER  — documents table → candidate vault_paths
+   │                       (project and/or date_range; neither → all paths)
+   ├── query is None ─▶ [2] FILTER-ONLY: sort candidates by updated_at desc,
+   │                        cap at max_results, return. (skip ranker+reranker)
+   └── query given ──▶ [3] HYBRID RANKER (RRF: FTS5 BM25 + sqlite-vec KNN, scoped to candidates)
+                            ▼
+                        RERANKER (cross-encoder rescoring; attaches summary + metadata)
+                            ▼
+                        SearchResult[] capped at max_results
+```
 
----
+No tier dispatcher. No `max_cost`. The roadmap's "three-tier retrieval" promise is realized as: a cheap triage payload (summary / snippet / metadata) + lazy full-content fetch via `read_note` — not a cost-budget dispatcher.
+
+## Verified Session A interfaces (read from code 2026-06-10 — THESE are the contract)
+
+| What | Real signature / fact (verified) |
+|---|---|
+| Embedding index write | `retrieval/embeddings.py::index_embedding(vault_path, title, note_type, tags, summary, db_path=None) -> Result[None]` |
+| Cached embed model | `retrieval/embeddings.py::_get_model()` → module-cached `SentenceTransformer` — **reuse this for query embedding in HYBRID RANKER** |
+| Context builder | `retrieval/embeddings.py::_build_context_text(title, note_type, tags, summary) -> str` (so query/doc embeddings stay symmetric) |
+| Keyword index write | `retrieval/keyword.py::index_keywords(vault_path, title, summary, body, db_path=None) -> Result[None]` |
+| FTS5 table | `notes_fts(vault_path, title, summary, body)` — **4 columns**; `body` is column **index 3** (matters for `snippet()`) |
+| Vector table | `embeddings_vec(vault_path, embedding)` — vec0 virtual table, 384-dim float32 blob |
+| DB connection | `storage/db.py::get_connection(db_path=None, readonly=False)` — loads sqlite-vec, WAL, FK |
+| Document columns | `documents`: `vault_path, title, summary, note_type, confidence, created_at, updated_at, updated_by_human, content_hash, batch_id, project, status, key_topics` |
+| Search config | `core/config.py::SearchConfig`: `embedding_model=all-MiniLM-L6-v2`, `reranker_model=cross-encoder/ms-marco-MiniLM-L-6-v2`, `max_candidates=20`, `max_results=10` |
+| CrossEncoder dep | Ships INSIDE `sentence-transformers` (no separate package); runs in-process. Search NEVER calls Ollama. |
+
+**Stale names from the original draft — DO NOT USE:** `index_note()` never existed. `notes_fts` was never 3-column. `snippet(notes_fts, 1, ...)` targeted the wrong column. Use the verified table above.
 
 ## Build targets
 
-### HYBRID RANKER
+### 1 · HYBRID RANKER — `src/retrieval/ranker.py` (new)
+Intended (research verifies): `def rank(query, candidate_paths, max_candidates) -> Result[list[RankedResult]]`; `RankedResult(vault_path, rrf_score, snippet)`.
+- FTS5 BM25 search on `notes_fts` scoped to `candidate_paths`.
+- sqlite-vec KNN on `embeddings_vec` scoped to `candidate_paths`; embed query via cached `_get_model()` from `retrieval/embeddings.py`.
+- Merge via Reciprocal Rank Fusion: `score = 1/(60+rank_fts5) + 1/(60+rank_vec)`. Never normalize+add raw scores.
+- `snippet` via FTS5 `snippet()` targeting the **`body` column (index 3)** — the original draft's index 1 was wrong.
+- Return top `max_candidates`; `Success`/`Failure`, never raise (C-12); `max_candidates` passed in, never hardcoded (C-06).
+- ⚠ **See research-must-verify #1** — `WHERE vault_path IN (...) ORDER BY distance` may NOT be valid vec0 KNN syntax; candidate scoping may need a different mechanism.
 
-File: `src/retrieval/ranker.py`
+### 2 · RERANKER — `src/retrieval/reranker.py` (new)
+Intended: `def rerank(query, candidates) -> Result[list[SearchResult]]`; `SearchResult(vault_path, summary, snippet, score, metadata)`.
+- Load cross-encoder from `CONFIG.main.search.reranker_model`; cache the instance at module level (mirror the `_get_model()` pattern in `embeddings.py`).
+- Score `(query, candidate.snippet)` pairs via `CrossEncoder.predict`.
+- Attach `summary` + `metadata` (project, note_type, updated_at, tags) from `storage/documents.py::get_by_path`.
+- Order by cross-encoder score desc. `SearchResult` carries NO full body — full content via `read_note`. `Success`/`Failure` (C-12).
 
-Function signature:
-```python
-def rank(query: str, candidate_paths: list[str], max_candidates: int) -> Result[list[RankedResult]]:
-```
+### 3 · SEARCH FUNCTION — `src/retrieval/search.py` (new — the public contract Phase 4 MCP consumes)
+Intended: `def search(query=None, project=None, date_range=None, max_results=None, db_path=None) -> Result[list[SearchResult]]`.
+- [1] Metadata pre-filter on `documents` (project and/or date_range → candidate `vault_path`s; neither → all).
+- [2] Filter-only mode (query None): candidates sorted by `updated_at` desc, capped; skip ranker + reranker.
+- [3] Query mode: candidates + query → HYBRID RANKER → RERANKER → capped `SearchResult[]`.
+- Defaults from `CONFIG.main.search.max_results` / `max_candidates`. `Success`/`Failure` (C-12).
+- Must **gracefully skip index rows whose underlying note was deleted** (carried decision #5).
 
-where `RankedResult = dataclass(vault_path: str, rrf_score: float, snippet: str)`.
+### 4 · SEARCH CLI — `src/cli/main.py` (extend existing Click group)
+Commands: `kms search "<query>"`, `--project Alpha`, `"<query>" --project Alpha`, `--since 7d|30d|YYYY-MM-DD`, `--max N`, `--reindex`.
+- Output per result: real note **title** (from `documents` — NOT the raw filename; sibling files are named `report.pdf.md`), score, snippet. One block per result.
+- `--reindex`: `documents.all_paths()` → per path `read_note()` → call `index_embedding(...)` + `index_keywords(...)` (**REAL names**). Report count. Idempotent — the batch self-heal.
+- Wrap with `asyncio.run` (C-10); zero logic in CLI — logic lives in `retrieval/search.py`. Closes TD-012.
 
-- Run FTS5 BM25 keyword search on `notes_fts` filtered to `candidate_paths` only — use `WHERE vault_path IN (...)` to scope to pre-filtered candidates
-- Run sqlite-vec KNN search on `embeddings_vec` filtered to `candidate_paths` — embed the query string using `SentenceTransformer` (reuse cached instance from `retrieval/embeddings.py`), then `SELECT vault_path, distance FROM embeddings_vec WHERE vault_path IN (...)` ORDER BY KNN distance
-- Merge via Reciprocal Rank Fusion: `score = 1/(60 + rank_fts5) + 1/(60 + rank_vec)` — never normalize and add raw scores (FTS5 BM25 and cosine distance are not on the same scale)
-- `snippet`: use FTS5 `snippet(notes_fts, 1, '<b>', '</b>', '...', 20)` function — not the full body
-- Return top `max_candidates` by RRF score; return `Success` or `Failure` — never raise (C-12)
-- Read `max_candidates` from caller (passed in) — never hardcode (C-06)
+### 5 · TD-051 (isolated final phase) — `src/pipelines/classify.py` + `tests/test_pipelines/test_classify.py`
+`classify()` validates `project` and `primary_domain` against ONE pooled name set — a domain name passes silently as a valid project (and vice versa). Fix: split into `project_names` vs `domain_names`; source via `ProjectRegistry.get_groups()` (group names = domains, entry names = projects); pass separate sets at the call site. Rewrite `VALID_DESTINATIONS` fixtures to the real header shape. ~6 tests. **Isolated phase — independent of the search work; cut cleanly if research finds it bigger than this paragraph.**
 
-### RERANKER
+## Out of scope / deferred
+- **TD-010** (Ollama httpx async): kept ONLY as a conditional post-ship check. Search never calls Ollama (in-process sentence-transformers). After Session B ships, measure the *capture/classify* Ollama path; rewrite only if >200ms/call. Do NOT rewrite speculatively this cycle.
+- MCP `kms_search` tool — Phase 4 (after CLI verified end-to-end, C-15/C-16).
+- Scheduling / automation — Phase 4+.
+- Full-content terminal dump — not built; AI consumer uses `read_note`, human uses Obsidian.
 
-File: `src/retrieval/reranker.py`
+## Research MUST-VERIFY (code-truth — do NOT trust this doc's signatures; this doc was once stale)
+1. **CRITICAL — vec0 KNN candidate scoping.** Can `embeddings_vec` (vec0) actually do `WHERE vault_path IN (...) ORDER BY distance`? vec0 KNN usually requires `embedding MATCH ? AND k=?`. If IN-list scoping is invalid, HYBRID RANKER's candidate scoping needs redesign (KNN-then-filter, or a normal table + manual cosine). #1 design risk.
+2. Migration 007 real shape: `embeddings_vec` columns/dim; `notes_fts` columns (expected `vault_path,title,summary,body`); does `snippet(notes_fts, 3, ...)` target `body`?
+3. `documents.created_at`/`updated_at` are TEXT ISO strings via `datetime('now')` → confirm `date_range` (datetime tuple) filtering via string comparison works.
+4. `search()`/`rank()`/`rerank()` are sync; `.encode()`/`.predict()` are CPU-bound. Reconcile with CLI `asyncio.run` (C-10) — confirm no event-loop block, or decide whether search runs in a worker thread.
+5. `ProjectRegistry.get_groups()` real API + real `format_for_prompt` header shape (TD-051).
+6. Degenerate "no filter → candidate_paths = all" case — does `IN (...)` blow up / should it be skipped in favour of global KNN?
+7. `storage/documents.py::get_by_path` / `all_paths` real signatures + return types.
 
-Function signature:
-```python
-def rerank(query: str, candidates: list[RankedResult]) -> Result[list[SearchResult]]:
-```
-
-where `SearchResult = dataclass(vault_path: str, summary: str, snippet: str, score: float, metadata: dict)`.
-
-- Load cross-encoder model from `CONFIG.main.search.reranker_model`
-- Score each `(query, candidate.snippet)` pair using `CrossEncoder(model_name).predict([(query, snippet), ...])`
-- Load `summary` and `metadata` (project, note_type, updated_at, tags) from `storage/documents.py::get_by_path` for each candidate
-- Return candidates ordered by cross-encoder score descending
-- `SearchResult` never carries full note body — callers use `vault/reader.py::read_note(vault_path)` for full content
-- Cache `CrossEncoder` instance at module level (load once, reuse)
-- Return `Success` or `Failure` — never raise (C-12)
-
-### SEARCH FUNCTION
-
-File: `src/retrieval/search.py`
-
-Function signature:
-```python
-def search(
-    query: str | None = None,
-    project: str | None = None,
-    date_range: tuple[datetime, datetime] | None = None,
-    max_results: int | None = None,
-    db_path: Path | None = None,
-) -> Result[list[SearchResult]]:
-```
-
-Three-step execution:
-
-1. **Metadata pre-filter** — query `documents` table for `vault_path` values matching `project` and/or `date_range`; if neither filter provided, use all paths. This narrows the candidate set in SQL before any vector work.
-2. **Filter-only mode** — if `query` is None, return candidates sorted by `updated_at` descending, capped at `max_results`. Skip HYBRID RANKER and RERANKER entirely.
-3. **Query mode** — pass candidate paths + query to HYBRID RANKER → RERANKER → return `SearchResult` list capped at `max_results`.
-
-- Read `max_results` default from `CONFIG.main.search.max_results` when caller passes None
-- Read `max_candidates` for HYBRID RANKER from `CONFIG.main.search.max_candidates`
-- Return `Success` or `Failure` — never raise (C-12)
-
-### SEARCH CLI
-
-File: `src/cli/main.py` (extend existing Click group)
-
-Commands:
-- `kms search "<query>"` — semantic + keyword search
-- `kms search --project Alpha` — filter-only, no query needed
-- `kms search "<query>" --project Alpha` — scoped semantic search
-- `kms search --since 7d` — filter by date (parse `7d`, `30d`, `YYYY-MM-DD`)
-- `kms search --max N` — override result count
-- `kms search --reindex` — rebuild both indexes for all notes in documents table
-
-Output format per result: title (from vault_path filename), score, snippet. One result per block.
-
-`--reindex` implementation: call `storage/documents.py::all_paths()` → for each path, call `vault/reader.py::read_note()` to get body + summary, then call both `retrieval/embeddings.index_note()` and `retrieval/keyword.index_note()`. Report count on completion.
-
-Rules:
-- Wrap with `asyncio.run(...)` — no async Click adapters (C-10)
-- Zero logic in CLI layer — all logic lives in `retrieval/search.py`
-- Closes TD-012
-
----
-
-## Post-Phase-3 debt cleanup (fold into this session)
-
-### TD-051 · classify() cross-type destination validation
-
-**What:** `classify()` in `pipelines/classify.py` validates `project` and `primary_domain` against one pooled name set (`_destination_names`) parsed from the `format_for_prompt` string. A project name used as a `primary_domain` (or vice versa) still validates silently — wrong-kind destination could get created.
-
-**Fix:** Split into two sets: `project_names` and `domain_names`. Use `ProjectRegistry.get_groups()` — group names = domains, entry names = projects. Update `_destination_names` at the call site to pass separate sets. Rewrite `VALID_DESTINATIONS` fixtures in `tests/test_pipelines/test_classify.py` to the real header shape (`domain_name:` → list of project names under each domain).
-
-**Scope:** `src/pipelines/classify.py` + `tests/test_pipelines/test_classify.py`. Fixes ~6 tests that use non-real fixture shape.
-
-### TD-010 · Ollama httpx async rewrite (conditional)
-
-Check actual search latency after Session B is working end-to-end. If `OllamaProvider` embedding calls show measurable thread overhead (>200ms per call), rewrite `OllamaProvider` to use native `httpx` async instead of `asyncio.to_thread(requests.post)`. Only act if evidence warrants it — do not rewrite speculatively.
-
-### TD-012 · search CLI stub
-
-Naturally closed when `kms search` command is built above.
-
----
+## ADR
+The RRF+rerank-over-tier-dispatcher decision passes all three ADR gates (hard to reverse, surprising vs the roadmap, real trade-off). **The design step writes an ADR** documenting why Phase 3 search diverges from the roadmap's tier-dispatcher narrative.
 
 ## Acceptance criteria (Session B)
 
@@ -297,22 +272,20 @@ Naturally closed when `kms search` command is built above.
 - [ ] `kms search --project Alpha` → returns all Alpha notes, no query needed (filter-only mode)
 - [ ] `kms search "budget Q3" --project Alpha` → semantic search scoped to Alpha only
 - [ ] `kms search --reindex` → rebuilds both indexes; running twice produces identical results (idempotent)
-- [ ] Results carry `vault_path`, `summary`, `snippet`, `score` — no full body in result
-- [ ] `kms search` on `.md` notes and sibling summaries both work
-- [ ] Phase 9 Synthesis can call `search(date_range=last_week)` and receive ranked results without a query term
-- [ ] TD-051: classify() no longer validates a domain name as a valid project destination
+- [ ] Results carry `vault_path`, `summary`, `snippet`, `score`, `metadata` — no full body in result
+- [ ] `kms search` on `.md` notes AND sibling summaries both work; sibling results show a usable title (not `report.pdf.md`)
+- [ ] Phase 9 Synthesis can call `search(date_range=last_week)` and receive results without a query term
+- [ ] TD-051: `classify()` no longer validates a domain name as a valid project destination
 
 ---
 
-## Grill decisions carried forward from Session A (2026-06-10)
+## Grill decisions carried forward from Session A (2026-06-10) — still binding
 
-These decisions were locked during Session A's grill interview. Session B must honor them:
-
-1. **Sibling .md notes in search:** Frontmatter summary was used for embedding; body text (detailed expanded summary) was used for FTS5. Both describe the binary. Binary never indexed — sibling is the proxy. The HYBRID RANKER and RERANKER must work correctly with sibling notes as search results.
-2. **No-summary fallback:** Notes with empty summaries were indexed with metadata-only contextual strings. HYBRID RANKER may encounter these — they will rank via keyword matches (body) and metadata-only embeddings.
-3. **Indexer failure handling:** Session A retries once silently, then emits warning log. If `--reindex` discovers notes with missing index entries, it should re-index them — this is the batch self-healing mechanism.
-4. **`--reindex` scope:** Must rebuild both `embeddings_vec` and `notes_fts` for all notes in documents table. Idempotent — running twice produces identical results.
-5. **Index maintenance on update/move/delete:** Session A design determined how index rows track note lifecycle changes via existing `documents.py` mechanisms. Session B's SEARCH FUNCTION must handle the case where an index row exists but the note has been deleted (graceful skip, not crash).
+1. **Sibling .md notes in search:** Frontmatter summary → embedding; body text (detailed expanded summary) → FTS5. Both describe the binary. Binary never indexed — sibling is the proxy. HYBRID RANKER and RERANKER must work correctly with sibling notes as results.
+2. **No-summary fallback:** Notes with empty summaries were indexed with metadata-only contextual strings. HYBRID RANKER may encounter these — they rank via keyword matches (body) and metadata-only embeddings.
+3. **Indexer failure handling:** Session A retries once silently, then emits a warning log. If `--reindex` finds notes with missing index entries, it re-indexes them — the batch self-heal.
+4. **`--reindex` scope:** Rebuild both `embeddings_vec` and `notes_fts` for all notes in the documents table. Idempotent.
+5. **Index maintenance on update/move/delete:** Session A wired index-row lifecycle into `documents.py` (`delete_by_path`/`rename`/`replace_path`). Session B's SEARCH FUNCTION must handle the case where an index row exists but the note was deleted (graceful skip, not crash).
 
 ## What Session B does NOT build
 

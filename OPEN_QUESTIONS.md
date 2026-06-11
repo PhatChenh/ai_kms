@@ -15,6 +15,7 @@
 **Status:** 🔴 Open
 **Question:** Reference project sets `wal_autocheckpoint=100` pages; SQLite default is 1000. Worth adding to `_connect()` before Phase 4 MCP (long-running daemon), or accept default for CLI?
 **Context:** For the CLI this is irrelevant — process exits cleanly and WAL truncates on close. For the MCP daemon (long-running process with many short-lived tool calls), unchecked WAL growth could cause read latency. Revisit at Phase 4 planning. See also TD-007.
+**→ Resolution planned (2026-06-11):** folded into the Phase 4 plan as **Phase 1** — add `wal_autocheckpoint=100` to `_connect()` (keep `PRAGMA foreign_keys=ON`, C-04). Implement in `/tdd-implement`. See `docs/4_plans/P4_mcp_context_injection.md`.
 
 ---
 
@@ -23,6 +24,7 @@
 **Status:** 🔴 Open
 **Question:** `clear_contextvars()` in `new_correlation_id()` resets the shared contextvar store. In a concurrent async daemon serving two simultaneous tool calls, call A's `clear_contextvars()` wipes call B's correlation_id mid-flight. How should concurrent runs be isolated?
 **Context:** DECISION-010 chose async for Phase 4 concurrency. The fix is per-run contextvar copies (`copy_context().run(...)`) or a scoped contextvar pattern. Phase 1 CLI is single-run — this is safe today. Must be resolved before Phase 4 ships concurrent MCP tool handling.
+**→ Resolution planned (2026-06-11):** folded into the Phase 4 plan as **Phase 2** — wrap each MCP tool dispatch in `copy_context().run(pipeline_fn)` in the server shell. Implement in `/tdd-implement`. See `docs/4_plans/P4_mcp_context_injection.md`.
 
 ---
 

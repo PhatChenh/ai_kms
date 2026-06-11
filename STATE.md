@@ -1,9 +1,9 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-06-11 (P3 Session B Query Path — COMPLETE, merged to main)_
+_Last updated: 2026-06-11 (Phase 4 MCP — build-pipeline complete: design→spec→research→plan written; PENDING implementation)_
 
 ## Current Position
-**Phase**: Phase 3 (Search) **COMPLETE** (2026-06-11). M1 milestone (Capture + Classify + Search end-to-end) **ACHIEVED**. **Next**: Phase 4 — MCP Server MVP.
+**Phase**: Phase 3 (Search) **COMPLETE** (2026-06-11). M1 milestone (Capture + Classify + Search end-to-end) **ACHIEVED**. **Phase 4 (MCP Server) — PLANNED** (full /build-pipeline complete 2026-06-11: design→spec→research→plan written; ADR-0010/0011 ACCEPTED). **Next**: `/tdd-implement` the Phase 4 plan — Session A (prereqs + server shell + context engine + `kms_vault_info` + `kms_search`), then Session B (`kms_read` + `kms_inspect` + `kms_move` + TD-055). Phase 3 remains the last *implemented* phase.
 
 **Phase 0 Final Checklist** _(CLOSED)_:
 - [x] core/exceptions.py
@@ -160,10 +160,10 @@ Triggered by `/superpowers:requesting-code-review`. Applied subset of review fin
 - `build-pipeline` skill updated: phase transition gate added between phases (output message + wait for user confirmation)
 - TD-043 logged in TECH_DEBT.md (`file_count` approximation for single-file-created batches)
 
-**[Project Registry — Plan written 2026-06-07]** _(PENDING implementation)_:
-- [ ] Phase 1 — `vault/registry.py`: data classes + `build_registry()` + `format_for_prompt()` (P2-REG-01 through P2-REG-04)
-- [ ] Phase 2 — `LiveRegistry`: thread-safe mutation methods (P2-REG-05, P2-REG-06)
-- [ ] Phase 3 — `VaultWatcher` hookup: `registry` constructor param + 4 event dispatch points
+**[Project Registry — Plan written 2026-06-07]** _(✅ SHIPPED — confirmed in use by classify via P4 research 2026-06-11; corrects the earlier "PENDING" staleness)_:
+- [x] Phase 1 — `vault/registry.py`: data classes + `build_registry()` + `format_for_prompt()` (P2-REG-01 through P2-REG-04) — verified: used by classify (`_build_vault_context`, `capture.py`); TD-051 resolved against it
+- [x] Phase 2 — `LiveRegistry`: thread-safe mutation methods (P2-REG-05, P2-REG-06) — verified shipped (P4 research)
+- [x] Phase 3 — `VaultWatcher` hookup: `registry` constructor param + 4 event dispatch points
 
 **Plan:** `docs/5_plans/project-registry.md`
 **Spec:** `docs/3_specs/project-registry.md`
@@ -176,7 +176,31 @@ Triggered by `/superpowers:requesting-code-review`. Applied subset of review fin
 - Directory event registry calls go INSIDE existing `if event.is_directory: return` branches
 - TD-034 retired by this plan (project-to-domain registry now exists)
 
-**Next roadmap work**: Phase 4 — MCP Server MVP (depends on Phase 2 + Phase 3, both done).
+**[P4 — MCP Server: Context Injection & Tool Design — Plan written 2026-06-11]** _(PENDING implementation — full /build-pipeline complete: design→spec→research→plan, no hard stop)_:
+- [ ] Phase 1 — Prerequisites: `wal_autocheckpoint=100` in `_connect()` (TD-007/OQ-003) + `mcp.context_injection` config block (C-06) + `mcp>=1.27,<2` dep + `location` filter on `filter_paths()`
+- [ ] Phase 2 — MCP Server Shell: stdio FastMCP bootstrap (mirrors CLI C-10/C-11), connection-lifespan engine, `copy_context().run()` isolation (OQ-004)
+- [ ] Phase 3 — Context Injection Engine (the C-14 logic home): result-frequency count + project→domain registry lookup + threshold/cap + hash-dedup + context-block assembly
+- [ ] Phase 4 — Binary Resolver Helper (`kms_inspect` sibling↔binary re-extraction)
+- [ ] Phase 5 — Note Mover Helper (`kms_move`: `move_note` → `write_note(dst, new_meta)` → `replace_path(old_vault_path, outcome)`)
+- [ ] Phase 6 — Tool Shim Layer: 5 logic-free shims (`kms_vault_info`, `kms_search`, `kms_read`, `kms_inspect`, `kms_move`) — built LAST (C-14 + C-15)
+- [ ] Phase 7 — TD-055 AI usage instructions (tool descriptions + cross-tool file)
+
+**Design:** `docs/1_design/P4_mcp_context_injection.md`
+**Spec:** `docs/2_specs/P4_mcp_context_injection.md`
+**Research:** `docs/3_research/P4_mcp_context_injection.md`
+**Plan:** `docs/4_plans/P4_mcp_context_injection.md`
+**ADRs:** 0010 (context injection in tool responses) + 0011 (write-path `kms_write`/`kms_move`) — both **ACCEPTED 2026-06-11**
+**Behavior inventory:** P4-MCP-01…09 (origin: design)
+**Key decisions locked:**
+- `mcp>=1.27,<2` (official Anthropic FastMCP) — dependency **APPROVED by user 2026-06-11**
+- Dedup session memory = FastMCP **process-scoped lifespan** (= per-conversation under stdio); engine read via `ctx.request_context.lifespan_context`; one-line shims stay C-14-clean (A1)
+- 5 MVP tools; **`kms_write` DEFERRED** (TD-056 field-level metadata guard)
+- Context source of truth = live Project Registry (`vault/registry.py`), **NOT** `meta.yaml`
+- Result cards carry `note_type` (`attachment-summary` = binary signal), **NOT** `attachment_path`
+- `move_note` carries no metadata → relocation = `move_note` → `write_note(dst, new_meta)` → `replace_path(old_vault_path, outcome)` (A7/A7b; `replace_path` 2nd arg is the `WriteOutcome`, not a path)
+- Build order bottom-up: tools (logic-free shims) built LAST on tested engine/helpers (satisfies C-14 + C-15 structurally)
+
+**Next roadmap work**: `/tdd-implement` the Phase 4 plan (`docs/4_plans/P4_mcp_context_injection.md`) — Session A first.
 
 **[P3 Session A — Index Layer — ✅ COMPLETE 2026-06-10]** _(merged to main, 1147 tests)_:
 - [x] **Phase 1 — Infrastructure**: Migration 007 (embeddings_vec vec0 + notes_fts FTS5), sqlite-vec extension loading in `_connect()`, SearchConfig (4 fields), sentence-transformers dependency, TD-050 timer-leak fixture. Commit: da5a0f5.

@@ -24,9 +24,13 @@ system: |
     primary_domain unless the note content clearly contradicts it.
   - Primary domain is the single most relevant domain from your domains list.
     Return null if no domain clearly applies.
-  - The available destinations list shows valid project names and domain names.
-    Your project value (when not null) must match a name in that list.
-    Your primary_domain value (when not null) must also match a name in that list.
+  - The available destinations list is grouped by domain. A line ending in a
+    colon (e.g. "Finance:") is a DOMAIN name. An indented item beneath it
+    (e.g. "  - Alpha") is a PROJECT name belonging to that domain.
+    Your "project" value (when not null) must be one of the indented PROJECT
+    names — never a domain header.
+    Your "primary_domain" value (when not null) must be one of the DOMAIN
+    header names — never an indented project.
 
   Confidence guidance:
   - 0.9 or higher: you are very certain about the classification.

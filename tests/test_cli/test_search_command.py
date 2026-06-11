@@ -176,6 +176,40 @@ def test_search_max_option(monkeypatch):
     assert captured["kwargs"]["max_results"] == 5
 
 
+def test_search_invalid_since_rejected(monkeypatch):
+    """An unparseable ``--since`` value is rejected with exit code 2.
+
+    Covers both ``_parse_since`` failure branches: the ``int()`` path
+    (``"xd"``) and the ``strptime`` path (``"garbage"``).  ``search()``
+    must never run.
+    """
+
+    def _mock_search(*args, **kwargs):
+        raise AssertionError("search() must not run when --since is invalid")
+
+    _patch_retrieval_search(monkeypatch, _mock_search)
+
+    runner = CliRunner()
+    for bad in ["garbage", "xd"]:
+        result = runner.invoke(cli, ["search", "--since", bad, "budget"])
+        assert result.exit_code == 2, f"--since {bad}: {result.output}"
+        assert "since" in result.output.lower()
+
+
+def test_search_max_rejects_zero_and_negative(monkeypatch):
+    """``--max 0`` and ``--max -1`` are rejected (must be >= 1)."""
+
+    def _mock_search(*args, **kwargs):
+        raise AssertionError("search() must not run for an invalid --max")
+
+    _patch_retrieval_search(monkeypatch, _mock_search)
+
+    runner = CliRunner()
+    for bad in ["0", "-1"]:
+        result = runner.invoke(cli, ["search", "--max", bad, "budget"])
+        assert result.exit_code == 2, f"--max {bad}: {result.output}"
+
+
 def test_search_failure_prints_error(monkeypatch):
     """A ``Failure`` from ``search()`` prints an error and exits 1."""
 
@@ -266,7 +300,13 @@ def test_search_reindex_flag(monkeypatch, tmp_path):
     class FakeConfig:
         main = FakeMain()
 
-    monkeypatch.setattr(core.config, "CONFIG", FakeConfig())
+    # Patch the private _CONFIG holder, NOT the public CONFIG name.  CONFIG is
+    # served by core.config.__getattr__ (lazy); patching the public name makes
+    # monkeypatch materialize a concrete CONFIG attribute on revert, which
+    # permanently shadows __getattr__ and leaks the real config (root) into
+    # every later test that calls to_vault_path.  Patching _CONFIG matches the
+    # pipeline_ctx fixture and keeps __getattr__ intact.
+    monkeypatch.setattr(core.config, "_CONFIG", FakeConfig())
 
     runner = CliRunner()
     result = runner.invoke(cli, ["search", "--reindex"])
