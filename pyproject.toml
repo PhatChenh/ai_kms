@@ -30,6 +30,7 @@ dependencies = [
     "extract-msg>=0.28",
     "sentence-transformers>=2.2.0",
     "sqlite-vec>=0.1.9",
+    "mcp>=1.27,<2",
 ]
 
 [project.scripts]
@@ -56,4 +57,5 @@ dev = [
 markers = [
     "smoke: tests that require real config files and a live vault on disk",
     "integration: tests that call a real external API and require a live key",
+    "needs_mcp_dep: tests that require the mcp dependency to be installed",
 ]
