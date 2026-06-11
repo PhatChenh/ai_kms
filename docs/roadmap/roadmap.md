@@ -69,11 +69,12 @@ COMPLETED                          REMAINING
 ─────────                          ─────────
 
 Phase 0 (Foundations) ─┐
-Phase 1 (Capture)      ├─ DONE ──→ Phase 2 (Classify) ──→ Phase 4 (MCP Server)
-Phase 1.5 (Pay Debt)   │                                        ↑
-Phase Pre-2 (DB Prep)  │           Phase 3 (Search) ────────────┘
-Vault-Restructure      │               ↑
-                       │               └── depends on Phase 0+1 only
+Phase 1 (Capture)      ├─ DONE ──→ Phase 2 (Classify) ──┐
+Phase 1.5 (Pay Debt)   │                                 │
+Phase Pre-2 (DB Prep)  ├─ DONE ──→ Phase 3 (Search) ────┤
+Vault-Restructure      │                                 │
+                       │                                 ▼
+                       │                        Phase 4 (MCP Server)
                        │
                        ├─ DONE ──→ Phase 5 (Promotion)       INDEPENDENT
                        ├─ DONE ──→ Phase 6 (Documentation)   INDEPENDENT
@@ -104,11 +105,21 @@ FILE_LOST guard, location tags, stale-tag reconcile, folder capture, handlers ex
 ### Vault-Restructure — Editable/No-Edit Split ✅
 ADR-0006. `no_edit_extensions` config, `resolve_placement()`, binary content-change detection, settle window, move_guard, AI-output folder exclusion, reconcile Stage 7.
 
+### Phase 2: Classify & Route ✅
+`classify()` pure function, inline classify in capture pipeline, project registry (`meta.yaml`), confidence-gated routing (AUTO/SUGGEST/CLUELESS), candidate frontmatter fields (`suggested_project`, `suggested_primary_domain`, `classify_confidence`, `classify_reasoning`), `move_guard` integration. 1080 tests.
+
+### Phase 3 Session A — Index Layer ✅
+Migration 007 (`embeddings_vec` vec0 + `notes_fts` FTS5), `retrieval/` package (Meaning Indexer `index_embedding` + Word Indexer `index_keywords`), best-effort capture pipeline wiring (4 call sites), search-table cleanup in `documents.py` (`delete_by_path`, `rename`, `replace_path`). 1147 tests.
+
+### Phase 3 Session B — Query Path ✅
+Hybrid search end-to-end: descriptive title at capture (`title` typed field on `NoteMetadata`), candidate filter (`filter_paths()` in `documents.py`), hybrid ranker (BM25 word search + KNN meaning search + RRF fusion in `retrieval/ranker.py`), cross-encoder re-ranker (SearchResult cards in `retrieval/reranker.py`), search coordinator (`search()` in `retrieval/search.py`), CLI search command (`--project`, `--since`, `--reindex`, `--max`), TD-051 classify cross-type validation (`project_names`/`domain_names` params on `classify()`). ~180 new tests, ~3400 lines. M1 milestone (Capture + Classify + Search end-to-end) achieved.
+
+
 ---
 
-## Stable Interfaces (Phase 0+1 — all independent tasks build against these)
+## Stable Interfaces (Phase 0+1+2+3 — all independent tasks build against these)
 
-These have been stable across 956 tests and multiple phases. Independent tasks import from these modules only:
+These have been stable across ~1370 tests and multiple phases. Independent tasks import from these modules only:
 
 | Module | Key functions | What it does |
 |--------|--------------|--------------|
@@ -124,311 +135,32 @@ These have been stable across 956 tests and multiple phases. Independent tasks i
 | `llm/provider.py` | `get_provider(task, config) → LLMProvider` | LLM call factory |
 | `llm/prompt_loader.py` | `PROMPTS["name"].render(**vars)` | Prompt loading from YAML |
 | `core/config.py` | `CONFIG` singleton, `VaultConfig`, `MainConfig` | Validated config |
+| `pipelines/classify.py` | `classify(subject, valid_destinations, config) → Result[ClassifyResult]`, `build_subject(title, summary, tags) → str`, `ClassifyResult` | AI classify engine (pure function, no side effects) |
+| `core/confidence.py` | `route(decision, thresholds) → RoutingOutcome`, `AIDecision(action, confidence, reasoning, source_ids)` | Confidence-gated routing |
+| `vault/move_guard.py` | `get_active() → MoveGuard | None` | Pipeline move registration (prevents watcher re-home) |
+| `retrieval/embeddings.py` | `index_embedding(vault_path, title, note_type, tags, summary) → Result[None]` | Semantic embedding storage (best-effort) |
+| `retrieval/keyword.py` | `index_keywords(vault_path, title, summary, body) → Result[None]` | FTS5 keyword indexing (best-effort) |
+| `storage/db.py` | `get_connection(db_path, readonly=False) → Generator[Connection]` | DB connection factory (loads sqlite-vec, WAL, FK) |
+| `storage/documents.py` | `filter_paths(project, since, until, db_path) → Result[list[str] \| None]` | Candidate filter (project + date range → candidate vault_paths) |
+| `retrieval/ranker.py` | `rank(query, candidate_paths, max_candidates, db_path) → Result[list[RankedResult]]` | Hybrid ranker (BM25 word + KNN meaning + RRF fusion) |
+| `retrieval/reranker.py` | `rerank(query, candidates, db_path) → Result[list[SearchResult]]` | Cross-encoder re-ranker (cheap result cards with metadata) |
+| `retrieval/search.py` | `search(query, project, date_range, max_results, db_path) → Result[list[SearchResult]]` | Search coordinator (filter → rank → rerank → cards). Stable contract for CLI + MCP. |
+| `pipelines/classify.py` | `classify(..., project_names, domain_names, ...)` — two new optional frozenset params | TD-051: validates project against project_names only, domain against domain_names only |
 
----
 
-## Phase 2 — Classify + Route
+## Phase 3 — Search ✅ (COMPLETE)
 
-**`BLOCKED BY: Phase 0+1 (done) · WEIGHT: medium`**
+**Status: COMPLETE** — 2026-06-11. Built in two sessions:
 
-### Goal
+**Session A — Index Layer:** Migration 007 (`embeddings_vec` vec0 + `notes_fts` FTS5), Meaning Indexer (`index_embedding`), Word Indexer (`index_keywords`), best-effort capture pipeline wiring, search-table cleanup in `documents.py`. 1147 tests.
 
-After Phase 1, the system captures and summarizes every note dropped into the inbox. But every note stays in the inbox — the system has no idea where it belongs. As notes accumulate, the inbox becomes as chaotic as the problem it was meant to solve, and the user is back to sorting everything by hand.
+**Session B — Query Path:** Descriptive title at capture (Component 0), Candidate Filter (`filter_paths`), Hybrid Ranker (BM25 + KNN + RRF fusion), Cross-encoder Re-ranker (SearchResult cards), Search Coordinator (`search()`), CLI search command (`--project`, `--since`, `--reindex`, `--max`), TD-051 classify cross-type validation. ~180 new tests, ~3400 LOC.
 
-Phase 2 closes that gap. After a note is captured, the AI reads its summary and tags, decides which project or domain folder it belongs in, and moves it there automatically. High-confidence decisions happen without the user's involvement. Borderline cases get flagged for review but are not moved. Truly ambiguous notes stay in the inbox with a review marker. The user only touches the edge cases — routine sorting becomes invisible.
+**Architecture:** ADR-0009 (RRF + rerank, no tier dispatcher). See `docs/architecture/system_adr/0009-phase3-search-rrf-rerank-not-tier-dispatcher.md`.
 
-### How the pieces fit together
+**What was built (supersedes the original tier-dispatcher design below):**
 
-```
-# Phase 2 — Classify + Route: What Happens Inside
-Scope: Takes a note already in inbox/ and moves it to the correct project or domain folder.
-       Does NOT cover: how the note was captured (Phase 1), search (Phase 3), or
-       how corrections are learned over time (Phase 7).
-
-How to read this:
-  Boxes      = steps the system takes, in order
-  BOLD NAME  = component name — maps to the Components section below
-  Arrows     = what flows to the next step
-  Fork       = a decision with different outcomes
-
-┌───────────────────────────────────┐
-│ Captured note sitting in inbox/   │
-└──────────────────┬────────────────┘
-                   │
-                   ▼
-┌───────────────────────────────────┐
-│ CLASSIFIER                        │
-│ AI reads summary + tags, picks    │
-│ target folder + confidence score  │
-└──────────────────┬────────────────┘
-                   │
-                   ▼
-┌───────────────────────────────────┐
-│ TAG VALIDATOR                     │
-│ Confirms all output tags exist    │
-│ in the allowed taxonomy           │
-└──────────────────┬────────────────┘
-                   │
-                   ▼
-┌───────────────────────────────────┐
-│ CONFIDENCE GATE                   │
-│ Routes by score: high / mid / low │
-└────┬──────────────┬───────────────┘
-     │              │              │
-   high            mid            low
-     │              │              │
-     ▼              ▼              ▼
-┌─────────┐   [Flag for        [Leave in inbox,
-│  NOTE   │    review —         add review marker,
-│  MOVER  │    don't move]      don't move]
-│ moves   │
-│ the note│
-└─────────┘
-
-Simplified: TAG VALIDATOR and CLASSIFIER are shown as two steps, but both run inside
-            the classify pipeline stage before the result reaches CONFIDENCE GATE.
-Note: [Flag for review] and [Leave in inbox] are outcomes produced by CONFIDENCE GATE —
-      they are not separate components.
-```
-
-### Components
-
----
-
-**CLASSIFIER** *(new — build first; everything else depends on its output)*
-
-Call the AI with a captured note's summary and tags, and get back a destination folder path, confidence score, and reasoning.
-
-- **Input:** A captured `Note` (vault path + summary + tags) from `inbox/`; note must already exist in the document index
-- **Output:** `Success(ClassifyResult(folder="Projects/Alpha", confidence=0.91, reasoning="..."))` or `Failure(error, recoverable, context)`
-- **Rules:**
-  - Load the prompt from `prompts/classify.yaml` via `PROMPTS["classify"].render(summary=..., tags=..., projects_registry=...)` — never write the prompt as an inline f-string (C-07)
-  - Call the LLM via `get_provider("classify", CONFIG.main).complete(system, user)` — never instantiate a provider directly (C-08)
-  - Must include a **projects registry** in the prompt so the AI knows which projects and domains exist (resolves TD-034). Implement the registry as a `Projects/<A>/meta.yaml` file per project (containing at minimum `domain: <D>` and `description: <one line>`); load all meta.yaml files at classify-time and pass the list to the prompt. If a project has no meta.yaml, domain defaults to `Uncategorized`
-  - Return `Success` or `Failure` — never raise an exception (C-12)
-  - Write one `CLASSIFIED` audit entry via `core.audit.write(decision="CLASSIFIED", source_ids=[note_path], pipeline="classify", stage="classify", confidence=..., reasoning=...)` (C-13)
-- **Reuse:** `llm/provider.py::get_provider`, `llm/prompt_loader.py::PROMPTS`, `core/audit.py::write`, `vault/reader.py::read_note`
-
----
-
-**TAG VALIDATOR** *(already exists — wire it in; zero new code needed)*
-
-Confirm every tag produced by the CLASSIFIER appears in the allowed taxonomy before passing to routing.
-
-- **Input:** List of tags from `ClassifyResult`
-- **Output:** `Success(validated_tags)` or `Failure("TAG_VIOLATION", recoverable=False, context={...})`
-- **Rules:**
-  - Call `core.tags.validate_tags(tags, taxonomy)` — do not reimplement validation logic (resolves TD-019)
-  - On violation: write a `TAG_VIOLATION` audit entry via `core.audit.write(...)` and return `Failure` — never silently accept tags that fall outside the taxonomy (C-13)
-  - The taxonomy source is `config/tags.yaml`; do not hardcode tag strings in pipeline code
-- **Reuse:** `core/tags.py::validate_tags`, `config/tags.yaml`
-
----
-
-**CONFIDENCE GATE** *(new — depends on CLASSIFIER; runs after TAG VALIDATOR)*
-
-Read the confidence score from `ClassifyResult` and decide what action to take: auto-move, flag for review, or leave in inbox.
-
-- **Input:** `ClassifyResult` with a validated confidence score (float 0–1)
-- **Output:** One of three typed `RouteDecision` values: `AUTO_MOVE(target_folder)`, `REVIEW(suggestion)`, or `CLUELESS`
-- **Rules:**
-  - Read all thresholds from `config/thresholds.yaml` via `ConfidenceGate.from_config(config)` — never write `if confidence > 0.85` or any float literal inside the pipeline (C-06)
-  - `REVIEW` path: add `review: true` and `suggested_folder: <folder>` to the note's frontmatter — do not move the note
-  - `CLUELESS` path: add `review: true` to frontmatter and leave a human-readable note explaining the ambiguity — do not move
-  - Return a typed `RouteDecision`; the NOTE MOVER only runs when it receives `AUTO_MOVE`
-- **Reuse:** `core/confidence.py::ConfidenceGate`, `config/thresholds.yaml`
-
----
-
-**NOTE MOVER** *(new — depends on CONFIDENCE GATE; runs only on AUTO_MOVE)*
-
-Move the note from inbox to its target folder, update its frontmatter with the classification tags, and update the document index.
-
-- **Input:** `RouteDecision(AUTO_MOVE, target_folder)` + the note's current vault path
-- **Output:** `Success(new_vault_path)` or `Failure`
-- **Rules:**
-  - Call `vault/writer.py::move_note(src, dst)` — never call `os.rename`, `shutil.move`, or `.write_text` directly (C-01)
-  - Read the note first via `vault/reader.py::read_note`, merge existing metadata with the new classification fields, then write via `vault/writer.py::write_note(..., actor="ai")` — never overwrite with partial metadata (C-03)
-  - Check `updated_by_human` on the existing note before moving; if `True`, skip the move and return `Failure` with a conflict message (C-02)
-  - Call `vault/move_guard.py::get_active().register(src_path)` before calling `move_note` so the file watcher does not treat this pipeline move as a misplaced file and re-home it
-  - After move, call `storage/documents.py::upsert(...)` with the new vault path to keep the document index consistent
-- **Reuse:** `vault/writer.py::move_note`, `vault/writer.py::write_note`, `vault/reader.py::read_note`, `vault/move_guard.py::get_active`, `storage/documents.py::upsert`
-
----
-
-**CLASSIFY CLI** *(new — build last, after pipeline has passing tests)*
-
-Expose `kms classify <file>` and `kms classify --scan` that call the classify pipeline and print a decision summary.
-
-- **Input:** A single file path, or `--scan` to process all unclassified notes in `inbox/`
-- **Output:** Console summary of each decision (moved / flagged / left in inbox) with confidence scores
-- **Rules:**
-  - Wrap the async pipeline call with `asyncio.run(...)` — no async Click adapters (C-10)
-  - Zero logic in the CLI layer; the CLI calls the pipeline and prints its result
-  - `--scan` mode: iterate over every `.md` in `inbox/` where `classified` frontmatter field is absent or `False`; skip already-classified notes
-  - Do not add `kms_classify` as an MCP tool until this CLI command is verified working end-to-end (C-15, C-16)
-- **Reuse:** `cli/main.py` Click group, `core/pipeline.py::run_pipeline`, `vault/reader.py::read_note`
-
----
-
-### Acceptance criteria (behavior test)
-- [ ] Drop a test `.md` note about "Q3 marketing budget" into `inbox/`
-- [ ] Run `kms capture <file>` then `kms classify <file>`
-- [ ] Note moves to correct `Projects/` or `Domain/` subfolder
-- [ ] Frontmatter has classification tags
-- [ ] `audit_log` has a CLASSIFIED entry with confidence score and reasoning
-- [ ] Low-confidence note stays in inbox with a review flag
-- [ ] Run `kms classify --scan` — all inbox notes get classified
-
----
-
-## Phase 3 — Search + Three-Tier Retrieval
-
-**`INDEPENDENT (depends on Phase 0+1 only) · WEIGHT: heavy`**
-
-### Goal
-
-After Phase 1, every note is captured and summarized. But finding a specific note means remembering its exact title or tags — keyword search the way a file system works. The vault is accumulating knowledge that cannot be found.
-
-Phase 3 makes the vault queryable by meaning. A user can ask "what do I know about stakeholder resistance?" and get back notes that talk about "managing pushback in meetings" — even if those exact words were never used. The system always starts with the cheapest answer (a quick summary) and only goes deeper if the user or Claude needs more detail. This keeps cost low and speed high for every search.
-
-### How the pieces fit together
-
-```
-# Phase 3 — Search + Three-Tier Retrieval: What Happens Inside
-Scope: The query-time search flow — what happens when a user or Claude asks a question.
-       Index building (EMBEDDING INDEXER, KEYWORD INDEXER) runs automatically
-       in the background when notes are captured — not shown here.
-       Does NOT cover: classification (Phase 2) or MCP integration (Phase 4).
-
-How to read this:
-  Boxes      = steps the system takes, in order
-  BOLD NAME  = component name — maps to the Components section below
-  Arrows     = what flows to the next step
-  Fork       = a decision with different outcomes
-
-┌──────────────────────────────────────┐
-│ Query string + max_cost from caller  │
-└──────────────────┬───────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────┐
-│ TIER DISPATCHER                      │
-│ Starts at hot (summaries only);      │
-│ escalates to warm/cold if budget     │
-│ allows and caller needs more         │
-└──────┬───────────────────────────────┘
-       │                    │
-   hot only           warm or cold
-       │                    │
-       ▼                    ▼
-[Summary results       ┌──────────────────────────┐
- returned — fast,      │ HYBRID RANKER             │
- cheap, done]          │ Merges keyword (FTS5) +   │
-                       │ semantic (embedding)       │
-                       │ results and re-ranks them  │
-                       └──────────────┬─────────────┘
-                                      │
-                                      ▼
-                       [Snippets (warm) or full
-                        note content (cold) returned]
-
-Background (runs at capture time, not shown in query flow):
-  EMBEDDING INDEXER — stores note vectors in the embeddings table
-  KEYWORD INDEXER   — writes note content to the FTS5 virtual table
-
-Note: [Summary results], [Snippets], and [Full content] are tier outcomes, not components.
-```
-
-### Components
-
-Build order: EMBEDDING INDEXER and KEYWORD INDEXER first (they feed the indexes). HYBRID RANKER second (it queries those indexes). TIER DISPATCHER last (it orchestrates the others). SEARCH CLI after the pipeline has passing tests.
-
----
-
-**EMBEDDING INDEXER** *(new — build first; HYBRID RANKER reads from it)*
-
-For each captured note, compute a vector embedding of its summary and store it in the `embeddings` table so semantic search can work.
-
-- **Input:** A note's vault path and summary text; triggered by the capture pipeline completing, or by a full re-index scan
-- **Output:** Row written to `embeddings` table: `(vault_path, model, vector_blob, indexed_at)`; returns `Success(rowcount)` or `Failure`
-- **Rules:**
-  - Create the `embeddings` table via a new SQL migration file `storage/migrations/006_add_embeddings.sql` — never create tables in Python code (C-05, resolves TD-004)
-  - Load the embedding model from `CONFIG.main.providers.claude.embedding_model` (or the active provider's `embedding_model` field) — never hardcode a model name (resolves TD-013); use `sentence-transformers` with `all-MiniLM-L6-v2`
-  - Re-indexing must be idempotent: upsert by `vault_path` — running twice produces no duplicates
-  - Return `Success` or `Failure` — never raise (C-12)
-- **Reuse:** `storage/db.py::_connect`, `core/config.py::CONFIG`
-
----
-
-**KEYWORD INDEXER** *(new — build alongside EMBEDDING INDEXER)*
-
-Write each note's full text into an FTS5 virtual table so keyword search works across the vault.
-
-- **Input:** A note's vault path and full text content; triggered at capture time or by a re-index scan
-- **Output:** Row upserted to the FTS5 virtual table `notes_fts`; returns `Success(rowcount)` or `Failure`
-- **Rules:**
-  - Create the FTS5 virtual table via the same migration file as the embeddings table (`006_add_embeddings.sql`) — one migration covers both (C-05, resolves TD-004)
-  - Index both note body text AND the summary field separately so hot-tier summary search does not pull full content
-  - Re-indexing must be idempotent: `INSERT OR REPLACE` into FTS5 by `vault_path`
-  - Return `Success` or `Failure` — never raise (C-12)
-- **Reuse:** `storage/db.py::_connect`
-
----
-
-**HYBRID RANKER** *(new — depends on EMBEDDING INDEXER and KEYWORD INDEXER)*
-
-Given a query, search both the FTS5 keyword index and the semantic embedding index, then merge and re-rank the results into a single ordered list.
-
-- **Input:** Query string + an optional `max_results` count
-- **Output:** `Success(list[RankedResult(vault_path, score, snippet, summary)])` ordered by relevance, or `Failure`
-- **Rules:**
-  - Run keyword search via FTS5 (`retrieval/keyword.py`) and semantic search via cosine similarity (`retrieval/semantic.py`) independently, then merge and re-rank in `retrieval/hybrid.py`
-  - Score merging: normalize both score ranges to 0–1 before combining — raw FTS5 rank and cosine similarity are not on the same scale
-  - Each `RankedResult` carries: `vault_path`, merged `score`, the best matching `snippet` (surrounding context from FTS5), and the note's `summary` field
-  - Return `Success` or `Failure` — never raise (C-12)
-- **Reuse:** `storage/db.py::_connect`, `vault/reader.py::read_note` (for summaries)
-
----
-
-**TIER DISPATCHER** *(new — depends on HYBRID RANKER; this is the public interface for search)*
-
-Given a query and a `max_cost` budget, decide which tier to start at and whether to escalate to deeper (more expensive) tiers.
-
-- **Input:** Query string + `max_cost` value (a token/cost budget set by the caller); the caller never specifies which tier
-- **Output:** `Success(SearchResult(tier, results))` where `tier` is `"hot"`, `"warm"`, or `"cold"` and `results` is a list from HYBRID RANKER; or `Failure`
-- **Rules:**
-  - Always start at hot tier (return summaries only from the FTS5 index) — never start at warm or cold
-  - Escalate to warm (snippets) only if `max_cost` allows; escalate to cold (full content) only from warm, not directly from hot
-  - Read tier cost thresholds from `config/thresholds.yaml` — never hardcode cost values in the dispatcher (C-06)
-  - Callers (CLI, MCP) must never pass a tier name directly — they pass `max_cost` and the dispatcher decides
-  - Return `Success` or `Failure` — never raise (C-12)
-- **Reuse:** `core/confidence.py` (cost gate pattern), `config/thresholds.yaml`, HYBRID RANKER
-
----
-
-**SEARCH CLI** *(new — build last, after pipeline has passing tests)*
-
-Expose `kms search "<query>"` that calls TIER DISPATCHER and prints results, starting at hot tier.
-
-- **Input:** Query string as a CLI argument; optional `--tier cold` flag to force a specific tier for debugging
-- **Output:** Console output showing results — summaries for hot tier, snippets for warm, full content for cold
-- **Rules:**
-  - Wrap the pipeline call with `asyncio.run(...)` — no async Click adapters (C-10)
-  - Zero logic in the CLI layer; the CLI calls TIER DISPATCHER and formats its output
-  - Default behavior with no `--tier` flag: let TIER DISPATCHER decide (pass `max_cost=CONFIG.main.search.default_max_cost`)
-  - Do not add `kms_search` as an MCP tool until this CLI is verified working end-to-end (C-15, C-16)
-- **Reuse:** `cli/main.py` Click group, TIER DISPATCHER
-
----
-
-### Acceptance criteria (behavior test)
-- [ ] Capture 5+ diverse notes (meeting notes, research, project update)
-- [ ] Run `kms search "stakeholder resistance"` — finds a note about "managing pushback"
-- [ ] Hot tier returns summaries only (fast, cheap)
-- [ ] Warm tier returns matching snippets with surrounding context
-- [ ] Cold tier returns full note content
-- [ ] Search works on both `.md` notes and sibling summaries of binaries
+**What was built:** See Session A+B summary above. Original tier-dispatcher design superseded by ADR-0009. See `docs/4_plans/P3_session_b_query_path.md` for complete build plan and acceptance criteria.
 
 ---
 

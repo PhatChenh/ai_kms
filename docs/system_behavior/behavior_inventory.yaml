@@ -2078,3 +2078,420 @@
   pytest_ref: tests/test_pipelines/test_classify_step.py::test_auto_md_replace_path_atomic
   status: active
   retired: null
+
+
+# ── Phase 3 Session A — Index Layer ──
+- id: P3-IDX-01
+  behavior: After capture, an embeddings_vec row exists for the note (meaning index populated)
+  tier: unit
+  phase: 3
+  origin: specification
+  granularity: mechanism
+  trigger: kms capture <file>
+  fixtures: []
+  steps:
+  - Capture a .md note.
+  - Query embeddings_vec for the note's vault_path.
+  expected:
+  - One row exists in embeddings_vec for that vault_path
+  - The embedding blob is non-null (384 floats, 1536 bytes)
+  spec_ref: docs/2_specs/p3_session_a_index_layer.md
+  human_reviewed: false
+  last_tested: '2026-06-10'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_capture_search.py::test_capture_md_creates_embedding_row
+  status: active
+  retired: null
+- id: P3-IDX-02
+  behavior: After capture, a keyword in the note body is findable via FTS5 MATCH
+  tier: unit
+  phase: 3
+  origin: specification
+  granularity: mechanism
+  trigger: kms capture <file>
+  fixtures: []
+  steps:
+  - Capture a .md note containing a distinctive keyword.
+  - Query notes_fts with MATCH on that keyword.
+  expected:
+  - One row exists in notes_fts for that vault_path
+  - FTS5 MATCH returns the note
+  spec_ref: docs/2_specs/p3_session_a_index_layer.md
+  human_reviewed: false
+  last_tested: '2026-06-10'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_capture_search.py::test_capture_md_creates_fts_row
+  status: active
+  retired: null
+- id: P3-IDX-03
+  behavior: Embedding index failure does not block capture
+  tier: unit
+  phase: 3
+  origin: specification
+  granularity: mechanism
+  trigger: kms capture <file> (with mocked embedding failure)
+  fixtures: []
+  steps:
+  - Mock index_embedding to raise.
+  - Capture a note.
+  expected:
+  - Capture returns Success
+  - No embedding row exists (failure was caught and logged)
+  spec_ref: docs/2_specs/p3_session_a_index_layer.md
+  human_reviewed: false
+  last_tested: '2026-06-10'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_capture_search.py::test_capture_embedding_failure_nonfatal
+  status: active
+  retired: null
+- id: P3-IDX-04
+  behavior: Keyword index failure does not block capture
+  tier: unit
+  phase: 3
+  origin: specification
+  granularity: mechanism
+  trigger: kms capture <file> (with mocked keyword failure)
+  fixtures: []
+  steps:
+  - Mock index_keywords to raise.
+  - Capture a note.
+  expected:
+  - Capture returns Success
+  - No FTS5 row exists (failure was caught and logged)
+  spec_ref: docs/2_specs/p3_session_a_index_layer.md
+  human_reviewed: false
+  last_tested: '2026-06-10'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_capture_search.py::test_capture_keyword_failure_nonfatal
+  status: active
+  retired: null
+- id: P3-IDX-05
+  behavior: Deleting a note removes its search entries from both embeddings_vec and notes_fts in the same transaction
+  tier: unit
+  phase: 3
+  origin: specification
+  granularity: mechanism
+  trigger: documents.delete_by_path(vault_path)
+  fixtures: []
+  steps:
+  - Index a note in both search tables.
+  - Call delete_by_path.
+  expected:
+  - Zero rows in embeddings_vec for that vault_path
+  - Zero rows in notes_fts for that vault_path
+  spec_ref: docs/2_specs/p3_session_a_index_layer.md
+  human_reviewed: false
+  last_tested: '2026-06-10'
+  last_result: passed
+  pytest_ref: tests/test_storage/test_documents_search.py::test_delete_cleans_search_tables
+  status: active
+  retired: null
+- id: P3-IDX-06
+  behavior: Renaming a note copies its search entries to the new path and removes the old ones atomically
+  tier: unit
+  phase: 3
+  origin: specification
+  granularity: mechanism
+  trigger: documents.rename(old_path, new_path)
+  fixtures: []
+  steps:
+  - Index a note in both search tables at path A.
+  - Call rename(A, B).
+  expected:
+  - Zero search rows at path A
+  - One row each in embeddings_vec and notes_fts at path B
+  spec_ref: docs/2_specs/p3_session_a_index_layer.md
+  human_reviewed: false
+  last_tested: '2026-06-10'
+  last_result: passed
+  pytest_ref: tests/test_storage/test_documents_search.py::test_rename_copies_search_entries
+  status: active
+  retired: null
+- id: P3-IDX-07
+  behavior: The embedding contextual string follows a deterministic format
+  tier: unit
+  phase: 3
+  origin: specification
+  granularity: mechanism
+  trigger: index_embedding() called
+  fixtures: []
+  steps:
+  - Call index_embedding with known title, type, tags, summary.
+  expected:
+  - String format includes title, type, tags, summary in order
+  - Summary omitted when None/empty
+  spec_ref: docs/2_specs/p3_session_a_index_layer.md
+  human_reviewed: false
+  last_tested: '2026-06-10'
+  last_result: passed
+  pytest_ref: tests/test_retrieval/test_embeddings.py::test_index_embedding_context_string_format
+  status: active
+  retired: null
+- id: P3-IDX-08
+  behavior: Every database connection loads sqlite-vec extension automatically
+  tier: unit
+  phase: 3
+  origin: specification
+  granularity: mechanism
+  trigger: get_connection() called
+  fixtures: []
+  steps:
+  - Open a connection via get_connection().
+  - Run SELECT vec_version().
+  expected:
+  - Query succeeds without error
+  spec_ref: docs/2_specs/p3_session_a_index_layer.md
+  human_reviewed: false
+  last_tested: '2026-06-10'
+  last_result: passed
+  pytest_ref: tests/test_storage/test_db.py::test_vec_extension_loaded
+  status: active
+  retired: null
+- id: P3-IDX-09
+  behavior: Migration 007 creates both search tables idempotently
+  tier: unit
+  phase: 3
+  origin: specification
+  granularity: mechanism
+  trigger: init_db() called twice
+  fixtures: []
+  steps:
+  - Run init_db() on a fresh database, then again.
+  expected:
+  - embeddings_vec and notes_fts virtual tables exist
+  - schema_version = 7
+  spec_ref: docs/2_specs/p3_session_a_index_layer.md
+  human_reviewed: false
+  last_tested: '2026-06-10'
+  last_result: passed
+  pytest_ref: tests/test_storage/test_migration_007.py::test_migration_007_tables_exist
+  status: active
+  retired: null
+- id: P3-IDX-10
+  behavior: SearchConfig loads with defaults for all four fields
+  tier: unit
+  phase: 3
+  origin: specification
+  granularity: mechanism
+  trigger: CONFIG.main.search accessed
+  fixtures: []
+  steps:
+  - Load config with no search section, access CONFIG.main.search.
+  expected:
+  - embedding_model = "all-MiniLM-L6-v2"
+  - reranker_model = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  - max_candidates = 50 and max_results = 20
+  spec_ref: docs/2_specs/p3_session_a_index_layer.md
+  human_reviewed: false
+  last_tested: '2026-06-10'
+  last_result: passed
+  pytest_ref: tests/test_core/test_config.py::TestSearchConfig::test_search_config_defaults
+  status: active
+  retired: null
+
+# ── Phase 3 Session B — Query Path ──
+- id: P3-SRCH-01
+  behavior: A question finds a semantically related note even when the wording differs (vector match, not just keywords)
+  tier: phase
+  phase: 3
+  origin: design
+  granularity: outcome
+  trigger: kms search "<query>"
+  fixtures: []
+  steps:
+  - Capture a note whose summary/body describes "managing pushback in meetings".
+  - 'Run: uv run kms search "stakeholder resistance"'
+  expected:
+  - The pushback note appears in the result list
+  - Each result block shows the note's real title, a score, and a snippet
+  spec_ref: docs/1_design/P3_session_b_query_path.md
+  human_reviewed: false
+  last_tested: '2026-06-11'
+  last_result: passed
+  pytest_ref: tests/test_retrieval/test_ranker.py::test_rank_returns_semantically_relevant_note_first
+  status: active
+  retired: null
+- id: P3-SRCH-02
+  behavior: A project filter with no question returns every note in that project, newest first (filter-only mode)
+  tier: phase
+  phase: 3
+  origin: design
+  granularity: outcome
+  trigger: kms search --project <Name>
+  fixtures: []
+  steps:
+  - Capture several notes into Projects/Alpha/ over time.
+  - 'Run: uv run kms search --project Alpha'
+  expected:
+  - All Alpha notes are returned with no query term required
+  - Results are ordered most-recently-updated first
+  spec_ref: docs/1_design/P3_session_b_query_path.md
+  human_reviewed: false
+  last_tested: '2026-06-11'
+  last_result: passed
+  pytest_ref: tests/test_storage/test_documents_filter.py::test_filter_by_project_returns_only_matching
+  status: active
+  retired: null
+- id: P3-SRCH-03
+  behavior: A question plus a project filter searches semantically but only within that project
+  tier: phase
+  phase: 3
+  origin: design
+  granularity: outcome
+  trigger: kms search "<query>" --project <Name>
+  fixtures: []
+  steps:
+  - Capture notes into two projects, both touching the query topic.
+  - 'Run: uv run kms search "budget Q3" --project Alpha'
+  expected:
+  - Only Alpha notes appear in the results
+  - Results are ranked by relevance to the question
+  spec_ref: docs/1_design/P3_session_b_query_path.md
+  human_reviewed: false
+  last_tested: '2026-06-11'
+  last_result: passed
+  pytest_ref: tests/test_retrieval/test_search.py::test_search_query_plus_project_scopes_ranking
+  status: active
+  retired: null
+- id: P3-SRCH-04
+  behavior: Every search result carries a triage payload (handle, summary, snippet, score, metadata) and never the full note body
+  tier: full
+  phase: 3
+  origin: design
+  granularity: mechanism
+  trigger: kms search "<query>"
+  fixtures: []
+  steps:
+  - Run any query that returns at least one result.
+  expected:
+  - Each result has vault_path, summary, snippet, score, and metadata
+  - No result contains the full note body
+  spec_ref: docs/1_design/P3_session_b_query_path.md
+  human_reviewed: false
+  last_tested: '2026-06-11'
+  last_result: passed
+  pytest_ref: tests/test_retrieval/test_reranker.py::test_rerank_returns_search_results_with_metadata
+  status: active
+  retired: null
+- id: P3-SRCH-05
+  behavior: A result for a binary's sibling summary shows a usable title, not the raw "report.pdf.md" filename
+  tier: phase
+  phase: 3
+  origin: design
+  granularity: outcome
+  trigger: kms search "<query>"
+  fixtures: []
+  steps:
+  - Capture a PDF/binary so its sibling summary note is indexed.
+  - Run a query that matches the binary's content.
+  expected:
+  - The result's title is the human-readable note title from the index
+  spec_ref: docs/1_design/P3_session_b_query_path.md
+  human_reviewed: false
+  last_tested: '2026-06-11'
+  last_result: passed
+  pytest_ref: tests/test_retrieval/test_reranker.py::test_rerank_title_is_descriptive
+  status: active
+  retired: null
+- id: P3-SRCH-06
+  behavior: Search skips index rows whose underlying note was deleted instead of crashing
+  tier: full
+  phase: 3
+  origin: design
+  granularity: mechanism
+  trigger: kms search "<query>"
+  fixtures: []
+  steps:
+  - Leave an index entry whose documents row was removed.
+  - Run a query that would otherwise return that entry.
+  expected:
+  - Search returns the other valid results and silently skips the stale entry
+  spec_ref: docs/1_design/P3_session_b_query_path.md
+  human_reviewed: false
+  last_tested: '2026-06-11'
+  last_result: passed
+  pytest_ref: tests/test_retrieval/test_reranker.py::test_rerank_skips_stale_row
+  status: active
+  retired: null
+- id: P3-SRCH-07
+  behavior: Rebuilding both indexes is idempotent — running reindex twice yields identical results
+  tier: phase
+  phase: 3
+  origin: design
+  granularity: outcome
+  trigger: kms search --reindex
+  fixtures: []
+  steps:
+  - 'Run: uv run kms search --reindex'
+  - Run the same reindex a second time.
+  expected:
+  - The reindex reports a count of notes processed
+  - Second run produces no duplicate index rows
+  spec_ref: docs/1_design/P3_session_b_query_path.md
+  human_reviewed: false
+  last_tested: '2026-06-11'
+  last_result: passed
+  pytest_ref: tests/test_cli/test_search_command.py::test_search_reindex_flag
+  status: active
+  retired: null
+- id: P3-SRCH-08
+  behavior: A date-range filter with no question returns recent notes (supports a future weekly synthesis caller)
+  tier: full
+  phase: 3
+  origin: design
+  granularity: outcome
+  trigger: kms search --since <window>
+  fixtures: []
+  steps:
+  - Capture notes across several days.
+  - 'Run: uv run kms search --since 7d'
+  expected:
+  - Only notes updated within the window are returned, newest first
+  spec_ref: docs/1_design/P3_session_b_query_path.md
+  human_reviewed: false
+  last_tested: '2026-06-11'
+  last_result: passed
+  pytest_ref: tests/test_retrieval/test_search.py::test_search_date_range_filters
+  status: active
+  retired: null
+- id: P3-SRCH-09
+  behavior: Classify no longer accepts a domain name as a valid project destination (cross-type leak closed, TD-051)
+  tier: full
+  phase: 3
+  origin: design
+  granularity: mechanism
+  trigger: classify() with a domain name supplied as project
+  fixtures: []
+  steps:
+  - Drive classify() so the AI response puts a domain name in the project field.
+  expected:
+  - classify() returns Failure(recoverable=True)
+  - project validated only against project names, primary_domain only against domain names
+  spec_ref: docs/1_design/P3_session_b_query_path.md
+  human_reviewed: false
+  last_tested: '2026-06-11'
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_classify.py::test_classify_rejects_domain_as_project
+  status: active
+  retired: null
+- id: P3-SRCH-10
+  behavior: A captured binary's sibling note carries an AI-generated descriptive title in frontmatter
+  tier: phase
+  phase: 3
+  origin: design
+  granularity: outcome
+  trigger: kms capture <Projects/Alpha/report.pdf>
+  fixtures: []
+  steps:
+  - Capture a PDF/binary so its sibling summary note is written and indexed.
+  - Open the sibling .md and inspect its frontmatter.
+  expected:
+  - Sibling frontmatter carries a descriptive title field (the AI's title)
+  - The documents.title for the sibling row is the descriptive title
+  spec_ref: docs/1_design/P3_session_b_query_path.md
+  human_reviewed: false
+  last_tested: '2026-06-11'
+  last_result: passed
+  pytest_ref: tests/test_vault/test_frontmatter.py::test_title_field_roundtrip
+  status: active
+  retired: null
