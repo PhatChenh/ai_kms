@@ -72,6 +72,16 @@ def test_pragma_journal_mode_wal(db_path: Path) -> None:
     assert value == "wal"
 
 
+def test_pragma_wal_autocheckpoint_is_100(db_path: Path) -> None:
+    """_connect() sets wal_autocheckpoint=100 (TD-007)."""
+    init_db(db_path)
+    with get_connection(db_path) as conn:
+        checkpoint = conn.execute("PRAGMA wal_autocheckpoint").fetchone()[0]
+        foreign_keys = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    assert checkpoint == 100, f"Expected 100, got {checkpoint}"
+    assert foreign_keys == 1
+
+
 def test_migration_runner_advances_version(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

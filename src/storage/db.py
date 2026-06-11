@@ -16,6 +16,7 @@ _MIGRATIONS_DIR = _PROJECT_ROOT / "storage" / "migrations"
 def _connect(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path))
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA wal_autocheckpoint=100")
     conn.execute("PRAGMA foreign_keys=ON")
     import sqlite_vec
 

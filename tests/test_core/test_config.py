@@ -743,6 +743,30 @@ class TestMCPConfig:
         m = MCPConfig()
         assert m.enable_http is False
 
+    # ── context_injection block (P4 C-06) ──────────────────────────────────────
+
+    def test_context_injection_defaults(self):
+        """Without explicit config, context_injection has documented defaults."""
+        m = MCPConfig()
+        ci = m.context_injection
+        assert ci.frequency_threshold == pytest.approx(0.3)
+        assert ci.max_context_files == 3
+        assert ci.include_context_yaml is True
+
+    def test_context_injection_overrides(self):
+        """Overridden values in YAML are reflected on the model."""
+        m = MCPConfig(
+            context_injection={
+                "frequency_threshold": 0.5,
+                "max_context_files": 7,
+                "include_context_yaml": False,
+            }
+        )
+        ci = m.context_injection
+        assert ci.frequency_threshold == pytest.approx(0.5)
+        assert ci.max_context_files == 7
+        assert ci.include_context_yaml is False
+
 
 class TestSelfLearningConfig:
     def test_enabled_by_default(self):

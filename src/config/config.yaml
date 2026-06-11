@@ -36,6 +36,10 @@ mcp:
   enable_http: false
   host: 0.0.0.0
   port: 3838
+  context_injection:
+    frequency_threshold: 0.3
+    max_context_files: 3
+    include_context_yaml: true
 openai_compat:
   api_key_env: FIREWORKS_API_KEY
   base_url: https://api.fireworks.ai/inference/v1

@@ -188,3 +188,56 @@ def test_filter_with_until_upper_bound(db):
     assert isinstance(r, Success)
     assert r.value is not None
     assert r.value == ["inbox/jun.md"]
+
+
+# ---------------------------------------------------------------------------
+# Location filter (P4 Component 4)
+# ---------------------------------------------------------------------------
+
+
+def test_filter_no_args_with_location_param_still_returns_none_sentinel(db):
+    """filter_paths() with no filters (including location=None) → Success(None)."""
+    from storage.documents import filter_paths
+
+    r = filter_paths(db_path=db)
+    assert isinstance(r, Success)
+    assert r.value is None
+
+
+def test_filter_by_location_returns_only_matching_folder(db):
+    """Seed rows in inbox/ and Projects/. location="inbox" returns only inbox paths."""
+    import sqlite3
+
+    from storage.documents import filter_paths
+
+    conn = sqlite3.connect(str(db))
+    conn.execute("PRAGMA foreign_keys = ON")
+    try:
+        conn.executemany(
+            """INSERT INTO documents
+               (vault_path, title, updated_at)
+               VALUES (?, ?, ?)""",
+            [
+                ("inbox/note1.md", "Note 1", "2026-06-01 12:00:00"),
+                ("inbox/subdir/note2.md", "Note 2", "2026-06-02 12:00:00"),
+                ("Projects/Alpha/report.md", "Report", "2026-06-03 12:00:00"),
+                ("inbox-archive/old.md", "Old", "2026-01-01 00:00:00"),
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    r = filter_paths(location="inbox", db_path=db)
+    assert isinstance(r, Success)
+    assert r.value is not None
+    assert sorted(r.value) == ["inbox/note1.md", "inbox/subdir/note2.md"]
+
+
+def test_filter_by_location_no_match_returns_empty_list(db):
+    """location that matches nothing → Success([]), not Success(None)."""
+    from storage.documents import filter_paths
+
+    r = filter_paths(location="NonexistentFolder", db_path=db)
+    assert isinstance(r, Success)
+    assert r.value == []
