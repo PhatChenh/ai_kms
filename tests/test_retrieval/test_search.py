@@ -429,6 +429,31 @@ def test_search_max_results_caps_output(seeded_db):
 # ---------------------------------------------------------------------------
 
 
+def test_search_location_filter_scopes_results(seeded_db):
+    """Call search(location="inbox", db_path=db). Assert only inbox notes returned."""
+    db_path, paths = seeded_db
+
+    from retrieval.search import search
+
+    result = search(location="inbox", db_path=db_path)
+
+    assert isinstance(result, Success), f"Expected Success, got {result}"
+    cards = result.value
+    assert len(cards) > 0, "Expected at least one inbox result"
+    for card in cards:
+        assert card.vault_path.startswith("inbox/"), (
+            f"Expected inbox/ path, got {card.vault_path}"
+        )
+    # Note A (Projects/Alpha/stakeholder.md) should NOT be in results
+    excluded = {c.vault_path for c in cards}
+    assert paths["A"] not in excluded, (
+        f"Projects note {paths['A']} should be excluded by location=inbox"
+    )
+    assert paths["D"] not in excluded, (
+        f"Projects note {paths['D']} should be excluded by location=inbox"
+    )
+
+
 def test_search_filter_only_cards_have_metadata(seeded_db):
     """In filter-only mode, assert each card still has summary and metadata."""
     db_path, paths = seeded_db
