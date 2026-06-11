@@ -768,7 +768,7 @@ class TestClassify:
     @pytest.mark.asyncio
     async def test_classify_backward_compat_without_typed_name_sets(self, monkeypatch):
         """Calling classify() without project_names/domain_names falls back to pooled _destination_names()."""
-        # AI returns a project that IS in VAlign_DESTINATIONS (pooled set)
+        # AI returns a project that IS in VALID_DESTINATIONS (pooled set)
         json_valid = (
             '{"project": "Alpha", "domains": ["finance"], '
             '"primary_domain": "Finance", "confidence": 0.85, '

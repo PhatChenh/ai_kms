@@ -97,8 +97,17 @@ def rank(
         # ------------------------------------------------------------------
         # 2. Meaning search (KNN via vec0)
         # ------------------------------------------------------------------
-        model = _get_model()
-        query_embedding = model.encode(query)
+        try:
+            model = _get_model()
+            query_embedding = model.encode(query)
+        except Exception as exc:
+            # Model load / encode failure -- tag the phase so a caller can
+            # tell an embed failure from a fusion bug during triage.
+            return Failure(
+                error=str(exc),
+                recoverable=True,
+                context={"query": query, "op": "rank", "phase": "embed"},
+            )
         # Convert to raw float32 bytes for sqlite-vec (same format as index time)
         if hasattr(query_embedding, "numpy"):
             query_embedding = query_embedding.numpy()

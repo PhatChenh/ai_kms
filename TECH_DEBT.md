@@ -13,12 +13,100 @@
 ---
 
 ### TD-051 · classify() destination validation pools project + domain names (cross-type leak)
+**Status:** RESOLVED (P3 Session B, commit c011fed, 2026-06-11)
+**Phase:** ✅ Resolved
+**Risk if triggered early:** N/A
+**What:** Split validation into project-name vs domain-name sets. RESOLVED: `_build_vault_context()` now returns `(valid_destinations, project_names, domain_names)` from the structured `ProjectRegistry` (group names = domains, entry names = projects); `classify()` validates `project ∈ project_names` and `primary_domain ∈ domain_names`, falling back to the legacy pooled `_destination_names()` path only when the registry is unavailable (signalled by `None, None`). Test fixtures rewritten to the real `format_for_prompt` shape; the classify prompt was updated (P3 review finding I-4, 2026-06-11) to teach the model the domain-header vs project-item distinction the code now enforces.
+**Why deferred (historical):** Needed a small signature/fixture rework; the substring defect was already fixed before this split.
+**Source:** P2-CIC implementation review 2026-06-08 (finding #2 residual); resolved by P3 Session B + P3 implementation review 2026-06-11.
+
+---
+
+### TD-053 · Filter-only global search scans the catalog row-by-row (O(N))
+**Status:** OPEN (monitor)
+**Phase:** Phase 3+ (fix when vault grows)
+**Risk if triggered early:** Low now. `retrieval/search.py::_search_filter_only` resolves the global path via `all_paths()` then calls `get_by_path()` once per note (N single-row queries) before capping at `limit`. Fine for a small vault; cost grows linearly with catalog size. Only the filter-only/global path (bare `kms search`, or `--project`/`--since` with no query) is affected — the query path is already bounded by `max_candidates`.
+**What:** Replace the N×`get_by_path` loop with a single `SELECT ... ORDER BY updated_at DESC LIMIT ?` (with optional `WHERE vault_path IN (...)` for the scoped case) in the data layer, returning hydrated rows directly.
+**Why deferred:** Not a correctness bug; vault is small pre-launch. User decision (2026-06-11 P3 review): monitor, fix when it becomes a real latency issue.
+**Source:** P3 implementation review 2026-06-11 (reviewer B, Minor).
+
+---
+
+### TD-056 · `kms_write` MCP tool + field-level metadata guard in capture pipeline
 **Status:** OPEN
-**Phase:** Phase 2+ (after Project Registry lands)
-**Risk if triggered early:** Low. `classify()` validates `project` and `primary_domain` against one pooled exact-name set parsed from the `format_for_prompt` string (`_destination_names`). The substring hole is closed, but a project name used as a `primary_domain` (or vice versa) still validates, since both live in the same set. A mislabeled AI response could route to a wrong-kind destination (e.g. create `Projects/<a-domain-name>/`).
-**What:** Split validation into project-name vs domain-name sets. Cleanest via the structured `ProjectRegistry` (`get_groups()` → group names = domains, entry names = projects) rather than re-parsing the prompt string. Blocked by test churn: `VALID_DESTINATIONS` fixtures in `tests/test_pipelines/test_classify.py` use a non-real `Projects:/Domains:` header shape (real `format_for_prompt` headers are domain names, items are project names), so splitting breaks ~6 tests until fixtures are rewritten to the real shape.
-**Why deferred:** Needs a small signature/fixture rework; the reported substring defect is already fixed. Marked with `# COUPLING:` at `src/pipelines/classify.py::_destination_names`.
-**Source:** P2-CIC implementation review 2026-06-08 (finding #2 residual).
+**Phase:** Phase 4 (MCP server — required for AI to create notes via conversation)
+**Risk if triggered early:** None — design only; no code yet
+**What:** AI in chat needs to write notes to the vault with user-directed metadata (tags, project, etc.) that survives capture pipeline re-processing. Two linked problems:
+  1. **`kms_write` tool:** AI creates a `.md` note in inbox (or target folder) with frontmatter reflecting user intent (e.g., "save this as a Movies note with tag strategy"). Watcher detects → capture pipeline runs. Currently, pipeline overwrites ALL frontmatter — user intent lost.
+  2. **Field-level metadata guard:** When capture re-processes a note (content hash changed), it should distinguish "fields to regenerate" (summary, key_topics — derived from body) from "fields to preserve" (tags, project — set by user or AI on user's behalf). Guard must be field-level, not note-level, because body edits should still trigger fresh summary generation.
+  **Design decisions reached:**
+  - `kms_write` replaces the original `kms_capture` MCP tool concept. AI writes note, watcher/pipeline processes it.
+  - NOT using `updated_by_human` as the guard — that flag is not durable and will be removed.
+  - Need a new mechanism to mark field-level ownership (e.g., `_locked_fields` list in frontmatter, or a hash-per-field approach, or a `set_by` provenance stamp). Design TBD.
+  - This also fixes the existing bug: user edits note body → hash changes → pipeline re-runs → user's manually-set tags/project get overwritten.
+  **Open questions:**
+  - What mechanism marks a field as "user-owned" vs "pipeline-owned"?
+  - Should `kms_write` write directly to target folder (skipping classify) or always to inbox?
+  - How does `kms_move` (see TD-057) interact with field-level guard?
+**Key user scenario blocked:** User says "capture this discussion for me" or AI proactively wants to save a learning/insight from conversation → needs to write a note to vault. Without `kms_write`, AI has no way to create notes via MCP. This is a core use case, not a nice-to-have.
+**Why deferred:** Deep capture pipeline change (field-level guard). Phase 4 MCP can ship with read-path tools + `kms_move` first; `kms_write` follows once guard design is resolved.
+**Source:** Context injection design grilling session 2026-06-11
+
+---
+
+### TD-057 · `kms_move` MCP tool for AI-directed note relocation
+**Status:** OPEN
+**Phase:** Phase 4 (MCP server — required for CLUELESS note resolution via conversation)
+**Risk if triggered early:** None — design only; no code yet
+**What:** When user asks AI to "classify my inbox," AI should read CLUELESS notes (which have `classify_reasoning` and `classify_confidence` in frontmatter explaining why classification failed), present the reasoning to the user, ask for guidance, then move the note to the user-specified folder. This requires a `kms_move` MCP tool — thin wrapper around `move_note()` + `documents.replace_path()`. AI does NOT re-invoke `kms_classify` (same input = same CLUELESS result); instead AI acts on human judgment and moves directly.
+  **Design decisions reached:**
+  - `kms_move` replaces the original `kms_classify` MCP tool concept for the conversation use case.
+  - CLUELESS notes already have `classify_reasoning` stamped in frontmatter (verified in capture.py) — AI can read and present this to user.
+  - `kms_move` should update frontmatter `project`/`primary_domain` fields to match destination folder.
+  - `kms_move` should use `move_guard` to prevent watcher from re-homing the note.
+**Why deferred:** Ship alongside other MCP tools in Phase 4. Not blocked by TD-056 — move is a physical operation, not a metadata one.
+**Source:** Context injection design grilling session 2026-06-11
+
+---
+
+### TD-054 · Auto-generate and maintain `CLAUDE.md` and `context.yaml` for Domain and Project folders
+**Status:** OPEN
+**Phase:** Post-Phase 4 (context injection reads these files; missing = degraded but functional)
+**Risk if triggered early:** None — MCP context injection gracefully falls back: missing `context.yaml` → inject only `CLAUDE.md`; missing `CLAUDE.md` → inject only `context.yaml`; both missing → no context injected for that domain/project (search results still returned normally)
+**What:** Two context files per Domain/Project currently require manual authorship:
+  - `CLAUDE.md` — project/domain instructions, background, current status, stakeholders
+  - `context.yaml` — structured domain knowledge: people, metrics, vocabulary/jargon (Domain folders only)
+The system should auto-generate and maintain both files by extracting knowledge from captured notes over time. This is invisible backend magic: the user does nothing, but the AI understands their projects, stakeholders, KPIs, and workplace vocabulary. Implementation: a pipeline stage that periodically scans domain/project notes, extracts relevant knowledge, and upserts these files (respecting `updated_by_human` if the user has hand-edited them).
+**Why deferred:** Phase 4 (MCP) can read existing files as-is and degrade gracefully when they're absent; auto-generation is an enhancement that improves context quality over time but is not blocking.
+**Source:** Context injection design grilling session 2026-06-11
+
+---
+
+### TD-055 · Build AI-facing skills/instructions for correct MCP vault usage
+**Status:** OPEN
+**Phase:** Phase 4 (ship alongside MCP server; AI needs guidance to use tools correctly)
+**Risk if triggered early:** None — instructions are documentation, not code
+**What:** The MCP tools need accompanying AI instructions (via tool descriptions, user personal preferences, or a dedicated skill/system prompt) so the AI knows HOW to use the vault correctly. Distilled from the context injection design session, the AI must be taught:
+  **Discovery & orientation:**
+  1. **Start with `kms_vault_info`:** Call this first in any new session. Returns available projects, domains, inbox count, last capture time, and vault-root CLAUDE.md (global user context — who they are, what they manage). Use exact project/domain names from this response when passing `project` parameter to `kms_search`.
+  2. **Never assume vault structure:** Always discover via `kms_vault_info` or `kms_search`. Don't hardcode paths or guess folder names.
+  **Search & read flow:**
+  3. **Two-step retrieval flow:** Call `kms_search` first (get context + cards), then `kms_read` for full content. Never skip search and go straight to read blindly.
+  4. **Context-before-content ordering:** Read the CLAUDE.md/context.yaml blocks BEFORE reading result cards or full note content. These provide background needed to interpret results correctly.
+  5. **Hash-deduped context:** Context files include content hashes. Server handles dedup automatically — already-sent context is replaced with a short "context for X already provided" note. AI does not need to track this.
+  6. **Batch reads:** When reading multiple notes, pass all paths in a single `kms_read` call (list of paths) to minimize round trips.
+  7. **Use `kms_inspect` for binary source material:** When a search result represents a binary file (type=attachment-summary), `kms_read` returns the AI-generated summary. To get the full extracted text from the original binary, use `kms_inspect`. Accepts either the sibling `.md` path or the binary path.
+  **Query strategy:**
+  8. **Use structured filters when confident:** Pass `project`, `date_range`, and `location` parameters to `kms_search` when you can extract them from user intent. `project` filters by metadata (semantic), `location` filters by vault folder (physical, e.g., `"inbox"`). Fall back to free-text-only when unsure.
+  9. **Query refinement is expected:** After reading stage-1 context + cards, you may decide to refine the query or search again with different terms. This is normal.
+  10. **Broad queries skip context:** Broad queries (e.g., "what happened this week") may return zero context files — this is correct. Only domain/project-concentrated results trigger context injection.
+  **Write-path tools (pending TD-056, TD-057):**
+  11. **`kms_write` for new content:** Use to create notes on behalf of the user — capturing discussions, saving learnings/insights from conversation, or any content the user wants preserved. AI sets frontmatter (tags, project) reflecting user intent; capture pipeline processes but preserves user-set fields. Also use proactively when a conversation produces knowledge worth keeping. (Not yet implemented — see TD-056.)
+  12. **`kms_move` for CLUELESS resolution:** When user asks to classify inbox, read CLUELESS notes' `classify_reasoning` frontmatter, present the reasoning to user, ask for guidance, then move with `kms_move`. Do NOT re-invoke classify on a CLUELESS note. (Not yet implemented — see TD-057.)
+  13. **`include_context=true` escape hatch:** If you feel you're missing background context mid-conversation (e.g., after session state reset), force context re-injection on any search/read call.
+**Delivery format:** TBD — could be MCP tool descriptions, a skill file, user personal preferences block, or a combination. Decide during Phase 4 implementation.
+**Why deferred:** Instructions depend on final MCP tool API design, which is still being grilled.
+**Source:** Context injection design grilling session 2026-06-11
 
 ---
 
@@ -406,6 +494,17 @@ Note: `MetadataResult.ai_domain` is **kept** as internal pipeline state — `app
 **Why deferred:** Pre-existing latent inconsistency; low frequency (only non-ASCII decomposed folder names). Surfaced 2026-06-08 while confirming the "suppress per-file classify on folder-invoked capture" decision in the classify-inline-capture design — the suppress case relies on the folder's `batch_id` reaching each file's row. Folded into that feature's research/spec.
 **Unblock condition:** NFC-normalize `folder_path` on BOTH the write path (`capture_folder` `_insert_batch` call sites) and the read path (`capture_file`, already NFC), ideally via one shared helper so they can never drift. Verify at the research step of the classify-inline-capture feature.
 **Source:** classify-inline-capture design 2026-06-08 — design doc `docs/1_design/phase2/classify-inline-capture.md` Risk R6.
+
+---
+
+### TD-052 · Pre-R1 binary-sibling notes keep filename titles; backfill needs re-capture, not reindex
+**Status:** OPEN
+**Phase:** Post-Phase-3 (after the R1 descriptive-title capture fix ships)
+**Risk if triggered early:** None to data — purely a result-quality gap. Binary-sibling notes captured before the R1 fix continue to show their filename (e.g. `report.pdf`) as `documents.title` and on search cards, weakening triage signal for the Phase-4 MCP AI until they are re-captured.
+**What:** The R1 fix (A5 resolution, `docs/1_design/P3_session_b_query_path.md` §Revision R1) wires the AI descriptive title onto new captures' frontmatter and `documents.title`. Notes captured before R1 have no `title:` in frontmatter, so their `documents.title` stays the filename stem. `--reindex` reads frontmatter and re-runs only the index writers (`index_embedding`/`index_keywords`); it does **not** call the summarizer/`extract_metadata` LLM stage (`capture.py:215`), so it **cannot** regenerate an AI title for a note whose frontmatter never had one. `_derive_title` (`storage/documents.py:69`) therefore keeps falling back to `Path(vault_path).stem` for those rows.
+**Why deferred:** Backfilling requires re-capture (the full `summarize → metadata → store` pipeline) on each original file — an LLM call per file. That is heavier than a reindex and is out of scope for the R1 capture fix, which only corrects forward-going captures. Recorded so a future maintainer knows reindex will not fix old siblings.
+**Unblock condition:** Add a one-off backfill task (or a `--recapture` mode) that re-runs the full capture pipeline on pre-R1 binaries so their siblings gain an AI descriptive title; or accept the filename titles for legacy siblings as good-enough.
+**Source:** P3 Session B design Revision R1, 2026-06-10 — `docs/1_design/P3_session_b_query_path.md` §Revision R1 Decision 5 (backfill story); A5 invalidation in `docs/3_research/P3_session_b_query_path.md`.
 
 ---
 

@@ -1005,7 +1005,7 @@ async def _store_md(
                         from retrieval.embeddings import index_embedding
 
                         _title = mr.ai_title or Path(outcome.vault_path).stem
-                        index_embedding(
+                        emb_result = index_embedding(
                             vault_path=outcome.vault_path,
                             title=_title,
                             note_type=mr.ai_type,
@@ -1013,6 +1013,12 @@ async def _store_md(
                             summary=mr.summary,
                             db_path=ctx.db_path,
                         )
+                        if emb_result.is_failure():
+                            logger.warning(
+                                "store.embedding_index_failed",
+                                vault_path=outcome.vault_path,
+                                error=emb_result.error,
+                            )
                     except Exception:
                         logger.warning(
                             "store.embedding_index_failed",
@@ -1021,13 +1027,19 @@ async def _store_md(
                     try:
                         from retrieval.keyword import index_keywords
 
-                        index_keywords(
+                        kw_result = index_keywords(
                             vault_path=outcome.vault_path,
                             title=_title,
                             summary=mr.summary or "",
                             body=original_body,
                             db_path=ctx.db_path,
                         )
+                        if kw_result.is_failure():
+                            logger.warning(
+                                "store.keyword_index_failed",
+                                vault_path=outcome.vault_path,
+                                error=kw_result.error,
+                            )
                     except Exception:
                         logger.warning(
                             "store.keyword_index_failed",
@@ -1055,7 +1067,7 @@ async def _store_md(
                         from retrieval.embeddings import index_embedding
 
                         _title = mr.ai_title or Path(outcome.vault_path).stem
-                        index_embedding(
+                        emb_result = index_embedding(
                             vault_path=outcome.vault_path,
                             title=_title,
                             note_type=mr.ai_type,
@@ -1063,6 +1075,12 @@ async def _store_md(
                             summary=mr.summary,
                             db_path=ctx.db_path,
                         )
+                        if emb_result.is_failure():
+                            logger.warning(
+                                "store.embedding_index_failed",
+                                vault_path=outcome.vault_path,
+                                error=emb_result.error,
+                            )
                     except Exception:
                         logger.warning(
                             "store.embedding_index_failed",
@@ -1071,13 +1089,19 @@ async def _store_md(
                     try:
                         from retrieval.keyword import index_keywords
 
-                        index_keywords(
+                        kw_result = index_keywords(
                             vault_path=outcome.vault_path,
                             title=_title,
                             summary=mr.summary or "",
                             body=original_body,
                             db_path=ctx.db_path,
                         )
+                        if kw_result.is_failure():
+                            logger.warning(
+                                "store.keyword_index_failed",
+                                vault_path=outcome.vault_path,
+                                error=kw_result.error,
+                            )
                     except Exception:
                         logger.warning(
                             "store.keyword_index_failed",
@@ -1252,7 +1276,7 @@ async def _store_nonmd(
                     from retrieval.keyword import index_keywords
 
                     _title = mr.ai_title or Path(sibling_outcome.vault_path).stem
-                    index_embedding(
+                    emb_result = index_embedding(
                         vault_path=sibling_outcome.vault_path,
                         title=_title,
                         note_type=mr.ai_type,
@@ -1260,19 +1284,31 @@ async def _store_nonmd(
                         summary=mr.summary,
                         db_path=ctx.db_path,
                     )
+                    if emb_result.is_failure():
+                        logger.warning(
+                            "store.embedding_index_failed",
+                            vault_path=sibling_outcome.vault_path,
+                            error=emb_result.error,
+                        )
                 except Exception:
                     logger.warning(
                         "store.embedding_index_failed",
                         vault_path=sibling_outcome.vault_path,
                     )
                 try:
-                    index_keywords(
+                    kw_result = index_keywords(
                         vault_path=sibling_outcome.vault_path,
                         title=_title,
                         summary=mr.summary or "",
                         body=rich_body,
                         db_path=ctx.db_path,
                     )
+                    if kw_result.is_failure():
+                        logger.warning(
+                            "store.keyword_index_failed",
+                            vault_path=sibling_outcome.vault_path,
+                            error=kw_result.error,
+                        )
                 except Exception:
                     logger.warning(
                         "store.keyword_index_failed",
@@ -1388,7 +1424,7 @@ async def _store_nonmd(
                     from retrieval.keyword import index_keywords
 
                     _title = mr.ai_title or Path(marker_outcome.vault_path).stem
-                    index_embedding(
+                    emb_result = index_embedding(
                         vault_path=marker_outcome.vault_path,
                         title=_title,
                         note_type=mr.ai_type,
@@ -1396,19 +1432,31 @@ async def _store_nonmd(
                         summary=mr.summary,
                         db_path=ctx.db_path,
                     )
+                    if emb_result.is_failure():
+                        logger.warning(
+                            "store.embedding_index_failed",
+                            vault_path=marker_outcome.vault_path,
+                            error=emb_result.error,
+                        )
                 except Exception:
                     logger.warning(
                         "store.embedding_index_failed",
                         vault_path=marker_outcome.vault_path,
                     )
                 try:
-                    index_keywords(
+                    kw_result = index_keywords(
                         vault_path=marker_outcome.vault_path,
                         title=_title,
                         summary=mr.summary or "",
                         body=rich_body,
                         db_path=ctx.db_path,
                     )
+                    if kw_result.is_failure():
+                        logger.warning(
+                            "store.keyword_index_failed",
+                            vault_path=marker_outcome.vault_path,
+                            error=kw_result.error,
+                        )
                 except Exception:
                     logger.warning(
                         "store.keyword_index_failed",

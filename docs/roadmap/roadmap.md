@@ -166,6 +166,8 @@ These have been stable across ~1370 tests and multiple phases. Independent tasks
 
 ## Phase 4 — MCP Server MVP
 
+> **⚠️ STALE (2026-06-11) — this section is SUPERSEDED.** The original `kms_capture`/`kms_classify` tool design below is dead. Authoritative Phase 4 design = **ADR-0010** (context injection in tool responses) + **ADR-0011** (write-path `kms_write`/`kms_move`, not `kms_capture`/`kms_classify`, both ACCEPTED) + `docs/*/P4_mcp_context_injection.md` (design/spec/research/plan). Ignore the components, tool registry, and acceptance criteria in this section.
+
 **`BLOCKED BY: Phase 2 + Phase 3 · WEIGHT: medium`**
 
 ### Goal

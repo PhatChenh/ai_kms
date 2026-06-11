@@ -224,6 +224,41 @@ def test_search_with_query_returns_ranked_results(seeded_db):
 
 
 # ---------------------------------------------------------------------------
+# I-2 regression -- a blank query must never reach the ranker
+# ---------------------------------------------------------------------------
+
+
+def test_blank_query_routes_to_filter_only(seeded_db, monkeypatch):
+    """An empty/whitespace query must be coerced to filter-only mode.
+
+    Regression (I-2): ``rank("")`` errors on the FTS MATCH.  ``search()``
+    coerces a blank query to ``None`` so it goes down the filter-only path
+    and never calls the ranker.
+    """
+    db_path, _paths = seeded_db
+
+    import retrieval.ranker as ranker_mod
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("rank() must not be called for a blank query")
+
+    monkeypatch.setattr(ranker_mod, "rank", _boom)
+
+    from retrieval.search import search
+
+    for blank in ("", "   ", "\t\n"):
+        result = search(query=blank, db_path=db_path)
+        assert isinstance(result, Success), (
+            f"Expected Success for {blank!r}, got {result}"
+        )
+        # No filters applied → filter-only returns all 4 seeded notes.
+        assert len(result.value) == 4, (
+            f"Expected all 4 notes in filter-only mode for {blank!r}, "
+            f"got {len(result.value)}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Result type -- function returns Result, never raises
 # ---------------------------------------------------------------------------
 

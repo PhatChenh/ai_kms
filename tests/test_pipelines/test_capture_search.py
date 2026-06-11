@@ -20,6 +20,7 @@ from core.result import Success
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.smoke
 @pytest.mark.asyncio
 async def test_md_capture_indexes_embedding(vault_root, pipeline_ctx, monkeypatch):
     """After capturing a .md note, embeddings_vec has a row for its vault_path."""
@@ -71,6 +72,7 @@ async def test_md_capture_indexes_embedding(vault_root, pipeline_ctx, monkeypatc
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.smoke
 @pytest.mark.asyncio
 async def test_md_capture_indexes_keywords(vault_root, pipeline_ctx, monkeypatch):
     """After capturing a .md note, notes_fts contains the distinctive body text."""
@@ -219,6 +221,7 @@ async def test_keyword_failure_does_not_block_capture(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.smoke
 @pytest.mark.asyncio
 async def test_non_md_capture_indexes_sibling(vault_root, pipeline_ctx, monkeypatch):
     """After capturing a binary file, the sibling .md vault_path appears in both
