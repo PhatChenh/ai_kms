@@ -394,27 +394,33 @@ def filter_paths(
     project: str | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
+    location: str | None = None,
     db_path: Path | None = None,
 ) -> Result[list[str] | None]:
-    """Return the set of vault_paths matching optional project and/or date filters.
+    """Return the set of vault_paths matching optional project, date, and/or
+    location filters.
 
-    If *project*, *since*, and *until* are all None, returns ``Success(None)`` —
-    the sentinel value that tells callers "all notes; do not build an IN clause."
-    This avoids SQLite variable limits on large vaults.
+    If *project*, *since*, *until*, and *location* are all None, returns
+    ``Success(None)`` — the sentinel value that tells callers "all notes; do
+    not build an IN clause."  This avoids SQLite variable limits on large
+    vaults.
 
     Args:
-        project: Optional project name to filter by (exact match on ``project``
-                 column).
-        since:   Optional inclusive lower bound on ``updated_at``.
-        until:   Optional inclusive upper bound on ``updated_at``.
-        db_path: Override DB path.
+        project:  Optional project name to filter by (exact match on ``project``
+                  column).
+        since:    Optional inclusive lower bound on ``updated_at``.
+        until:    Optional inclusive upper bound on ``updated_at``.
+        location: Optional folder prefix to filter by (GLOB match on
+                  ``vault_path``, e.g. ``"inbox"`` matches ``inbox/*``).
+        db_path:  Override DB path.
 
     Returns:
         ``Success(list_of_vault_paths)`` when a filter is applied (empty list
-        if no rows match), ``Success(None)`` when no filters are given (all-notes
-        sentinel), or ``Failure(recoverable=False)`` on sqlite3.Error.
+        if no rows match), ``Success(None)`` when no filters are given
+        (all-notes sentinel), or ``Failure(recoverable=False)`` on
+        sqlite3.Error.
     """
-    if project is None and since is None and until is None:
+    if project is None and since is None and until is None and location is None:
         return Success(None)
 
     clauses: list[str] = []
@@ -431,6 +437,10 @@ def filter_paths(
     if until is not None:
         clauses.append("updated_at <= ?")
         params.append(until.strftime("%Y-%m-%d %H:%M:%S"))
+
+    if location is not None:
+        clauses.append("vault_path GLOB ?")
+        params.append(f"{location}/*")
 
     sql = f"SELECT vault_path FROM documents WHERE {' AND '.join(clauses)}"
 

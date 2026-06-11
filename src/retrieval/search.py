@@ -52,9 +52,10 @@ def search(
     project: str | None = None,
     date_range: tuple[datetime, datetime] | tuple[datetime, None] | None = None,
     max_results: int | None = None,
+    location: str | None = None,
     db_path: Path | None = None,
 ) -> Result[list[SearchResult]]:
-    """Search notes by keyword, project, and/or date range.
+    """Search notes by keyword, project, date range, and/or location.
 
     This is the single public entry point for all search -- used by the CLI
     now and the MCP server later.
@@ -67,6 +68,7 @@ def search(
                     datetimes.  ``None`` upper bound = open-ended.
         max_results: Maximum number of results to return.  Overrides the
                     config default when given.
+        location:   Optional folder prefix to filter by (e.g. ``"inbox"``).
         db_path:    Override DB path (used in tests).
 
     Returns:
@@ -92,7 +94,9 @@ def search(
     since = date_range[0] if date_range else None
     until = date_range[1] if date_range else None
 
-    match filter_paths(project=project, since=since, until=until, db_path=db_path):
+    match filter_paths(
+        project=project, since=since, until=until, location=location, db_path=db_path
+    ):
         case Failure() as f:
             return f
         case Success(None):
