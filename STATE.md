@@ -1,9 +1,9 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-06-10 (P3 Session A Index Layer — all 5 phases COMPLETE, merged to main, 1147 tests)_
+_Last updated: 2026-06-11 (P3 Session B Query Path — COMPLETE, merged to main)_
 
 ## Current Position
-**Phase**: Phase 2 — Classify pipeline **COMPLETE**. P3 Session A Index Layer **COMPLETE** (2026-06-10, 1147 tests, merged to `main`). Index Layer builds search infrastructure: migration 007 (embeddings_vec + notes_fts), `retrieval/` package (Meaning Indexer + Word Indexer), capture pipeline wiring (best-effort indexing at 4 call sites), and search-table cleanup in documents.py (delete/rename/replace_path). **Next**: Session B — Search API (query, rank, reranker, MCP search tool).
+**Phase**: Phase 3 (Search) **COMPLETE** (2026-06-11). M1 milestone (Capture + Classify + Search end-to-end) **ACHIEVED**. **Next**: Phase 4 — MCP Server MVP.
 
 **Phase 0 Final Checklist** _(CLOSED)_:
 - [x] core/exceptions.py
@@ -176,7 +176,7 @@ Triggered by `/superpowers:requesting-code-review`. Applied subset of review fin
 - Directory event registry calls go INSIDE existing `if event.is_directory: return` branches
 - TD-034 retired by this plan (project-to-domain registry now exists)
 
-**Next roadmap work**: Session B — Search API (query, rank, reranker, MCP search tool).
+**Next roadmap work**: Phase 4 — MCP Server MVP (depends on Phase 2 + Phase 3, both done).
 
 **[P3 Session A — Index Layer — ✅ COMPLETE 2026-06-10]** _(merged to main, 1147 tests)_:
 - [x] **Phase 1 — Infrastructure**: Migration 007 (embeddings_vec vec0 + notes_fts FTS5), sqlite-vec extension loading in `_connect()`, SearchConfig (4 fields), sentence-transformers dependency, TD-050 timer-leak fixture. Commit: da5a0f5.
@@ -196,6 +196,45 @@ Triggered by `/superpowers:requesting-code-review`. Applied subset of review fin
 - DELETE+INSERT pattern everywhere (vec0/FTS5 no PK update support)
 - `replace_path` cleans old search entries but does NOT create new ones (capture pipeline does that)
 - `rename` copies both search tables old→new within same transaction
+
+**[P3 Session B — Query Path (Hybrid Search) — ✅ COMPLETE 2026-06-11]** _(merged to main, ~180 new tests, ~3400 LOC)_:
+- [x] Design: `docs/1_design/P3_session_b_query_path.md` — hybrid search architecture, KNN-scoping sub-decision (ADR-0009)
+- [x] Spec: `docs/2_specs/P3_session_b_query_path.md` — 7 components (C0-C6), Q1/Q2 diagrams, 19 assumptions
+- [x] Research: `docs/3_research/P3_session_b_query_path.md` — all 13 original assumptions validated; A5 invalidated→resolved by R1; A15 invalidated (mechanical stale test)
+- [x] Plan: `docs/4_plans/P3_session_b_query_path.md` — 7 phases, bottom-up build order
+- [x] **Phase 1 — Descriptive Title at Capture (Component 0)**: `title` typed field on `NoteMetadata`; `_derive_title` prefers `metadata.title`; wired at 3 `NoteMetadata` build sites. +4 tests.
+- [x] **Phase 2 — Candidate Filter (Component 1)**: `filter_paths()` in `documents.py`; project + date range → vault_path set; `None` sentinel for global. +6 tests.
+- [x] **Phase 3 — Hybrid Ranker (Component 2)**: new `retrieval/ranker.py`; `rank()` with BM25 (FTS5) + KNN (vec0) + RRF fusion (RRF_K=60); `RankedResult` dataclass. +8 tests.
+- [x] **Phase 4 — Re-ranker (Component 3)**: new `retrieval/reranker.py`; `rerank()` with CrossEncoder; `SearchResult` cards (vault_path, summary, snippet, score, metadata); stale-row skipping. +7 tests.
+- [x] **Phase 5 — Search Coordinator (Component 4)**: new `retrieval/search.py`; `search()` wires filter→rank→rerank; filter-only branch (score=0.0, by updated_at); exported via `retrieval/__init__.py`. +9 tests.
+- [x] **Phase 6 — Search Command (Component 5)**: rewritten `kms search` CLI (`--project`, `--since`, `--max`, `--reindex`); replaces stub (TD-012 closed). +9 tests.
+- [x] **Phase 7 — TD-051 Classify Split (Component 6)**: `project_names`/`domain_names` frozenset params on `classify()`; cross-type validation; backward-compat fallback. +4 tests.
+- [x] **Code review**: 2 Critical (test_registry unpack, None sentinel fallback) + 1 Important (backward-compat test) fixed. See commit `99af877`.
+
+**Plan:** `docs/4_plans/P3_session_b_query_path.md`
+**Spec:** `docs/2_specs/P3_session_b_query_path.md`
+**Research:** `docs/3_research/P3_session_b_query_path.md`
+**Design:** `docs/1_design/P3_session_b_query_path.md`
+**ADR:** `docs/architecture/system_adr/0009-phase3-search-rrf-rerank-not-tier-dispatcher.md`
+**Key decisions locked:**
+- ADR-0009: No tier dispatcher — replaced by cheap cards + lazy full-note fetch
+- In-database filtered KNN (`MATCH + k + IN`) — verified on sqlite-vec v0.1.9
+- Bare-query embedding (re-ranker absorbs doc/query asymmetry)
+- RRF constant `RRF_K = 60` as named module constant in `retrieval/`
+- `date_range` as `tuple[datetime, datetime | None]`
+- `score` = cross-encoder score (final relevance)
+- `--reindex` standalone only
+- Candidate Filter in `documents.py` (reusable by Phase 8/9)
+- Component 0 (R1): first-class `title` field on NoteMetadata, all captures
+- TD-051: split pooled classify validation into project-names vs domain-names
+**Phases (7):**
+1. Descriptive Title at Capture (Component 0) — `frontmatter.py`, `capture.py`, `documents.py`
+2. Candidate Filter (Component 1) — `filter_paths()` in `documents.py`
+3. Hybrid Ranker (Component 2) — new `retrieval/ranker.py` (BM25 + KNN + RRF)
+4. Re-ranker (Component 3) — new `retrieval/reranker.py` (cross-encoder + card builder)
+5. Search Coordinator (Component 4) — new `retrieval/search.py` (public `search()`)
+6. Search Command (Component 5) — rewrite `kms search` CLI stub
+7. TD-051 Classify Split (Component 6) — `classify()` cross-type validation
 
 **[P2-CL — classify() pure function — ✅ COMPLETE 2026-06-08]** _(implemented on `main`: commits b2d33fa + a28b33c)_:
 - [x] Phase 1 — `ClassifyResult` dataclass in `src/pipelines/classify.py`

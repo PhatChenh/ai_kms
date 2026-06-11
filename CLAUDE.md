@@ -108,7 +108,7 @@ AI-kms/
 │   ├── pipelines/       ← one file per roadmap feature; pure-function stages (capture, reconcile)
 │   ├── prompts/         ← all AI prompts as YAML — edit here, never in code
 │   ├── storage/         ← SQLite state (audit log, batches, document index)
-│   │   └── migrations/  ← numbered .sql migration files (001–005; 006 pending TD-040/TD-041)
+│   │   └── migrations/  ← numbered .sql migration files (001–007; no new migration in Session B)
 │   └── vault/           ← ALL Obsidian filesystem I/O; nothing else touches the vault directly
 │       ├── move_guard.py ← suppresses watcher re-home for pipeline-initiated moves
 │       └── (reader, writer, watcher, indexer, paths, frontmatter)
@@ -292,7 +292,7 @@ uv run ruff format --check .                                        # check form
 # CLI (after install)
 kms capture <file>             # run capture pipeline on a single file
 kms classify <file>            # run classify pipeline
-kms search "<query>"           # semantic + keyword search, hot tier first
+kms search "<query>"           # semantic + keyword search (stub — Session B replaces)
 kms briefing                   # generate today's briefing
 
 # Dev helpers
@@ -329,7 +329,7 @@ The following rules are enforced by hooks in `.claude/settings.json` — Claude 
 
 ## Build progress
 
-**Overall:** Phase 1 of 8 complete + Brief #2/#3 done + Phase 1.5 Pay-Debt complete + Phase Pre-2 complete + Vault-Restructure complete (2026-06-04, 956 tests). TD-042 deprecated-key strip complete (2026-06-07, 959 tests). P2-CL classify() pure function implemented (2026-06-08, commits b2d33fa + a28b33c on `main`). **P2-CIC Classify Inline in Capture — all 9 phases COMPLETE (2026-06-08, 1080 tests, merged to main).** ~70 tests added. P2-CIC review fixes applied (2026-06-08): AUTO audit post-move, exact-membership validation, F841 removed. **TD-040/TD-041 Batch-ID Fix COMPLETE (2026-06-09).** **P3 Session A Index Layer COMPLETE (2026-06-10, 1147 tests, merged to main).** 5 phases: migration 007 (embeddings_vec vec0 + notes_fts FTS5), retrieval/ package (Meaning Indexer + Word Indexer), capture pipeline wiring (4 best-effort call sites), search-table cleanup in documents.py (delete/rename/replace_path). M1 milestone (Capture + Classify + Search end-to-end) achieved. Next: Session B — Search API (query, rank, reranker, MCP search tool).
+**Overall:** Phase 1 of 8 complete + Brief #2/#3 done + Phase 1.5 Pay-Debt complete + Phase Pre-2 complete + Vault-Restructure complete (2026-06-04, 956 tests). TD-042 deprecated-key strip complete (2026-06-07, 959 tests). P2-CL classify() pure function implemented (2026-06-08). **P2-CIC Classify Inline in Capture — all 9 phases COMPLETE (2026-06-08, 1080 tests, merged to main).** **TD-040/TD-041 Batch-ID Fix COMPLETE (2026-06-09).** **P3 Session A Index Layer COMPLETE (2026-06-10, 1147 tests).** **P3 Session B Query Path COMPLETE (2026-06-11, ~1370 tests, merged to main).** 7 phases: descriptive title at capture, candidate filter (`filter_paths`), hybrid ranker (BM25+KNN+RRF in `retrieval/ranker.py`), cross-encoder re-ranker (SearchResult cards in `retrieval/reranker.py`), search coordinator (`search()` in `retrieval/search.py`), CLI search command (`--project`, `--since`, `--reindex`, `--max`), TD-051 classify cross-type validation. **Phase 3 (Search) COMPLETE. M1 milestone (Capture + Classify + Search end-to-end) ACHIEVED. Next: Phase 4 — MCP Server MVP.**
 
 (Phase 0 + Phase 1 checklists closed — see STATE.md for full history.)
 
@@ -414,6 +414,16 @@ from core.config import CONFIG
 - **`replace_path` cleans old search entries but does NOT create new ones.** The capture pipeline's best-effort indexing creates search entries for the new path. If someone adds `INSERT INTO embeddings_vec` or `INSERT INTO notes_fts` inside `replace_path`, the note gets duplicate search entries (one from `replace_path`, one from capture indexing). The asymmetry with `rename` (which DOES copy search entries) is intentional — `rename` moves an existing indexed note; `replace_path` creates a fresh row whose indexing is handled downstream.
 - **Search-table cleanup must be inside the same `with get_connection` as the documents operation.** `delete_by_path`, `rename`, and `replace_path` all use single-transaction cleanup. Adding search-table SQL outside the `with` block (or in a separate connection) breaks atomicity — search entries can survive while documents rows are deleted, or vice versa.
 
+
+### Phase 3 — search query path gotchas (Session B, implemented)
+- **`embeddings_vec` filtered KNN requires `MATCH + k + IN (...)` form.** The no-`MATCH` form (`WHERE vault_path IN (...) ORDER BY distance`) executes but returns ALL NULL distances — silent correctness trap. Always use `embedding MATCH ? AND k = ? AND vault_path IN (...)`. Verified on sqlite-vec v0.1.9. See ADR-0009.
+- **`notes_fts` body column is index 3 (0-based).** `snippet(notes_fts, 3, ...)` targets body. Column order: `vault_path UNINDEXED, title, summary, body`.
+- **Bare-query embedding gives better separation than wrapped.** Do NOT wrap the query in `_build_context_text()` — research proved bare query has better match/distractor separation (0.266 vs 0.133).
+- **`created_at` is NOT uniformly full-width.** It can be date-only (`YYYY-MM-DD`) from `meta.created`. Date filters must use `updated_at` (always `YYYY-MM-DD HH:MM:SS` from `datetime('now')`).
+- **`_build_vault_context` returns `tuple[str, frozenset, frozenset]`, not `str`.** Phase 7 (TD-051) changed the return type. Callers must unpack: `text, project_names, domain_names = _build_vault_context(cfg)`. Tests that called this directly must be updated.
+- **Registry-failure fallback must return `None, None`, not empty frozensets.** In `_build_vault_context` fallback path, returning `frozenset(), frozenset()` routes `classify()` into typed-set validation with no allowed names — silently rejects all AI assignments. Return `None, None` to trigger backward-compat pooled-set validation.
+- **`filter_paths()` `None` sentinel ≠ empty list.** `Success(None)` means "no filters applied, search everything." `Success([])` means "filters applied, nothing matched." Mixing them up causes global search to return zero results or filtered search to scan everything.
+- **`title` field reroutes from `extra` to typed `NoteMetadata.title`.** `"title"` is now in `_KNOWN_KEYS`. Notes written before Session B have `title` in `extra`; new captures have it as a typed field. `_derive_title()` prefers `metadata.title`, falls back to `extra["title"]`, then `Path.stem`.
 
 ### Hook-enforced — no longer needed here
 The following were moved out of active guidance because hooks in `.claude/settings.json` now block or warn on them automatically:
