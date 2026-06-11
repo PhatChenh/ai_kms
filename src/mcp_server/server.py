@@ -122,8 +122,10 @@ from mcp.server.fastmcp import FastMCP  # noqa: E402
 
 mcp = FastMCP("kms", lifespan=_lifespan)
 
-# No tools registered in this phase (C-15).
-# Tools are added in Phase 6 after the engine and helpers are built and tested.
+# ---- Register the five KMS tools (Phase 6 / Component 7) ----
+from mcp_server.tools import register_tools  # noqa: E402
+
+register_tools(mcp)
 
 # ---------------------------------------------------------------------------
 # Per-tool-call context isolation wrapper (A11 / OQ-004)

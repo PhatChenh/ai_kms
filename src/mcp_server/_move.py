@@ -33,7 +33,7 @@ def move(
     dst_name: str,
     dst_kind: str,
     db_path: Path | None = None,
-) -> Result[None]:
+) -> Result[str]:
     """Move a note into a named project or domain.
 
     Args:
@@ -43,7 +43,8 @@ def move(
         db_path:  Override DB path for replace_path (test injection).
 
     Returns:
-        Success(None) or Failure(recoverable=False).
+        Success(str) with a human-readable move confirmation,
+        or Failure(recoverable=False).
         Human-locked notes return a clear Failure (C-02).
     """
     # 1. Resolve dst_name → dst folder path
@@ -100,4 +101,4 @@ def move(
         case Failure() as f:
             return f
         case Success():
-            return Success(None)
+            return Success(f"Moved {src.name} to {dst_kind}/{dst_name}")
