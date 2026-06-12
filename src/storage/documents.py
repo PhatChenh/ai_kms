@@ -42,6 +42,9 @@ class DocumentRow:
     project: str | None = None
     status: str | None = None
     key_topics: list[str] = field(default_factory=list)
+    full_body: str | None = None
+    original_filename: str | None = None
+    file_size_bytes: int | None = None
 
 
 def _row_from_sqlite(row: sqlite3.Row) -> DocumentRow:
@@ -64,6 +67,13 @@ def _row_from_sqlite(row: sqlite3.Row) -> DocumentRow:
             if "key_topics" in row.keys() and row["key_topics"]
             else []
         ),
+        full_body=row["full_body"] if "full_body" in row.keys() else None,
+        original_filename=row["original_filename"]
+        if "original_filename" in row.keys()
+        else None,
+        file_size_bytes=row["file_size_bytes"]
+        if "file_size_bytes" in row.keys()
+        else None,
     )
 
 
