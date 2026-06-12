@@ -12,7 +12,7 @@
 
 ### OQ-003 · wal_autocheckpoint tuning before Phase 4 MCP daemon
 **Blocks:** Phase 4
-**Status:** 🔴 Open
+**Status:** ✅ Closed (2026-06-12) — shipped in Phase 4: `wal_autocheckpoint=100` added to `_connect()` (closes TD-007). See STATE.md "P4 Phase 1".
 **Question:** Reference project sets `wal_autocheckpoint=100` pages; SQLite default is 1000. Worth adding to `_connect()` before Phase 4 MCP (long-running daemon), or accept default for CLI?
 **Context:** For the CLI this is irrelevant — process exits cleanly and WAL truncates on close. For the MCP daemon (long-running process with many short-lived tool calls), unchecked WAL growth could cause read latency. Revisit at Phase 4 planning. See also TD-007.
 **→ Resolution planned (2026-06-11):** folded into the Phase 4 plan as **Phase 1** — add `wal_autocheckpoint=100` to `_connect()` (keep `PRAGMA foreign_keys=ON`, C-04). Implement in `/tdd-implement`. See `docs/4_plans/P4_mcp_context_injection.md`.
@@ -21,7 +21,7 @@
 
 ### OQ-004 · Concurrent run_pipeline calls in Phase 4 MCP daemon — contextvar bleed
 **Blocks:** Phase 4
-**Status:** 🔴 Open
+**Status:** ✅ Closed (2026-06-12) — shipped in Phase 4: each MCP tool dispatch wrapped in `copy_context().run(...)`. See STATE.md "P4 Phase 2".
 **Question:** `clear_contextvars()` in `new_correlation_id()` resets the shared contextvar store. In a concurrent async daemon serving two simultaneous tool calls, call A's `clear_contextvars()` wipes call B's correlation_id mid-flight. How should concurrent runs be isolated?
 **Context:** DECISION-010 chose async for Phase 4 concurrency. The fix is per-run contextvar copies (`copy_context().run(...)`) or a scoped contextvar pattern. Phase 1 CLI is single-run — this is safe today. Must be resolved before Phase 4 ships concurrent MCP tool handling.
 **→ Resolution planned (2026-06-11):** folded into the Phase 4 plan as **Phase 2** — wrap each MCP tool dispatch in `copy_context().run(pipeline_fn)` in the server shell. Implement in `/tdd-implement`. See `docs/4_plans/P4_mcp_context_injection.md`.
@@ -57,6 +57,14 @@
 **Status:** 🔴 Open
 **Question:** `PngHandler`/`JpgHandler.extract()` are not-implemented stubs that return `Failure("image extraction requires a vision-capable LLM — not yet implemented", recoverable=False)` (`src/handlers/image_handler.py:21-26, :30-38`). Images are NOT captured — no sibling `.md`, no summary. The behavior inventory `P15-HDL-07` claims images get a sibling summary (OCR or filename-based). Build image capture (vision-capable LLM or Tesseract OCR), or drop/defer and retire `P15-HDL-07`?
 **Context:** Surfaced during the 2026-06-05 behavior-inventory reconcile as a design-vs-implementation conflict (`P15-HDL-07`, `status: conflict`). Blocks nothing today, but Phase 2 Classify must not assume image drops produce summaries. Decision needed before any feature depends on image content.
+
+---
+
+### OQ-010 · `pipelines/reconcile.py` has no owning phase in the rearchitecture
+**Blocks:** Phase 6 (Daemon)
+**Status:** 🔴 Open
+**Question:** `pipelines/reconcile.py` is a live consumer of dead-module targets (`vault/writer.py`, `reader.py`, `indexer.py`, `frontmatter.py` + `paths.py` placement helpers). Per ADR-0012, a module dies only when its LAST consumer is rewritten — but no rearchitecture phase (5–10) owns rewriting/retiring reconcile. Rearch doc §11 says the 7-stage reconcile is "replaced by daemon scan" and "DB-only reconcile may survive in simplified form," but the transition is unassigned. Which phase owns it, and does DB-only reconcile survive or retire entirely?
+**Context:** Surfaced during the 2026-06-12 Phase 5 Slice 1 build-pipeline grill. As long as reconcile stays live and imports the dead modules, those modules cannot be deleted — so reconcile's fate gates the deletion mapping in ADR-0012. Must be resolved before Phase 6 (daemon scan replaces the file-diff portion of reconcile). See ADR-0012 and the Phase 5 "RETIRE DEAD MODULES" roadmap warning.
 
 ---
 

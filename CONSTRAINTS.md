@@ -12,6 +12,7 @@
 **Why:** Bypassing the writer skips the `updated_by_human` gate and idempotency checks, silently corrupting human notes.
 **Danger signal:** Any `.write_text()` or `open(..., 'w')` in a `.py` file other than `vault/writer.py`; any code reading note body from `documents` instead of calling `read_note`.
 **Source:** DEBTS_CONSTRAINTS.md Cross-Phase Constraints §1; hook enforcement in `.claude/settings.json`
+**⚠️ Rearchitecture (2026-06-12):** This constraint **inverts** under the cloud-native rearchitecture — DB becomes source of truth for AI content; vault becomes read-only user input; `vault/writer.py` retires. See `docs/0_draft/cloud_native_rearchitecture.md` §5/§12 and ADR-0012. **Still in force for current code** — the flip happens in the phase that rewrites the last vault-writing consumer (Phases 6/7), NOT in Phase 5 Slice 1. Do not flip until that code ships.
 
 ---
 
@@ -32,6 +33,7 @@
 **Why:** Calling `write_note` with default `NoteMetadata()` wipes all existing metadata on the note — tags, project, summary, all gone.
 **Danger signal:** Any pipeline calling `write_note` with `NoteMetadata()` or partial metadata without a preceding `read_note`; any assumption that `write_note` will merge or preserve existing fields other than `created`.
 **Source:** TD-014 (resolved 2026-05-20); DEBTS_CONSTRAINTS.md Cross-Phase Constraints §10
+**⚠️ Rearchitecture (2026-06-12):** `write_note` (and all vault writes) **retire** under the cloud-native rearchitecture — AI output goes to DB, not the vault. See `cloud_native_rearchitecture.md` §12 and ADR-0012. **Still in force for current code**; retires in the phase that rewrites its last consumer (Phases 6/7), NOT Phase 5 Slice 1.
 
 ---
 

@@ -2,6 +2,22 @@
 
 ## Active
 
+### TD-058 · End-user dimension/tag creation + infer-and-confirm on new-laptop initialization
+**Status:** OPEN
+**Phase:** Cross-phase — Phase 6 (daemon first-run init) + Phase 10 (Web UI dimension/tag management). Surfaced during Phase 5 Slice 1 design (2026-06-12).
+**Risk if triggered early:** None — design only, no code. Slice 1 ships `config/dimensions.yaml` as a static, technical-team-authored file with a starter taxonomy (people/projects/domains). That is sufficient to build/validate, but it is NOT a product-complete answer for a non-technical end user.
+**What:** Two linked gaps the static `dimensions.yaml` leaves open:
+  1. **End-user dimension/tag authoring.** A non-technical user must be able to create/rename/remove their OWN dimensions and tag sets without editing YAML by hand. Phase 10's Web UI scope (rearch doc §10) covers *tag* add/remove/replace within an existing dimension — but NOT creating a whole new *dimension*, nor a guided way for a non-coder to do either. Need a function/process (UI flow + a safe write path to the dimension/tag config that re-validates and triggers the house-AI re-scan of `other` entries per rearch doc §7).
+  2. **Infer-and-confirm on initialization (new laptop / first run).** When the user sets up on a fresh machine, the system should not start from a generic default taxonomy. It should ask/infer a candidate dimension+tag set (e.g. from an initial vault scan or a short interview) and then CONFIRM it with the user before locking it in. Onboarding decision, not a runtime classify decision.
+**Open questions:**
+  - Where does inference run — daemon first-run (Phase 6 installer/onboarding) or cloud after the first vault scan?
+  - Is the dimension/tag config per-user/per-vault state (so it must persist + back up like the DB), vs the current ships-in-image assumption? (Interacts with the deferred config split and the §11.2 Litestream persistence decision.)
+  - How is "confirm with user" surfaced — Web UI wizard, or daemon first-run prompt?
+**Why deferred:** Out of Slice 1 scope (Slice 1 is additive data/config foundation only). Needs the Web UI (Phase 10) and the daemon onboarding flow (Phase 6) to exist first. Logged now so the static-YAML starting point is not mistaken for the finished product.
+**Source:** Phase 5 Slice 1 build-pipeline design session, 2026-06-12 (user-raised during dimension/tag validation discussion).
+
+---
+
 ### TD-050 · Watcher test debounce-timer leak across tests
 **Status:** OPEN
 **Phase:** Phase 2+ (test infra)
@@ -33,8 +49,8 @@
 ---
 
 ### TD-056 · `kms_write` MCP tool + field-level metadata guard in capture pipeline
-**Status:** OPEN
-**Phase:** Phase 4 (MCP server — required for AI to create notes via conversation)
+**Status:** ⚠️ STALE under cloud-native rearchitecture (2026-06-12) — the premise (AI writes `.md` to the vault; field-level frontmatter guard) is DEAD: the system never writes to the vault, frontmatter retires, `updated_by_human` retires (rearch doc §5/§6/§12, ADR-0012). If AI-authored knowledge is still wanted, it belongs in the DB (`knowledge_entries`/`documents`), not vault files — re-scope as a NEW item against the rearchitecture before building. Do NOT implement as written.
+**Phase:** ~~Phase 4~~ (superseded — see above)
 **Risk if triggered early:** None — design only; no code yet
 **What:** AI in chat needs to write notes to the vault with user-directed metadata (tags, project, etc.) that survives capture pipeline re-processing. Two linked problems:
   1. **`kms_write` tool:** AI creates a `.md` note in inbox (or target folder) with frontmatter reflecting user intent (e.g., "save this as a Movies note with tag strategy"). Watcher detects → capture pipeline runs. Currently, pipeline overwrites ALL frontmatter — user intent lost.
@@ -55,8 +71,8 @@
 ---
 
 ### TD-057 · `kms_move` MCP tool for AI-directed note relocation
-**Status:** OPEN
-**Phase:** Phase 4 (MCP server — required for CLUELESS note resolution via conversation)
+**Status:** ⚠️ STALE / DEAD under cloud-native rearchitecture (2026-06-12) — the system never moves or reorganizes user files (rearch doc §6, ADR-0012); `kms_move` + `_move.py` are explicitly retired in Phase 9. `move_guard`, the CLUELESS-move concept, and folder routing are all dead. Do NOT implement. (Note: `kms_move` WAS shipped in Phase 4 for the local-only model; it is removed by the rearchitecture, not built anew.)
+**Phase:** ~~Phase 4~~ (retired by rearchitecture Phase 9)
 **Risk if triggered early:** None — design only; no code yet
 **What:** When user asks AI to "classify my inbox," AI should read CLUELESS notes (which have `classify_reasoning` and `classify_confidence` in frontmatter explaining why classification failed), present the reasoning to the user, ask for guidance, then move the note to the user-specified folder. This requires a `kms_move` MCP tool — thin wrapper around `move_note()` + `documents.replace_path()`. AI does NOT re-invoke `kms_classify` (same input = same CLUELESS result); instead AI acts on human judgment and moves directly.
   **Design decisions reached:**
@@ -70,8 +86,8 @@
 ---
 
 ### TD-054 · Auto-generate and maintain `CLAUDE.md` and `context.yaml` for Domain and Project folders
-**Status:** OPEN
-**Phase:** Post-Phase 4 (context injection reads these files; missing = degraded but functional)
+**Status:** ⚠️ SUPERSEDED by cloud-native rearchitecture (2026-06-12) — per-project/domain `CLAUDE.md` + `context.yaml` files are replaced by the `knowledge_entries` DB table (rearch doc §3/§7). The INTENT survives (auto-extract structured project/people/domain knowledge over time) but the mechanism is now Phase 8 classify writing `knowledge_entries`, NOT vault files. Track the intent under Phase 8; do not build the file-based version.
+**Phase:** ~~Post-Phase 4~~ (intent moves to rearchitecture Phase 8)
 **Risk if triggered early:** None — MCP context injection gracefully falls back: missing `context.yaml` → inject only `CLAUDE.md`; missing `CLAUDE.md` → inject only `context.yaml`; both missing → no context injected for that domain/project (search results still returned normally)
 **What:** Two context files per Domain/Project currently require manual authorship:
   - `CLAUDE.md` — project/domain instructions, background, current status, stakeholders

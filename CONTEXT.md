@@ -166,3 +166,35 @@ _Avoid_: "capture batch", "original batch"
 **folder_path (on batches table):**
 The vault-relative POSIX path of the subfolder that triggered the batch creation (e.g. `inbox/Q2-reports`). Used to look up whether a batch already exists for a given subfolder before creating a new one. NOT UNIQUE — multiple batch rows for the same folder_path are valid (e.g. re-drops after a cleanup); lookup always picks the most recent row.
 _Avoid_: "batch folder", "source folder"
+
+### Cloud-Native — Knowledge Entries
+
+> Introduced by the cloud-native rearchitecture (`docs/0_draft/cloud_native_rearchitecture.md` §7). These concepts replace the per-project `CLAUDE.md` files as the system's living context. The living context now lives in a database table, not in vault files.
+
+**knowledge entry:**
+One atomic fact about one thing, stored as a single row in the `knowledge_entries` database table. It records which dimension and entity the fact is about, which tag (sub-category) it falls under, the fact itself in plain words, how sure the system is, which documents it came from, and a confident/pending/retired status. Many small entries accumulate into the system's distilled memory of "what we know."
+_Avoid_: "knowledge record", "memory note", "card"
+
+**dimension:**
+A top-level category of knowledge — for example people, projects, or domains. The full list of dimensions is fixed in a config file (`config/dimensions.yaml`); the AI may not invent new ones. Adding a dimension is a config + prompt change, never a database change.
+_Avoid_: "category" (too generic), "table" (it is NOT a separate table — all dimensions share one table)
+
+**entity:**
+The specific thing a knowledge entry is about, stored as free text — for example "Anthony", "Movie Q2", or "Finance". Whether "Anthony" and "Anthony Nguyen" are the same entity (entity resolution / name normalization) is explicitly OUT of scope for Slice 1 and deferred to a later phase.
+_Avoid_: "subject", "topic"
+
+**tag (knowledge entry):**
+A sub-category within a dimension that classifies a fact — for example `role` or `deadline`. Each dimension has its own fixed set of allowed tags in config, and every tag set MUST include a mandatory `other` catch-all for facts that fit no existing tag. Distinct from an Obsidian frontmatter "type tag" or "free tag" (those tag notes; this tags facts).
+_Avoid_: conflating with the frontmatter `type/` or `domain/` tags used in capture
+
+**fact:**
+The atomic piece of knowledge a knowledge entry carries, written in plain words — for example "Product Lead for Movie Q2". The discipline is the same as the old `CLAUDE.md` files: short, crucial context only, never a dumping ground.
+_Avoid_: "claim", "statement", "value"
+
+**confident / pending / retired (entry lifecycle):**
+The three states a knowledge entry's status can hold. **Confident** = a high-confidence extraction treated as current truth. **Pending** = medium/low confidence (hedging, speculation, secondhand) surfaced for human confirmation; can be promoted to confident as evidence accumulates. **Retired** = superseded by newer information; kept in the table for history with a reason, never deleted. Confidence drives the initial status, gated by thresholds in config.
+_Avoid_: "active/inactive", "verified/unverified", "archived" (retired rows are not archived elsewhere — they stay in the same table)
+
+**sources (on a knowledge entry):**
+The list of documents a fact was extracted from, stored inside the knowledge entry row itself as a list of document references. Every entry MUST have at least one source — no fact without traceability back to where it was learned.
+_Avoid_: "citations", "links", "provenance" (acceptable but plainer is preferred)
