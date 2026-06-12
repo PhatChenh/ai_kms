@@ -69,7 +69,7 @@ def upsert(
     try:
         with get_connection(db_path) as conn:
             if entry.id is not None:
-                conn.execute(
+                cursor = conn.execute(
                     """UPDATE knowledge_entries
                        SET dimension=?, entity=?, tag=?, fact=?, status=?,
                            confidence=?, sources=?, reasoning=?,
@@ -87,6 +87,12 @@ def upsert(
                         entry.id,
                     ),
                 )
+                if cursor.rowcount == 0:
+                    return Failure(
+                        f"no knowledge entry with id={entry.id}",
+                        recoverable=False,
+                        context={"entry_id": entry.id},
+                    )
                 return Success(entry.id)
             else:
                 cursor = conn.execute(
