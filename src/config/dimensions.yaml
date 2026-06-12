@@ -1,0 +1,15 @@
+# PROVISIONAL — starter set, refined in Phase 8.
+# Every dimension MUST include "other" as a catch-all tag.
+# Dimension order matches the knowledge_entries extraction prompt.
+
+people:
+  - role
+  - other
+
+projects:
+  - status
+  - timeline
+  - other
+
+domains:
+  - other
