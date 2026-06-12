@@ -1,27 +1,9 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-06-12 (Rearchitecture Phase 5 split into 2 slices; Slice 1 Data/Config Foundation PLANNED via build-pipeline — ready for /tdd-implement)_
-
-> **REARCHITECTURE IN PROGRESS (2026-06-12).** System direction has changed. Read `docs/0_draft/cloud_native_rearchitecture.md` for the new architecture. Phases 5-9 below are scrapped. Update this file as rearchitecture implementation progresses.
+_Last updated: 2026-06-12 (Phase 4 MCP Server — all 7 phases COMPLETE, 1258 tests)_
 
 ## Current Position
-**Phase**: **Cloud-native rearchitecture, Phase 5 (Infrastructure Foundation) — PLANNING.** Last shipped code = Phase 4 (MCP Server) COMPLETE (2026-06-12, 1258 tests; 5 stdio tools, ADR-0010/0011, TD-055). **No code shipped this session — planning only.**
-
-Phase 5 was **split into two slices** (decided 2026-06-12, see ADR-0012 + roadmap):
-- **Slice 1 — Data/Config Foundation: PLANNED, ready for `/tdd-implement` (NOT built).** Additive-only. Full build-pipeline run done (design→spec→research→plan; research 0 invalidated; plan 4 phases, guardrail-clean).
-- **Slice 2 — Deployment Foundation** (AgentBase container + REST API): NOT started; separate future build-pipeline run.
-
-**Next**: `/tdd-implement` Slice 1 Phase 1 (Schema Upgrade) — `docs/4_plans/P5_slice1_data_foundation.md`.
-
-**[P5 Slice 1 — Data/Config Foundation — PLAN WRITTEN 2026-06-12]** _(PENDING implementation — additive, zero existing-test breakage except the expected migration version-pin bump)_:
-- [ ] Phase 1 — Schema Upgrade: migration `008_*.sql` (new `knowledge_entries` table, 11 cols, `sources` as JSON-array TEXT, no FK; + 3 nullable `documents` cols `full_body`/`original_filename`/`file_size_bytes`); bump `tests/test_storage/test_migration_007.py:41,56` `7`→`8` (P5-DATA-01/02)
-- [ ] Phase 2 — Rulebook + checks: `src/config/dimensions.yaml` (people/projects/domains, mandatory `other`, provisional) + `validate_dimension_tag()` + confidence→status helper (`AUTO→confident`, `SUGGEST+CLUELESS→pending`) in `src/core/tags.py` (P5-DATA-07/08/09)
-- [ ] Phase 3 — Knowledge Entry Store: `src/storage/knowledge_entries.py` (5 Result-returning CRUD ops) + additive `DocumentRow`/`_row_from_sqlite` edit; `documents.upsert()` UNTOUCHED (P5-DATA-03/04/05/06)
-- [ ] Phase 4 — Suite-wide green: full `pytest` + ruff (P5-DATA-10)
-
-**Design:** `docs/1_design/P5_slice1_data_foundation.md` · **Spec:** `docs/2_specs/P5_slice1_data_foundation.md` · **Research:** `docs/3_research/P5_slice1_data_foundation.md` (0 invalidated) · **Plan:** `docs/4_plans/P5_slice1_data_foundation.md` · **Behavior inventory:** P5-DATA-01…10 (origin: design)
-**Binding decision — ADR-0012** (additive-rearchitecture / defer-breaking-changes-to-consumer-refactor-phases): every breaking change (delete a module, change a signature, remove vault root from config) happens in the phase that rewrites its LAST live consumer — never earlier. Slice 1 deletes/changes nothing existing.
-**Surfaced this session:** OQ-010 (`reconcile.py` has no owning rearchitecture phase — blocks Phase 6), TD-058 (end-user dimension/tag authoring + new-laptop infer-and-confirm onboarding). **Now stale under rearchitecture:** TD-056 (`kms_write`), TD-057 (`kms_move`) — vault writes + file moves are dead (see those entries).
+**Phase**: Phase 4 (MCP Server) **COMPLETE** (2026-06-12, 1258 tests). MCP Server MVP live — 5 tools (`kms_vault_info`, `kms_search`, `kms_read`, `kms_inspect`, `kms_move`) over stdio. ADR-0010/0011 accepted. TD-055 AI usage instructions shipped (`AI_INSTRUCTIONS.md` + tool descriptions). **Next**: Phase 5 (Promotion), Phase 6 (Documentation), or Phase 7 (Self-Learning) depending on priority — all independent of each other.
 
 **Phase 0 Final Checklist** _(CLOSED)_:
 - [x] core/exceptions.py

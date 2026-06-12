@@ -1,7 +1,7 @@
 # Plan: Phase 5 Slice 1 — Data/Config Foundation
 
 _Last updated: 2026-06-12_
-_Status: [ ] pending_
+_Status: [~] in progress_
 
 _Spec (WHAT to build, source of truth): `docs/2_specs/P5_slice1_data_foundation.md`_
 _Research (TRUST over spec where they differ): `docs/3_research/P5_slice1_data_foundation.md`_
@@ -222,13 +222,15 @@ EXPECTED test edit (research A1):
 - _(No change to `storage/db.py` — the runner picks up `008` automatically; `DocumentRow`/`_row_from_sqlite` are touched in Phase 3, not here.)_
 
 **Test criteria**:
-- [ ] Fresh `init_db()` produces a `knowledge_entries` table with all 11 columns, `schema_version == 8`. _(P5-DATA-01)_
-- [ ] On a DB with a pre-existing documents row, the 3 new columns exist and read NULL; the existing row still reads without error. _(P5-DATA-02)_
-- [ ] `uv run pytest tests/test_storage/` green, including the two updated `test_migration_007.py` assertions.
+- [x] Fresh `init_db()` produces a `knowledge_entries` table with all 11 columns, `schema_version == 8`. _(P5-DATA-01)_
+- [x] On a DB with a pre-existing documents row, the 3 new columns exist and read NULL; the existing row still reads without error. _(P5-DATA-02)_
+- [x] `uv run pytest tests/test_storage/` green, including the two updated `test_migration_007.py` assertions.
 
 **Notes**: Single-file `008` is the research-confirmed choice over a `008`–`011` split (the runner applies whole files via `executescript`; `002`/`007` already ship multi-statement; a split would bump to 11 and break the SAME version pins). **Known coupling:** the runner's source comment (`storage/db.py:33-34`) still advises single-statement files — stale, but **do not edit it this phase** (out of scope; logged as tech debt in research §Technical Debt).
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-06-12
+**Notes**: Implemented as planned with one deviation: `DocumentRow`/`_row_from_sqlite` was also edited (3 trailing None-defaulted fields + 3 guarded reads) because Phase 1 Step 3 explicitly requires testing through `_row_from_sqlite`. This is a purely additive edit matching the existing guard pattern at `documents.py:59-66`. The plan's Phase 3 note about deferring this edit was contradicted by Phase 1 Step 3's test requirements — the test won.
 
 ---
 
@@ -356,7 +358,9 @@ src/storage/documents.py
 
 **Notes**: This is a genuine deep module (delete it and the SQL + JSON round-trip + Result-wrapping reappears in every future caller). **Known coupling:** `upsert` depends on the Phase 2 status helper and on an explicit `ConfidenceBand` — the band is passed in (not imported at module scope) to keep tests `CONFIG`-free (C-17) and the helper config-driven (C-06). No `Protocol`/seam (C-15) — one real future caller pattern.
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-06-12
+**Notes**: Implemented as planned. Two new files: `src/storage/knowledge_entries.py` (KnowledgeEntry dataclass + 5 CRUD functions: upsert, query_by_dimension, query_by_entity, retire, get_confident_and_pending) and `tests/test_storage/test_knowledge_entries.py` (6 tests covering all behaviors P5-DATA-03 through P5-DATA-06). All functions return Result, open via get_connection, json.dumps/loads for sources round-trip. upsert derives status from confidence_to_status() when band is provided. retire never deletes. get_confident_and_pending accepts optional entity/dimension filters. No existing files modified. Storage test suite: 82 passed.
 
 ---
 

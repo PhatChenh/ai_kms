@@ -8,6 +8,9 @@ from pathlib import Path
 
 import yaml
 
+from core.config import ConfidenceBand, RouteDecision
+from core.result import Failure, Result, Success
+
 
 def normalize_tag_segment(name: str) -> str:
     """Convert a domain/project folder name to a valid Obsidian tag segment.
@@ -134,3 +137,68 @@ def load_taxonomy(tags_yaml_path: Path, valid_domains: frozenset[str]) -> TagTax
         valid_domains=frozenset(slug_map.keys()),
         domain_folder_names=slug_map,
     )
+
+
+# ---------------------------------------------------------------------------
+# Dimension rulebook — allowed (dimension, tag) pairs for knowledge extraction
+# ---------------------------------------------------------------------------
+
+
+def load_dimensions(dimensions_yaml_path: Path) -> dict:
+    """Load the dimension rulebook from a dimensions.yaml file.
+
+    Args:
+        dimensions_yaml_path: Path to config/dimensions.yaml.
+
+    Returns:
+        Dict mapping dimension names to lists of allowed tags.
+    """
+    return yaml.safe_load(dimensions_yaml_path.read_text())
+
+
+def validate_dimension_tag(dimension: str, tag: str, rulebook: dict) -> Result[bool]:
+    """Check whether a (dimension, tag) pair is allowed by the rulebook.
+
+    Args:
+        dimension: The dimension name (e.g. "people", "projects").
+        tag: The tag value to check (e.g. "role", "other").
+        rulebook: Pre-loaded dict from load_dimensions().
+
+    Returns:
+        Success(True) if the pair is allowed.
+        Failure describing why the pair is not allowed.
+    """
+    if dimension not in rulebook:
+        return Failure(
+            error=f"unknown dimension: {dimension!r}",
+            recoverable=False,
+            context={"dimension": dimension, "known_dimensions": list(rulebook.keys())},
+        )
+
+    allowed_tags = rulebook[dimension]
+    if tag not in allowed_tags:
+        return Failure(
+            error=f"unknown tag {tag!r} for dimension {dimension!r}",
+            recoverable=False,
+            context={"dimension": dimension, "tag": tag, "allowed_tags": allowed_tags},
+        )
+
+    return Success(value=True)
+
+
+def confidence_to_status(score: float, band: ConfidenceBand) -> str:
+    """Map a confidence score to a human-readable status using a confidence band.
+
+    Uses band.route() — never compares against threshold floats directly.
+
+    Args:
+        score: Confidence score (0.0 to 1.0).
+        band: ConfidenceBand with auto/suggest thresholds.
+
+    Returns:
+        "confident" for AUTO routing, "pending" for SUGGEST or CLUELESS.
+    """
+    decision = band.route(score)
+    if decision == RouteDecision.AUTO:
+        return "confident"
+    return "pending"
