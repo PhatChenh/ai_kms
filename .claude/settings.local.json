@@ -15,7 +15,9 @@
       "WebSearch",
       "WebFetch(domain:esengine.github.io)",
       "Read(//Users/lap14806/.claude/**)",
-      "Bash(python3 -c 'import json; json.load\\(open\\('\\\\''/Users/lap14806/.claude/settings.json'\\\\''\\)\\); print\\('\\\\''valid'\\\\''\\)')"
+      "Bash(python3 -c 'import json; json.load\\(open\\('\\\\''/Users/lap14806/.claude/settings.json'\\\\''\\)\\); print\\('\\\\''valid'\\\\''\\)')",
+      "WebFetch(domain:docs.vngcloud.vn)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }

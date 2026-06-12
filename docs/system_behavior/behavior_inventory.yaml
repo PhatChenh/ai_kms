@@ -2698,3 +2698,242 @@
   pytest_ref: null
   status: planned
   retired: null
+
+# ── Phase 5 Slice 1 — Data/Config Foundation ──
+- id: P5-DATA-01
+  behavior: The new knowledge_entries table exists after the database is initialized,
+    with all eleven columns
+  tier: full
+  phase: 5
+  origin: design
+  granularity: outcome
+  trigger: init_db() runs (migration 008 applied)
+  fixtures: []
+  steps:
+  - Initialize a fresh database (run any command that calls init_db, or init_db directly
+    against a temp db path).
+  - 'Inspect the schema: `sqlite3 <db> "PRAGMA table_info(knowledge_entries)"`'
+  - 'Check the version: `sqlite3 <db> "SELECT version FROM schema_version"`'
+  expected:
+  - knowledge_entries table exists with columns id, dimension, entity, tag, fact, status,
+    confidence, sources, reasoning, created_at, updated_at
+  - schema_version is 8
+  spec_ref: docs/1_design/P5_slice1_data_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P5-DATA-02
+  behavior: The documents table gains three new nullable columns and every existing
+    row reads back with them NULL (no breakage)
+  tier: full
+  phase: 5
+  origin: design
+  granularity: outcome
+  trigger: init_db() runs on a database that already has documents rows
+  fixtures: []
+  steps:
+  - Initialize a database that already contains captured documents rows (migration 008
+    applied on top).
+  - 'Inspect the schema: `sqlite3 <db> "PRAGMA table_info(documents)"`'
+  - 'Read an existing row: `sqlite3 <db> "SELECT full_body, original_filename, file_size_bytes
+    FROM documents LIMIT 1"`'
+  expected:
+  - documents has the new columns full_body (TEXT), original_filename (TEXT), file_size_bytes
+    (INTEGER), all nullable
+  - The three new columns read back as NULL on every pre-existing row (nothing populates
+    them in Slice 1)
+  - get_by_path returns a DocumentRow without error for an existing row
+  spec_ref: docs/1_design/P5_slice1_data_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P5-DATA-03
+  behavior: A knowledge entry can be created and read back by dimension, carrying its
+    fact, status, confidence, and source list
+  tier: full
+  phase: 5
+  origin: design
+  granularity: outcome
+  trigger: knowledge_entries.upsert(...) then knowledge_entries.query_by_dimension(...)
+  fixtures: []
+  steps:
+  - Call upsert() to store an entry (e.g. dimension=people, entity=Anthony, tag=role,
+    fact="Product Lead for Movie Q2", status=confident, a confidence score, sources=[a
+    document reference]).
+  - Call query_by_dimension("people") and inspect the returned rows.
+  expected:
+  - upsert returns Success with the new row id
+  - query_by_dimension returns the entry with its fact, status, confidence, and source
+    list intact (sources round-trips as a list)
+  spec_ref: docs/1_design/P5_slice1_data_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P5-DATA-04
+  behavior: Querying by entity returns only that entity's entries across its tags
+  tier: full
+  phase: 5
+  origin: design
+  granularity: outcome
+  trigger: knowledge_entries.query_by_entity(...)
+  fixtures: []
+  steps:
+  - Store two entries for one entity under different tags, plus one entry for a different
+    entity.
+  - Call query_by_entity for the first entity.
+  expected:
+  - Only the two entries for that entity are returned; the other entity's entry is excluded
+  - Each returned entry carries its own tag and fact
+  spec_ref: docs/1_design/P5_slice1_data_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P5-DATA-05
+  behavior: Retiring an entry flips its status to retired with a reason and never deletes
+    the row
+  tier: full
+  phase: 5
+  origin: design
+  granularity: outcome
+  trigger: knowledge_entries.retire(entry_id, reason)
+  fixtures: []
+  steps:
+  - Store a confident entry, then call retire() on it with a reason string.
+  - Read the row back by its id.
+  expected:
+  - The row still exists (not deleted)
+  - status is now retired and reasoning records the supplied reason
+  - updated_at is refreshed
+  spec_ref: docs/1_design/P5_slice1_data_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P5-DATA-06
+  behavior: get_confident_and_pending returns confident and pending entries but excludes
+    retired ones (the set fed to the extraction prompt)
+  tier: full
+  phase: 5
+  origin: design
+  granularity: outcome
+  trigger: knowledge_entries.get_confident_and_pending(...)
+  fixtures: []
+  steps:
+  - Store three entries for one entity — one confident, one pending, one retired.
+  - Call get_confident_and_pending for that entity (or dimension).
+  expected:
+  - The confident and pending entries are returned
+  - The retired entry is NOT returned (retired entries are excluded from extraction
+    input)
+  spec_ref: docs/1_design/P5_slice1_data_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P5-DATA-07
+  behavior: A valid dimension/tag pair is accepted and an invented one is rejected
+  tier: full
+  phase: 5
+  origin: design
+  granularity: outcome
+  trigger: validate_dimension_tag(dimension, tag, config)
+  fixtures: []
+  steps:
+  - Load the dimension/tag config.
+  - Call validate_dimension_tag("people", "role", config) and validate_dimension_tag("people",
+    "invented_tag", config).
+  expected:
+  - The valid pair returns Success
+  - The invalid tag returns Failure (unknown tag for that dimension)
+  - An unknown dimension also returns Failure
+  spec_ref: docs/1_design/P5_slice1_data_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P5-DATA-08
+  behavior: Every dimension in the config carries a mandatory "other" catch-all tag
+  tier: full
+  phase: 5
+  origin: design
+  granularity: outcome
+  trigger: validate_dimension_tag(any_dimension, "other", config)
+  fixtures: []
+  steps:
+  - Load the dimension/tag config.
+  - For each configured dimension, call validate_dimension_tag(dimension, "other", config).
+  expected:
+  - The tag "other" validates as a known tag for every dimension (catch-all present everywhere)
+  spec_ref: docs/1_design/P5_slice1_data_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P5-DATA-09
+  behavior: A confidence score maps to a confident/pending status using thresholds
+    read from config, not hardcoded floats
+  tier: full
+  phase: 5
+  origin: design
+  granularity: mechanism
+  trigger: status-from-confidence mapping used by knowledge_entries.upsert / classify
+  fixtures: []
+  steps:
+  - Feed a high confidence score (above the configured confident threshold) and a low
+    one (below it) through the status mapping.
+  - 'Inspect the source: confirm the threshold comes from config, not a literal in code.'
+  expected:
+  - High score maps to status confident; low score maps to status pending
+  - The threshold value is read from config (no float literal in an if/elif drives the
+    mapping)
+  spec_ref: docs/1_design/P5_slice1_data_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P5-DATA-10
+  behavior: The full existing test suite stays green after the additive migration and
+    new modules land, except the expected migration version-pin bump
+  tier: full
+  phase: 5
+  origin: design
+  granularity: mechanism
+  trigger: uv run pytest
+  fixtures: []
+  steps:
+  - 'Run the full suite: `uv run pytest`'
+  expected:
+  - All previously-passing tests still pass, EXCEPT the two version-pin assertions
+    in tests/test_storage/test_migration_007.py (lines 41, 56) which are updated 7->8 as the
+    expected migration-version bump (research A1, 2026-06-12) — not a regression
+  - No other existing test is rewritten or deleted to accommodate Slice 1
+  - documents.upsert() still accepts a WriteOutcome (signature unchanged)
+  spec_ref: docs/1_design/P5_slice1_data_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
