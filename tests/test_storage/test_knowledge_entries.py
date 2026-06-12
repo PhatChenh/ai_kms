@@ -224,6 +224,57 @@ def test_get_confident_and_pending_excludes_retired(tmp_path):
     assert "Retired fact" not in facts
 
 
+def test_upsert_update_path(tmp_path):
+    """upsert() with id set updates existing row — no duplicates, facts change, timestamps refresh."""
+    db_path = tmp_path / "kb.db"
+    init_db(db_path)
+    band = ConfidenceBand(auto=0.8, suggest=0.5)
+
+    # 1. Insert
+    entry = KnowledgeEntry(
+        dimension="people",
+        entity="Alice",
+        tag="role",
+        fact="Original fact",
+        confidence=0.95,
+        sources=["notes/alice.md"],
+        reasoning="initial capture",
+    )
+    result = upsert(entry, band=band, db_path=db_path)
+    assert result.is_success()
+    row_id = result.value
+    assert isinstance(row_id, int) and row_id > 0
+
+    # Capture original timestamps
+    entries = query_by_dimension("people", db_path=db_path)
+    assert entries.is_success()
+    original = entries.value[0]
+    assert original.fact == "Original fact"
+    assert original.confidence == 0.95
+    original_created_at = original.created_at
+    original_updated_at = original.updated_at
+
+    # 2. Modify and upsert again
+    entry.id = row_id
+    entry.fact = "Updated fact"
+    entry.confidence = 0.99
+    result2 = upsert(entry, band=band, db_path=db_path)
+    assert result2.is_success()
+    assert result2.value == row_id  # same id
+
+    # 3. Read back — verify UPDATE semantics
+    entries2 = query_by_dimension("people", db_path=db_path)
+    assert entries2.is_success()
+    assert len(entries2.value) == 1  # no duplicate
+    updated = entries2.value[0]
+    assert updated.id == row_id
+    assert updated.fact == "Updated fact"
+    assert updated.confidence == 0.99
+    assert updated.created_at == original_created_at  # preserved
+    # updated_at may be same second as original in fast tests — >= confirms it was set
+    assert updated.updated_at >= original_updated_at
+
+
 def test_get_confident_and_pending_no_filters(tmp_path):
     """get_confident_and_pending() with no filters returns all non-retired across entities."""
     db_path = tmp_path / "kb.db"

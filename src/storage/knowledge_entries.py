@@ -87,7 +87,6 @@ def upsert(
                         entry.id,
                     ),
                 )
-                conn.commit()
                 return Success(entry.id)
             else:
                 cursor = conn.execute(
@@ -106,7 +105,6 @@ def upsert(
                         entry.reasoning,
                     ),
                 )
-                conn.commit()
                 return Success(cursor.lastrowid)
     except sqlite3.Error as exc:
         return Failure(
@@ -121,7 +119,7 @@ def query_by_dimension(
 ) -> Result[list[KnowledgeEntry]]:
     """Return all knowledge entries for a given dimension."""
     try:
-        with get_connection(db_path) as conn:
+        with get_connection(db_path, readonly=True) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT * FROM knowledge_entries WHERE dimension=? ORDER BY entity, tag",
@@ -137,7 +135,7 @@ def query_by_entity(
 ) -> Result[list[KnowledgeEntry]]:
     """Return all knowledge entries for a given entity."""
     try:
-        with get_connection(db_path) as conn:
+        with get_connection(db_path, readonly=True) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT * FROM knowledge_entries WHERE entity=? ORDER BY dimension, tag",
@@ -159,7 +157,6 @@ def retire(entry_id: int, reason: str, *, db_path: Path | None = None) -> Result
                    WHERE id=?""",
                 (reason, entry_id),
             )
-            conn.commit()
             return Success(cursor.rowcount)
     except sqlite3.Error as exc:
         return Failure(str(exc), recoverable=False, context={"entry_id": entry_id})
@@ -173,7 +170,7 @@ def get_confident_and_pending(
 ) -> Result[list[KnowledgeEntry]]:
     """Return all non-retired entries, optionally filtered by entity/dimension."""
     try:
-        with get_connection(db_path) as conn:
+        with get_connection(db_path, readonly=True) as conn:
             conn.row_factory = sqlite3.Row
             query = "SELECT * FROM knowledge_entries WHERE status != 'retired'"
             params: list[str] = []
