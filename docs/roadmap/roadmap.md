@@ -117,9 +117,9 @@ Hybrid search end-to-end: descriptive title at capture (`title` typed field on `
 
 ---
 
-## Stable Interfaces (Phase 0+1+2+3 — all independent tasks build against these)
+## Stable Interfaces (Phase 0+1+2+3+4 — all independent tasks build against these)
 
-These have been stable across ~1370 tests and multiple phases. Independent tasks import from these modules only:
+These have been stable across ~1258 tests and multiple phases. Independent tasks import from these modules only:
 
 | Module | Key functions | What it does |
 |--------|--------------|--------------|
@@ -140,12 +140,15 @@ These have been stable across ~1370 tests and multiple phases. Independent tasks
 | `vault/move_guard.py` | `get_active() → MoveGuard | None` | Pipeline move registration (prevents watcher re-home) |
 | `retrieval/embeddings.py` | `index_embedding(vault_path, title, note_type, tags, summary) → Result[None]` | Semantic embedding storage (best-effort) |
 | `retrieval/keyword.py` | `index_keywords(vault_path, title, summary, body) → Result[None]` | FTS5 keyword indexing (best-effort) |
-| `storage/db.py` | `get_connection(db_path, readonly=False) → Generator[Connection]` | DB connection factory (loads sqlite-vec, WAL, FK) |
-| `storage/documents.py` | `filter_paths(project, since, until, db_path) → Result[list[str] \| None]` | Candidate filter (project + date range → candidate vault_paths) |
+| `storage/db.py` | `get_connection(db_path, readonly=False) → Generator[Connection]` | DB connection factory (loads sqlite-vec, WAL=100checkpoint, FK) |
+| `storage/documents.py` | `filter_paths(project, since, until, location, db_path) → Result[list[str] \| None]` | Candidate filter (project + date range + folder location → vault_paths; `location="inbox"` scopes to that folder) |
 | `retrieval/ranker.py` | `rank(query, candidate_paths, max_candidates, db_path) → Result[list[RankedResult]]` | Hybrid ranker (BM25 word + KNN meaning + RRF fusion) |
 | `retrieval/reranker.py` | `rerank(query, candidates, db_path) → Result[list[SearchResult]]` | Cross-encoder re-ranker (cheap result cards with metadata) |
-| `retrieval/search.py` | `search(query, project, date_range, max_results, db_path) → Result[list[SearchResult]]` | Search coordinator (filter → rank → rerank → cards). Stable contract for CLI + MCP. |
-| `pipelines/classify.py` | `classify(..., project_names, domain_names, ...)` — two new optional frozenset params | TD-051: validates project against project_names only, domain against domain_names only |
+| `retrieval/search.py` | `search(query, project, date_range, max_results, location, db_path) → Result[list[SearchResult]]` | Search coordinator (filter → rank → rerank → cards). `location` scopes to a vault folder. Stable contract for CLI + MCP. |
+| `pipelines/classify.py` | `classify(..., project_names, domain_names, ...)` — two optional frozenset params | TD-051: validates project against project_names only, domain against domain_names only |
+| `mcp_server/context.py` | `ContextInjectionEngine()` — `build_search_response(query, project, since, until, location, include_context)`, `build_vault_info_response()`, `build_read_response(paths, include_context)` | Per-conversation engine: frequency-threshold gating, project→domain registry lookup, content-hash dedup, context-block + card assembly. Instantiated once per conversation via FastMCP lifespan. |
+| `mcp_server/_resolve.py` | `inspect(path: Path) → Result[str]` | Binary text extractor — resolves sibling `.md` → binary via `attachment_path` frontmatter, then runs handler registry extractor. No AI, no audit. |
+| `mcp_server/_move.py` | `move(src: Path, dst_name: str, dst_kind: str, db_path=None) → Result[str]` | 7-step proven move recipe: resolve dest → read → capture old path → register guard → `move_note` → `write_note(dst, new_meta)` → `replace_path(old_vp, outcome)`. Blocks human-locked notes (C-02). |
 
 
 ## Phase 3 — Search ✅ (COMPLETE)
@@ -164,107 +167,17 @@ These have been stable across ~1370 tests and multiple phases. Independent tasks
 
 ---
 
-## Phase 4 — MCP Server MVP
+### Phase 4 — MCP Server MVP ✅ (COMPLETE 2026-06-12)
 
-> **⚠️ STALE (2026-06-11) — this section is SUPERSEDED.** The original `kms_capture`/`kms_classify` tool design below is dead. Authoritative Phase 4 design = **ADR-0010** (context injection in tool responses) + **ADR-0011** (write-path `kms_write`/`kms_move`, not `kms_capture`/`kms_classify`, both ACCEPTED) + `docs/*/P4_mcp_context_injection.md` (design/spec/research/plan). Ignore the components, tool registry, and acceptance criteria in this section.
+**Status: COMPLETE** — 2026-06-12. All 7 phases shipped in 6 commits. 1258 tests.
 
-**`BLOCKED BY: Phase 2 + Phase 3 · WEIGHT: medium`**
+**What was built:** FastMCP stdio server (`server.py`) that mirrors the CLI bootstrap (load_dotenv → setup_logging → CONFIG → MoveGuard); per-conversation `ContextInjectionEngine` via FastMCP lifespan; `copy_context().run()` per-call isolation; Context Injection Engine (`context.py`) with frequency-threshold + project→domain registry lookup + content-hash dedup + context-block assembly; Binary Resolver Helper (`_resolve.py`) that re-extracts binary text via existing handler registry (no AI); Note Mover Helper (`_move.py`) implementing the proven 7-step move recipe; Tool Shim Layer (`tools.py`) — 5 logic-free shims: `kms_vault_info`, `kms_search`, `kms_read`, `kms_inspect`, `kms_move`; AI usage instructions (`AI_INSTRUCTIONS.md` + tool `description=` strings, closes TD-055). Phase 1 prerequisites: `wal_autocheckpoint=100` in `_connect()` (closes TD-007), `mcp.context_injection` config block, `mcp>=1.27,<2` dep, `location` folder filter on `filter_paths()` + `search()`.
 
-### Goal
+**Architecture:** ADR-0010 (context injection in tool responses) + ADR-0011 (write-path via `kms_move`, not `kms_capture`/`kms_classify`). Option A — per-conversation lifespan = per-process under stdio. Context source = live ProjectRegistry (not `meta.yaml`). Build order: bottom-up (engine+helpers first, shims last — satisfies C-14+C-15).
 
-After Phases 2 and 3, the system can capture, classify, and search notes — but only via terminal commands. The user has to open a terminal, remember the right command, and deal with raw text output. That breaks the "zero organizational effort" promise for a non-technical manager.
+**New package:** `src/mcp_server/` — `server.py`, `context.py`, `_resolve.py`, `_move.py`, `tools.py`, `AI_INSTRUCTIONS.md`. Entry: `python -m mcp_server.server`.
 
-Phase 4 makes the vault accessible through plain conversation. The user opens Claude Desktop, describes what they want in natural language ("what do I know about the Alpha project?", "capture this email I just received", "sort my inbox"), and Claude does it. The MCP server is the bridge between Claude's conversational interface and the pipelines already built.
-
-**Prerequisite before starting:** Resolve OQ-004 (concurrent `run_pipeline` contextvar bleed). The `clear_contextvars()` call in `new_correlation_id()` wipes context for concurrent calls. Fix: wrap each pipeline call in `copy_context().run(...)` so concurrent tool invocations get isolated contextvars. This must be fixed before MCP ships concurrent tool handling.
-
-### How the pieces fit together
-
-```
-# Phase 4 — MCP Server MVP: What Happens Inside
-Scope: The path from a Claude Desktop request to a pipeline call and back.
-       Does NOT cover: the pipelines themselves (Phases 1–3), HTTP transport (deferred),
-       or tools for Promotion/Documentation/Briefing (added in their respective phases).
-
-How to read this:
-  Boxes      = steps the system takes, in order
-  BOLD NAME  = component name — maps to the Components section below
-  Arrows     = what flows to the next step
-  Fork       = a decision with different outcomes
-
-┌──────────────────────────────────────┐
-│ Claude Desktop sends a tool call     │
-│ via stdio                            │
-└──────────────────┬───────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────┐
-│ MCP SERVER                           │
-│ Receives request, validates inputs,  │
-│ routes to the right tool             │
-└──────────────────┬───────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────┐
-│ TOOL REGISTRY                        │
-│ Three thin wrappers:                 │
-│ kms_search / kms_capture /           │
-│ kms_classify                         │
-└───┬──────────────┬────────────────┬──┘
-    │              │                │
-kms_search    kms_capture      kms_classify
-    │              │                │
-    ▼              ▼                ▼
-[calls          [calls           [calls
- TIER            capture          classify
- DISPATCHER]     pipeline]        pipeline]
-
-Note: kms_search, kms_capture, and kms_classify are tools inside TOOL REGISTRY —
-      they are not separate components. Each is one function that calls one pipeline.
-```
-
-### Components
-
----
-
-**MCP SERVER** *(new — build first; TOOL REGISTRY runs inside it)*
-
-Start an MCP server process that listens for tool calls from Claude Desktop over stdio and returns structured results.
-
-- **Input:** JSON-RPC messages from Claude Desktop over stdin; server runs as a long-lived process
-- **Output:** JSON-RPC responses sent to stdout; the server never terminates until killed
-- **Rules:**
-  - Use stdio transport only — HTTP transport is explicitly deferred past Phase 4
-  - Set `wal_autocheckpoint=100` in `storage/db.py::_connect()` — the MCP server is a long-running daemon and unchecked WAL growth causes read latency (resolves TD-007); this is a one-line addition to `_connect()`
-  - Wrap each incoming tool call in `copy_context().run(pipeline_fn)` so concurrent calls get isolated Python contextvars — prevents correlation ID bleed between simultaneous tool invocations (resolves OQ-004)
-  - The server itself must contain no business logic; it receives, dispatches, and returns
-- **Reuse:** `mcp` Python library (add to dependencies), `core/logging_setup.py::new_correlation_id`
-
----
-
-**TOOL REGISTRY** *(new — depends on MCP SERVER; all three tools must be built together)*
-
-Three MCP tool definitions — `kms_search`, `kms_capture`, `kms_classify` — each of which calls exactly one pipeline and returns its result.
-
-- **Input (kms_search):** `{query: string, max_cost?: string}` → calls `retrieval/tiers.py::search(query, max_cost)`
-- **Input (kms_capture):** `{content: string, source_type: string}` → calls `pipelines/capture.py::capture_text(content, source_type)`
-- **Input (kms_classify):** `{note_path: string}` → calls `pipelines/classify.py::classify_note(note_path)`
-- **Output:** Each tool returns a structured dict with the pipeline's `Success` value, or a structured error with the `Failure` reason
-- **Rules:**
-  - `mcp_server/tools.py` must contain no `if`, `elif`, `for`, or `while` statements at the module level — zero logic, zero branching (C-14). If you find yourself writing a conditional, it belongs in the pipeline, not the tool
-  - Each tool is exactly one function: receive input → call the pipeline → return its result
-  - Do not add `kms_promote`, `kms_classify_batch`, or any other tool until its pipeline exists and has passing tests (C-15)
-  - Edits made through these MCP tools call `write_note(..., actor="ai")` — they are tracked as AI writes. Direct filesystem writes by any tool outside this pipeline are treated as human edits by the watcher (they set `updated_by_human=true`). This is intentional: pipeline vs not-pipeline is the distinction, not human vs AI
-- **Reuse:** `retrieval/tiers.py::search`, `pipelines/capture.py::capture_text`, `pipelines/classify.py::classify_note`, `core/result.py`
-
----
-
-### Acceptance criteria (behavior test)
-- [ ] Configure Claude Desktop to use the MCP server
-- [ ] Ask Claude: "What do I know about Q3 marketing?" — returns relevant notes
-- [ ] Ask Claude: "Capture this: <paste text>" — creates a new note in inbox
-- [ ] Ask Claude: "Classify the notes in my inbox" — notes move to correct folders
-- [ ] All three tools return structured results, not errors
+**Plan/Spec/Research/Design:** `docs/*/P4_mcp_context_injection.md`. ADRs: `0010`, `0011`.
 
 ---
 
