@@ -1,9 +1,9 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-06-11 (Phase 4 MCP — build-pipeline complete: design→spec→research→plan written; PENDING implementation)_
+_Last updated: 2026-06-12 (Phase 4 MCP Server — all 7 phases COMPLETE, 1258 tests)_
 
 ## Current Position
-**Phase**: Phase 3 (Search) **COMPLETE** (2026-06-11). M1 milestone (Capture + Classify + Search end-to-end) **ACHIEVED**. **Phase 4 (MCP Server) — PLANNED** (full /build-pipeline complete 2026-06-11: design→spec→research→plan written; ADR-0010/0011 ACCEPTED). **Next**: `/tdd-implement` the Phase 4 plan — Session A (prereqs + server shell + context engine + `kms_vault_info` + `kms_search`), then Session B (`kms_read` + `kms_inspect` + `kms_move` + TD-055). Phase 3 remains the last *implemented* phase.
+**Phase**: Phase 4 (MCP Server) **COMPLETE** (2026-06-12, 1258 tests). MCP Server MVP live — 5 tools (`kms_vault_info`, `kms_search`, `kms_read`, `kms_inspect`, `kms_move`) over stdio. ADR-0010/0011 accepted. TD-055 AI usage instructions shipped (`AI_INSTRUCTIONS.md` + tool descriptions). **Next**: Phase 5 (Promotion), Phase 6 (Documentation), or Phase 7 (Self-Learning) depending on priority — all independent of each other.
 
 **Phase 0 Final Checklist** _(CLOSED)_:
 - [x] core/exceptions.py
@@ -176,14 +176,14 @@ Triggered by `/superpowers:requesting-code-review`. Applied subset of review fin
 - Directory event registry calls go INSIDE existing `if event.is_directory: return` branches
 - TD-034 retired by this plan (project-to-domain registry now exists)
 
-**[P4 — MCP Server: Context Injection & Tool Design — Plan written 2026-06-11]** _(PENDING implementation — full /build-pipeline complete: design→spec→research→plan, no hard stop)_:
-- [ ] Phase 1 — Prerequisites: `wal_autocheckpoint=100` in `_connect()` (TD-007/OQ-003) + `mcp.context_injection` config block (C-06) + `mcp>=1.27,<2` dep + `location` filter on `filter_paths()`
-- [ ] Phase 2 — MCP Server Shell: stdio FastMCP bootstrap (mirrors CLI C-10/C-11), connection-lifespan engine, `copy_context().run()` isolation (OQ-004)
-- [ ] Phase 3 — Context Injection Engine (the C-14 logic home): result-frequency count + project→domain registry lookup + threshold/cap + hash-dedup + context-block assembly
-- [ ] Phase 4 — Binary Resolver Helper (`kms_inspect` sibling↔binary re-extraction)
-- [ ] Phase 5 — Note Mover Helper (`kms_move`: `move_note` → `write_note(dst, new_meta)` → `replace_path(old_vault_path, outcome)`)
-- [ ] Phase 6 — Tool Shim Layer: 5 logic-free shims (`kms_vault_info`, `kms_search`, `kms_read`, `kms_inspect`, `kms_move`) — built LAST (C-14 + C-15)
-- [ ] Phase 7 — TD-055 AI usage instructions (tool descriptions + cross-tool file)
+**[P4 — MCP Server: Context Injection & Tool Design — ✅ COMPLETE 2026-06-12]** _(1258 tests; all 7 phases shipped in 6 commits; `src/mcp_server/` package live)_:
+- [x] Phase 1 — Prerequisites: `wal_autocheckpoint=100` in `_connect()` (TD-007/OQ-003) + `mcp.context_injection` config block (C-06) + `mcp>=1.27,<2` dep + `location` filter on `filter_paths()`
+- [x] Phase 2 — MCP Server Shell: stdio FastMCP bootstrap (mirrors CLI C-10/C-11), connection-lifespan engine, `copy_context().run()` isolation (OQ-004)
+- [x] Phase 3 — Context Injection Engine (the C-14 logic home): result-frequency count + project→domain registry lookup + threshold/cap + hash-dedup + context-block assembly
+- [x] Phase 4 — Binary Resolver Helper (`kms_inspect` sibling↔binary re-extraction)
+- [x] Phase 5 — Note Mover Helper (`kms_move`: `move_note` → `write_note(dst, new_meta)` → `replace_path(old_vault_path, outcome)`)
+- [x] Phase 6 — Tool Shim Layer: 5 logic-free shims (`kms_vault_info`, `kms_search`, `kms_read`, `kms_inspect`, `kms_move`) — built LAST (C-14 + C-15)
+- [x] Phase 7 — TD-055 AI usage instructions (`AI_INSTRUCTIONS.md` + tool `description=` strings)
 
 **Design:** `docs/1_design/P4_mcp_context_injection.md`
 **Spec:** `docs/2_specs/P4_mcp_context_injection.md`
