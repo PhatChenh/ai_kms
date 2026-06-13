@@ -1,6 +1,6 @@
 ---
 created: 2026-04-26
-updated: 2026-06-07
+updated: 2026-06-13
 ---
 
 > **REARCHITECTURE IN PROGRESS (2026-06-12).** Old phases 5-9 scrapped — replaced by cloud-native rearchitecture phases 5-10 below. Read `docs/0_draft/cloud_native_rearchitecture.md` as the single source of truth for system direction. Completed phases (0-4) remain accurate as reference for existing code.
@@ -192,7 +192,7 @@ These have been stable across ~1258 tests and multiple phases. Independent tasks
 
 > **Rearchitecture phase.** Read `docs/0_draft/cloud_native_rearchitecture.md` for full architectural context. This phase lays the foundation — DB schema, repo structure, container scaffolding, API contract. No user-visible behavior changes.
 
-> **🔪 SPLIT INTO TWO SLICES (decided 2026-06-12, build-pipeline grill). The original single-phase scope was unbuildable as written — see ADR-0012.** Phase 5 now runs as two independent, parallelizable slices:
+> **🔪 SPLIT INTO TWO SLICES (decided 2026-06-12, build-pipeline grill). SLICE 1 COMPLETE (2026-06-13, merged to cloud-native). The original single-phase scope was unbuildable as written — see ADR-0012.** Phase 5 now runs as two independent, parallelizable slices:
 >
 > **SLICE 1 — Data/Config Foundation** *(pure local code, NO AgentBase, additive-only — zero existing-test breakage):*
 > - DB MIGRATIONS (new `knowledge_entries` table + 3 **nullable** `documents` columns)
@@ -200,7 +200,7 @@ These have been stable across ~1258 tests and multiple phases. Independent tasks
 > - DIMENSION/TAG CONFIG (`config/dimensions.yaml` + `validate_dimension_tag()`)
 > - **Does NOT** touch `documents.upsert()`, **does NOT** split config, **does NOT** retire modules (all deferred — see per-component warnings + ADR-0012).
 >
-> **SLICE 2 — Deployment Foundation** *(AgentBase — see `docs/0_draft/agentbase_research.md`):*
+> **SLICE 2 — Deployment Foundation** *(AgentBase — Slice 1 migration landed, ready to start)*:
 > - CONTAINER SCAFFOLDING (Dockerfile, `/health`, port 8080, **Litestream + VNG Object Storage** for SQLite persistence per agentbase_research §11.2, `--max-replicas 1` per §11.4)
 > - REST API SKELETON (`/api/upload`, `/api/event`)
 >
@@ -304,6 +304,8 @@ Dockerfile, health endpoint, container entry point. Make the cloud side deployab
 - **Auto-injected env vars:** `GREENNODE_CLIENT_ID`, `GREENNODE_CLIENT_SECRET`, `GREENNODE_AGENT_IDENTITY`, `GREENNODE_ENDPOINT_URL`.
 - **Rules:**
   - Container is stateless — DB must be backed up externally (S3 or Litestream). For MVP: SQLite file in a mounted volume or S3 restore on start.
+  - **DB backend flexibility (decided P5 Slice 2 grill, 2026-06-13):** SQLite + Litestream is for demo/MVP. PostgreSQL support planned for later. Storage layer (`storage/db.py`, `get_connection()`) should remain the single DB access point so swapping backends is a contained change — no raw SQL scattered across modules. Note for future: when adding PostgreSQL, the connection factory and migration runner are the two touch points.
+  - **DB path:** `/data/kb.db` inside container. Startup script creates `/data/` if missing. Litestream watches this path.
 - **Acceptance:** `docker build` succeeds. Container starts, `/health` returns 200. MCP server responds to tool list request.
 
 ---
@@ -317,7 +319,7 @@ Endpoints for daemon → cloud communication. Stubbed — real pipeline wiring h
 
 - **`POST /api/upload`** — accepts extracted text + file metadata (vault_path, content_hash, filename, size). Returns document ID. Stub: stores to documents table with `full_body`.
 - **`POST /api/event`** — accepts file events (moved, renamed, deleted) with old/new paths. Stub: updates `vault_path` in documents.
-- **Auth:** IAM service account bearer token (from daemon config).
+- **Auth:** Simple shared API key per runtime (NOT IAM — IAM is for platform APIs). Container reads `KMS_DAEMON_API_KEY` from env var; daemon sends `Authorization: Bearer <api-key>` on every request. One key per runtime instance — each tester gets their own. Decided during P5 Slice 2 grill (2026-06-13).
 - **Rules:**
   - API contract is the interface between daemon and cloud. Changing it requires updating both sides.
   - Every endpoint returns JSON with `status` and `error` fields.
@@ -353,13 +355,13 @@ Remove or gut modules that the rearchitecture kills. Clean up imports.
 > **Regrouped 2026-06-12 to match the two-slice split + deferrals (ADR-0012).** The original flat list mixed Slice 1, Slice 2, and deferred-to-later-phase items.
 
 **Slice 1 — Data/Config Foundation (additive, no existing-test breakage):**
-- [ ] `knowledge_entries` table exists with correct schema
-- [ ] `documents.full_body`, `original_filename`, `file_size_bytes` columns exist (**nullable**)
-- [ ] `storage/knowledge_entries.py` CRUD operations work (upsert, query_by_dimension, query_by_entity, retire, get_confident_and_pending)
-- [ ] `config/dimensions.yaml` defines dimensions with tag sets (each has `other`)
-- [ ] `validate_dimension_tag()` accepts valid pairs, rejects invalid
-- [ ] `documents.upsert()` **unchanged** — still accepts `WriteOutcome` (redesign deferred to Phase 7)
-- [ ] `uv run pytest` passes with **no existing tests rewritten or deleted** (additive-only)
+- [x] `knowledge_entries` table exists with correct schema
+- [x] `documents.full_body`, `original_filename`, `file_size_bytes` columns exist (**nullable**)
+- [x] `storage/knowledge_entries.py` CRUD operations work (upsert, query_by_dimension, query_by_entity, retire, get_confident_and_pending)
+- [x] `config/dimensions.yaml` defines dimensions with tag sets (each has `other`)
+- [x] `validate_dimension_tag()` accepts valid pairs, rejects invalid
+- [x] `documents.upsert()` **unchanged** — still accepts `WriteOutcome` (redesign deferred to Phase 7)
+- [x] `uv run pytest` passes with **no existing tests rewritten or deleted** (additive-only)
 
 **Slice 2 — Deployment Foundation (AgentBase):**
 - [ ] `docker build --platform linux/amd64` succeeds, container starts on port 8080
@@ -367,6 +369,40 @@ Remove or gut modules that the rearchitecture kills. Clean up imports.
 - [ ] Litestream restores DB from VNG Object Storage on start, replicates on write (§11.2)
 - [ ] `POST /api/upload` stores document with `full_body` in DB *(needs Slice 1 migration landed — the integration seam)*
 - [ ] `POST /api/event` updates vault_path on move
+
+**Slice 1 implementation notes (2026-06-13 — merged to cloud-native, 1275 tests, +18 new):**
+
+> What Slice 2 and downstream phases should know. Plan: `docs/4_plans/P5_slice1_data_foundation.md`. Source-of-truth for this slice is the **code**, not this roadmap summary. Read the plan before touching any of these modules.
+
+**What shipped exactly as the roadmap said:**
+- Migration 008: `knowledge_entries` (11 columns) + 3 nullable `documents` columns (`full_body`, `original_filename`, `file_size_bytes`). Single-file migration — the runner auto-applies it.
+- `storage/knowledge_entries.py`: 5 CRUD ops (`upsert`, `query_by_dimension`, `query_by_entity`, `retire`, `get_confident_and_pending`). All return `Result`. Sources JSON round-trip. retire never deletes.
+- `config/dimensions.yaml`: provisional starter taxonomy (people/projects/domains, each with `other`).
+- `validate_dimension_tag()` + `confidence_to_status()` in `core/tags.py`. Pure functions, no float literal in if/elif.
+- `documents.upsert()` untouched — still takes `WriteOutcome`.
+- Zero existing tests rewritten (except the expected `test_migration_007.py` version pin 7→8).
+
+**Where the implementation diverged from the roadmap (all intentional, resolved in research/plan):**
+
+1. **`DocumentRow` +3 fields shipped in Slice 1, not Slice 2.** Phase 1 Step 3 tests exercise `_row_from_sqlite` with the new columns, so the guarded reads (`"key" in row.keys() else None`) and trailing `= None` defaults on `DocumentRow` were needed immediately. Purely additive — no existing path altered.
+
+2. **`confidence_to_status()` takes an explicit `ConfidenceBand`, not config.** Callers pass the band object (testable without `CONFIG` at module scope). The mapping is `AUTO → "confident"`, `SUGGEST + CLUELESS → "pending"`. This is the one place the slice translates the existing 3-value gate into a 2-value status. If the gates ever diverge, a dedicated config block is a one-line addition.
+
+3. **`validate_dimension_tag()` takes a pre-loaded rulebook `dict`, not a config path.** The standalone `load_dimensions(path)` loader is exposed so the future Phase 8 extractor loads once and passes the dict. Mirror of the existing `load_taxonomy`/`validate_tags` split.
+
+4. **`KnowledgeEntry` dataclass is mutable** (not `frozen=True` like `DocumentRow`). Required for the `upsert` UPDATE path (mutate `entry.id` after insert, then re-upsert). If this object ever gets passed between pipeline stages in Phase 8, freeze it and use `dataclasses.replace()`.
+
+5. **`upsert` uniqueness is id-only.** No natural-key index on (dimension, entity, tag, fact). Inserting the same logical fact twice creates two rows. Natural-key dedup is deferred to Phase 8 (DQ-2 in the plan). Phase 8's entry writer must handle duplicate detection itself or add a unique index.
+
+6. **`upsert` UPDATE path checks `cursor.rowcount`** — returns `Failure` for nonexistent IDs (unlike the original audit_log `append` pattern which returns success unconditionally). Matches `retire`'s contract. Phase 8 callers should check `Result.is_success()` before assuming the update worked.
+
+**What's deferred (Phase 7/8/9 must handle):**
+- `full_body` / `original_filename` / `file_size_bytes` are **NULL** on all rows. Phase 7 populates them. Phase 9 `_resolve.py` tier-2 must gracefully degrade to tier-3 when `full_body` is NULL.
+- `documents.upsert()` redesign → Phase 7 (drops `WriteOutcome` path, accepts structured summary directly).
+- Config split (vault root removal) → Phases 6/7/9 as each consumer sheds its vault dependency.
+- No modules retired in Slice 1 → `writer`, `frontmatter`, `reader`, `indexer`, `move_guard`, `_move.py` all still alive. Each dies with its last consumer per ADR-0012.
+- Dimension/tag taxonomy is **provisional** — Phase 8 refines the tag sets.
+- No `knowledge_entries` indexes on `dimension`, `entity`, or `status`. Queries will full-scan. Acceptable for MVP; add indexes in Phase 8 if performance degrades.
 
 **DEFERRED out of Phase 5 (do NOT attempt here — see warnings + ADR-0012):**
 - [ ] ~~Cloud config loads without vault root~~ → rides with Phases 6/7/9 (config split deferred)
@@ -462,7 +498,8 @@ Watch the entire vault directory tree for file changes. No binary sync callbacks
 Extract text content from files using existing handler registry.
 
 - **Input:** File path from watcher event
-- **Output:** `Success(ExtractedContent(text, content_hash, filename, size_bytes))` or raw bytes fallback
+- **Output:** `Success(ExtractedContent(text, content_hash, filename, size_bytes, metadata))` or raw bytes fallback
+  - `metadata` dict includes: (a) **filesystem metadata** — created time, modified time from `os.stat()`; (b) **format-specific metadata** — PDF author/title/creation date, DOCX author/properties, XLSX sheet names, image EXIF (extracted by handlers alongside text). Decided during P5 Slice 2 grill (2026-06-13).
 - **Rules:**
   - Try handler extraction first (fast, produces clean text)
   - If handler fails (unsupported format, corrupted file): read raw bytes as fallback, upload those
@@ -525,7 +562,7 @@ Package daemon as a single installable app for Mac.
 - **Output:** `.app` bundle (PyInstaller) or Homebrew formula
 - **Rules:**
   - Single binary — no Python install required for user
-  - First-run setup: prompt for vault path + AgentBase auth token → write daemon config
+  - First-run setup: prompt for vault path + AgentBase endpoint URL + API key (the `KMS_DAEMON_API_KEY` set on their container env) → write daemon config. Guide user: "Ask your admin for the endpoint URL and API key for your runtime instance."
   - Launches on system startup (optional, launchd plist)
   - Tray icon showing sync status (optional, nice-to-have)
 - **Acceptance:** Non-technical user can install and configure in under 2 minutes. Daemon starts watching vault after setup.
@@ -603,7 +640,7 @@ After this phase: when daemon uploads extracted text, the cloud generates a stru
 
 Accept extracted text from daemon upload API. Validate input. Check idempotency.
 
-- **Input:** Extracted text, vault_path, content_hash, original_filename, file_size_bytes
+- **Input:** Extracted text, vault_path, content_hash, original_filename, file_size_bytes, metadata (open-ended JSON — filesystem timestamps + format-specific metadata from daemon; see Phase 6 TEXT EXTRACTOR)
 - **Output:** `Success(CaptureInput)` or `Success(ALREADY_PROCESSED)` if content_hash matches existing record
 - **Rules:**
   - Content hash is the dedup key. Same hash = already processed = skip (idempotent).
@@ -662,6 +699,10 @@ After capture, queue the document for async classification (Phase 8).
 - **Acceptance:** Capture completes without waiting for classify. Document is searchable before classify runs.
 
 ---
+
+> **📌 DESIGN NOTE — folder structure as user-intent signal (decided P5 Slice 2 grill, 2026-06-13).** Current system infers project/domain from folder path (`Projects/Alpha/` → project=Alpha). In the new model, classify (Phase 8) extracts project/domain from document *content* via LLM. But the user's folder structure is still a meaningful signal of intent — putting a file in `Projects/Alpha/` expresses "this belongs to Alpha." Design question for Phase 7 (capture) + Phase 8 (classify): should `vault_path` be passed to the LLM as an input signal alongside content? If so, how much weight vs content-derived classification? This needs explicit design during those phases — do not silently ignore folder structure, and do not silently treat it as authoritative. Also: folder-level move/delete events are broken into per-file events by the daemon (decided same grill) — the cloud endpoint only handles individual files.
+
+> **📌 DESIGN NOTE — knowledge_entries source cleanup on document deletion (decided P5 Slice 2 grill, 2026-06-13).** When a document is deleted (via `/api/event`), its ID must be removed from the `sources` JSON array of every `knowledge_entries` row that references it. If a knowledge entry's `sources` list becomes empty after removal, set its `status` to `pending` (flag for review) — do NOT auto-delete it. Rationale: a fact like "Anthony is Product Lead" may have been extracted from multiple documents; deleting one source doesn't make the fact untrue. Only when ALL sources are gone is the fact unverified. User may have manually promoted the entry to `confident` — auto-deleting would destroy human judgment. This cleanup logic lives in the `/api/event` delete handler, but only activates once Phase 8 (Classify) is populating `knowledge_entries`. Until then, the stub delete in Phase 5 Slice 2 only cleans `documents` + search tables.
 
 ### What retires in this phase
 - `_store_md()` — replaced by DB WRITER
@@ -787,6 +828,7 @@ Call LLM with document content + existing entries → extract new facts, update 
   - Validate dimension and tag against config: `validate_dimension_tag(dim, tag, config)`. Reject unknown values.
   - Confidence drives initial status via config thresholds (C-06): high → `confident`, medium → `pending`, low → `pending`
   - Concise facts — same discipline as old CLAUDE.md. Not a dumping ground.
+  - **Folder structure as input signal:** `vault_path` carries user intent (e.g., `Projects/Alpha/` → user considers this part of Alpha). Design must decide how to weight folder-path signal vs content-derived classification. See Phase 7 design note (P5 Slice 2 grill, 2026-06-13).
   - Return `Success` or `Failure` — never raise (C-12)
 - **Reuse:** `llm/provider.py`, `llm/prompt_loader.py`, `core/confidence.py`, `core/tags.py`
 - **Acceptance:** Meeting notes about "Anthony, Product Lead for Movie Q2" → extracts entity `Anthony`, dimension `people`, tag `role`, fact `Product Lead for Movie Q2`.

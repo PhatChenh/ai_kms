@@ -68,6 +68,14 @@
 
 ---
 
+### OQ-011 · Daemon→AgentBase platform auth — shared IAM account vs dedicated per device?
+**Blocks:** Phase 6 (Daemon)
+**Status:** 🔴 Open
+**Question:** Should the Phase 6 laptop daemon authenticate to the AgentBase *platform* using the SAME IAM service account as the cloud container, or its own dedicated account? This is the daemon's platform auth — distinct from the shared `KMS_DAEMON_API_KEY` it sends on `/api/*` (that is app-level request auth, NOT platform auth). Shared = one fewer credential to provision, but a leak exposes both sides. Dedicated = cleaner per-device revocation, more onboarding steps.
+**Context:** Surfaced during the 2026-06-13 P5 Slice 2 build-pipeline design as that doc's OQ-2 (`docs/1_design/P5_slice2_deployment_foundation.md`). Out of scope for Slice 2 (which builds only the cloud side + the shared request-key gate). Design recommendation: dedicated account, decided when the daemon is built in Phase 6.
+
+---
+
 ## ✅ Closed
 
 ### OQ-001 · Move/rename detection when note is edited AND moved simultaneously

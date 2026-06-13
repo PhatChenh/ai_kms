@@ -2,6 +2,17 @@
 
 ## Active
 
+### TD-059 · Dummy vault path workaround in cloud container
+**Status:** OPEN
+**Phase:** Dies with config split (Phases 6/7/9)
+**Risk if triggered early:** None — cosmetic only. Container creates empty `/data/vault/` to satisfy `VaultConfig` validation (`vault.root` must exist on disk). No vault code runs cloud-side. If someone adds vault-dependent code to the container entry point before the config split lands, it would silently operate on an empty directory.
+**What:** `core/config.py` `VaultConfig` requires `vault.root` to exist. Cloud container has no vault. Workaround: set `VAULT_ROOT=/data/vault` env var + `mkdir -p /data/vault` in Dockerfile. Ugly but contained.
+**Design correction (2026-06-13, user sign-off — design doc OQ-1):** the `VAULT_ROOT` env var has **no binding in `core/config.py`** today (only `KMS_DB_PATH` is overridable). So the workaround additionally requires **adding** a throwaway `VAULT_ROOT` env override to `core/config.py` + a unit test. Chosen over a cloud-specific `config.yaml` to keep one identical image per tester. **Mechanism (research):** NOT a `KMS_DB_PATH` mirror — the override must be injected into the raw config dict *before* `MainConfig` is constructed (the vault-root existence check is a construction-time `MainConfig` validator at `config.py:372-382`; `VaultConfig` has no `validate_assignment`). See spec C2-5.
+**Resolution:** When config split happens (Phases 6/7/9 each shed vault dependencies), remove `vault.root` requirement from cloud config entirely. Delete dummy directory from Dockerfile **and remove the `VAULT_ROOT` binding from `core/config.py`**. This TD auto-resolves when the last vault import is removed from cloud-side code.
+**Source:** P5 Slice 2 grill (2026-06-13); amended at design (2026-06-13).
+
+---
+
 ### TD-058 · End-user dimension/tag creation + infer-and-confirm on new-laptop initialization
 **Status:** OPEN
 **Phase:** Cross-phase — Phase 6 (daemon first-run init) + Phase 10 (Web UI dimension/tag management). Surfaced during Phase 5 Slice 1 design (2026-06-12).

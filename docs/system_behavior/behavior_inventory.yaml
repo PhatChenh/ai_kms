@@ -2937,3 +2937,297 @@
   pytest_ref: tests/test_storage/test_migration_007.py
   status: active
   retired: null
+- id: P5-DEPLOY-01
+  behavior: The container image builds for the cloud target platform and the container
+    starts and reports itself alive on the one shared port
+  tier: full
+  phase: 5
+  origin: design
+  granularity: outcome
+  trigger: docker build --platform linux/amd64 . ; docker run -p 8080:8080 <image>
+  fixtures: []
+  steps:
+  - Build the image targeting linux/amd64.
+  - Run the container mapping port 8080.
+  - 'Hit the health path: `curl -s http://localhost:8080/health`'
+  expected:
+  - The image build completes without error
+  - The container starts and stays up
+  - GET /health returns HTTP 200 with a small ok body (e.g. {"status":"ok"})
+  - /health needs no secret key (it is open)
+  spec_ref: docs/1_design/P5_slice2_deployment_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P5-DEPLOY-02
+  behavior: The existing knowledge-assistant (MCP) interface answers a tool-list request
+    on the same single port, served from the HTTP entry point
+  tier: full
+  phase: 5
+  origin: design
+  granularity: outcome
+  trigger: HTTP MCP request to the running container on port 8080
+  fixtures: []
+  steps:
+  - Start the container.
+  - Send an MCP tools/list request to the MCP path on port 8080.
+  expected:
+  - The MCP server responds with the registered tool list (the five existing KMS tools)
+  - It is reachable on the same port as /health and /api/* (one port, different paths)
+  spec_ref: docs/1_design/P5_slice2_deployment_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P5-DEPLOY-03
+  behavior: A first upload of a new file stores a document record carrying its full
+    extracted text and returns the new record id
+  tier: full
+  phase: 5
+  origin: design
+  granularity: outcome
+  trigger: POST /api/upload with a valid secret key and a new vault_path payload
+  fixtures: []
+  steps:
+  - 'POST a payload to /api/upload with the correct Authorization bearer key:
+    a new vault_path, extracted_text, a content_hash, original_filename, file_size_bytes,
+    and a metadata object.'
+  - 'Read the stored row: `sqlite3 <db> "SELECT full_body, original_filename, file_size_bytes,
+    content_hash FROM documents WHERE vault_path = ?"`'
+  expected:
+  - The response is HTTP 200 with a document id
+  - A documents row exists for that vault_path with full_body equal to the uploaded
+    extracted text, original_filename, file_size_bytes, and content_hash set
+  spec_ref: docs/1_design/P5_slice2_deployment_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P5-DEPLOY-04
+  behavior: Re-uploading the identical file (same path, same content fingerprint) is
+    idempotent — the stored record is not duplicated or rewritten
+  tier: full
+  phase: 5
+  origin: design
+  granularity: outcome
+  trigger: POST /api/upload twice with the same vault_path and the same content_hash
+  fixtures: []
+  steps:
+  - Upload a file once (as in P5-DEPLOY-03).
+  - Upload the exact same payload again.
+  - 'Count rows: `sqlite3 <db> "SELECT COUNT(*) FROM documents WHERE vault_path = ?"`'
+  expected:
+  - Both requests return HTTP 200
+  - There is exactly one documents row for that vault_path (no duplicate)
+  - The second upload makes no content change (skip-on-same-hash)
+  spec_ref: docs/1_design/P5_slice2_deployment_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P5-DEPLOY-05
+  behavior: Uploading the same path with a different content fingerprint updates the
+    stored text and details in place
+  tier: full
+  phase: 5
+  origin: design
+  granularity: outcome
+  trigger: POST /api/upload with an existing vault_path but a new content_hash
+  fixtures: []
+  steps:
+  - Upload a file once.
+  - Upload the same vault_path again with changed extracted_text and a different content_hash.
+  - 'Read the row back: `sqlite3 <db> "SELECT full_body, content_hash FROM documents
+    WHERE vault_path = ?"`'
+  expected:
+  - The single documents row for that vault_path now holds the new extracted text and
+    the new content_hash
+  - Still exactly one row (update in place, not a second insert)
+  spec_ref: docs/1_design/P5_slice2_deployment_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P5-DEPLOY-06
+  behavior: A move/rename event updates the stored file's location, carrying its search-index
+    entries along
+  tier: full
+  phase: 5
+  origin: design
+  granularity: outcome
+  trigger: POST /api/event with type=moved, an old_path and a new_path
+  fixtures: []
+  steps:
+  - Upload a file so a documents row (and its search entries) exist at the old path.
+  - POST /api/event with type=moved, old_path, new_path, using a valid secret key.
+  - 'Read back: `sqlite3 <db> "SELECT vault_path FROM documents WHERE vault_path =
+    <new_path>"` and confirm the old path is gone.'
+  expected:
+  - The response is HTTP 200
+  - The documents row now reads at new_path; no row remains at old_path
+  - The search-index entries (keyword + meaning) for that note moved to new_path too
+  spec_ref: docs/1_design/P5_slice2_deployment_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P5-DEPLOY-07
+  behavior: A delete event removes the stored file completely, including its search-index
+    entries, within one transaction
+  tier: full
+  phase: 5
+  origin: design
+  granularity: outcome
+  trigger: POST /api/event with type=deleted and a path
+  fixtures: []
+  steps:
+  - Upload a file so its row and search entries exist.
+  - POST /api/event with type=deleted and that path, using a valid secret key.
+  - 'Confirm removal across all three tables: `sqlite3 <db> "SELECT COUNT(*) FROM documents
+    WHERE vault_path = ?"` (and the two search tables).'
+  expected:
+  - The response is HTTP 200
+  - No row remains for that path in documents, the keyword index, or the meaning index
+  - Removal is hard delete (no soft-delete flag left behind)
+  spec_ref: docs/1_design/P5_slice2_deployment_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P5-DEPLOY-08
+  behavior: An event naming a path that was never captured replies not_found instead
+    of erroring
+  tier: full
+  phase: 5
+  origin: design
+  granularity: outcome
+  trigger: POST /api/event (move or delete) for a path with no stored record
+  fixtures: []
+  steps:
+  - With a fresh DB (or a path known to be absent), POST /api/event delete (or move)
+    for that path using a valid secret key.
+  expected:
+  - The response is HTTP 200 with a body indicating not_found (e.g. {"status":"not_found"})
+  - It is NOT treated as an error (no 4xx/5xx) — the file may simply not have been
+    captured yet
+  spec_ref: docs/1_design/P5_slice2_deployment_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P5-DEPLOY-09
+  behavior: A request to a sync endpoint with a wrong or missing secret key is rejected
+    as unauthorized
+  tier: full
+  phase: 5
+  origin: design
+  granularity: outcome
+  trigger: POST /api/upload or /api/event with a missing or incorrect Authorization
+    bearer key
+  fixtures: []
+  steps:
+  - POST to /api/upload with no Authorization header.
+  - POST to /api/upload with an incorrect bearer key.
+  expected:
+  - Both requests return HTTP 401 (unauthorized)
+  - No documents row is created or changed by the rejected requests
+  - /health remains reachable without any key (the gate covers /api/* only)
+  spec_ref: docs/1_design/P5_slice2_deployment_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P5-DEPLOY-10
+  behavior: First-ever start with no backup creates a fresh database with the correct,
+    fully-migrated schema
+  tier: full
+  phase: 5
+  origin: design
+  granularity: outcome
+  trigger: container start with backup turned off (or no backup present in object storage)
+  fixtures: []
+  steps:
+  - Start the container with no prior backup available.
+  - 'Inspect the created database: `sqlite3 <db> "SELECT version FROM schema_version"`
+    and `sqlite3 <db> "SELECT name FROM sqlite_master WHERE type=''table''"`.'
+  expected:
+  - A new database file is created at the dedicated data path
+  - The schema is fully migrated (schema_version at the latest, all tables present
+    including documents with full_body and the knowledge_entries table)
+  - The app starts and serves requests against the fresh DB
+  spec_ref: docs/1_design/P5_slice2_deployment_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P5-DEPLOY-11
+  behavior: After a container restart with cloud backup configured, the database is
+    restored from object storage rather than starting empty
+  tier: full
+  phase: 5
+  origin: design
+  granularity: outcome
+  trigger: stop and restart the container with backup settings present and a prior
+    backup in object storage
+  fixtures: []
+  steps:
+  - Start the container with backup configured; upload one or more files so rows exist
+    and a backup streams up.
+  - Stop the container; start it again with the same backup settings.
+  - 'Confirm the rows survived: `sqlite3 <db> "SELECT COUNT(*) FROM documents"`'
+  expected:
+  - On the second start the database is restored from object storage before the app
+    serves traffic
+  - The previously-uploaded documents are present (no data loss across restart, modulo
+    the accepted ~1 second crash window)
+  spec_ref: docs/1_design/P5_slice2_deployment_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P5-DEPLOY-12
+  behavior: The existing stdio entry point for the knowledge-assistant interface still
+    works unchanged for local desktop use
+  tier: full
+  phase: 5
+  origin: design
+  granularity: outcome
+  trigger: python -m mcp_server.server (stdio transport, no container)
+  fixtures: []
+  steps:
+  - Run the original stdio MCP entry point locally.
+  - Send a tools/list request over stdio (as a desktop client would).
+  expected:
+  - The stdio server starts and responds with the registered tool list, exactly as
+    before this slice
+  - Adding the HTTP/cloud entry point did not break or alter the stdio path
+  spec_ref: docs/1_design/P5_slice2_deployment_foundation.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
