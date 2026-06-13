@@ -87,7 +87,7 @@ async def scan(config: DaemonConfig, client: httpx.AsyncClient) -> ScanResult:
     cloud_state = await _fetch_cloud_state(config, client)
 
     # ── 2. Walk vault + build disk state ──────────────────────────────────
-    disk_state = _build_disk_state(config)
+    disk_state, unreadable = _build_disk_state(config)
 
     # ── 3. Compute the sets of paths ──────────────────────────────────────
     disk_paths = set(disk_state.keys())
@@ -95,7 +95,7 @@ async def scan(config: DaemonConfig, client: httpx.AsyncClient) -> ScanResult:
 
     both = disk_paths & cloud_paths
     disk_only = disk_paths - cloud_paths
-    cloud_only = cloud_paths - disk_paths
+    cloud_only = cloud_paths - disk_paths - unreadable
 
     result = ScanResult()
 
@@ -208,12 +208,14 @@ async def _fetch_cloud_state(
 
 
 def _build_disk_state(config: DaemonConfig) -> dict[str, str]:
-    """Walk the vault and return ``{vault_path: sha256_hex}`` for every file.
+    """Walk the vault and return ``({vault_path: sha256_hex}, unreadable_set)``.
 
     Directories are skipped; files matching *ignore_patterns* are skipped.
-    Unreadable files are logged and skipped.
+    Unreadable files are logged at WARNING and added to the ``unreadable`` set
+    so the scan() caller can exclude them from cloud-only deletion.
     """
     result: dict[str, str] = {}
+    unreadable: set[str] = set()
     vault_root = config.vault_root.resolve()
     ignore_patterns = config.ignore_patterns
 
@@ -223,18 +225,10 @@ def _build_disk_state(config: DaemonConfig) -> dict[str, str]:
         for fname in filenames:
             filepath = dirpath / fname
 
-            # Apply ignore patterns (root=None → check entire path)
-            if should_skip_path(filepath, ignore_patterns, root=None):
+            # Apply ignore patterns (pass root=vault_root so only vault-relative
+            # components are checked, not parent directories above the vault).
+            if should_skip_path(filepath, ignore_patterns, root=vault_root):
                 continue
-
-            # Compute content hash
-            try:
-                raw = filepath.read_bytes()
-            except OSError:
-                _log.debug("Cannot read file during scan: %s", filepath)
-                continue
-
-            content_hash = hashlib.sha256(raw).hexdigest()
 
             # Compute vault-relative path (NFC-normalised POSIX)
             try:
@@ -244,9 +238,19 @@ def _build_disk_state(config: DaemonConfig) -> dict[str, str]:
                 continue
 
             vault_path = unicodedata.normalize("NFC", rel.as_posix())
+
+            # Compute content hash
+            try:
+                raw = filepath.read_bytes()
+            except OSError:
+                _log.warning("Cannot read file during scan, will not delete cloud copy: %s", filepath)
+                unreadable.add(vault_path)
+                continue
+
+            content_hash = hashlib.sha256(raw).hexdigest()
             result[vault_path] = content_hash
 
-    return result
+    return result, unreadable
 
 
 async def _upload_one(

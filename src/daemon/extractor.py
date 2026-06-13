@@ -100,7 +100,23 @@ def extract(
         ``Failure(recoverable=True)`` if the file cannot be read (vanished, etc.).
     """
 
-    # ── 1. Read raw bytes + hash ─────────────────────────────────────────
+    # ── 1. Check file size before reading ────────────────────────────────
+    try:
+        file_size_bytes = path.stat().st_size
+    except OSError:
+        return Failure(
+            error=f"cannot read file: {path}",
+            recoverable=True,
+            context={"path": str(path)},
+        )
+    if file_size_bytes > max_file_size_bytes:
+        return Failure(
+            error=f"file too large: {file_size_bytes} > {max_file_size_bytes} bytes",
+            recoverable=False,
+            context={"path": str(path), "size": file_size_bytes},
+        )
+
+    # ── 2. Read raw bytes + hash ─────────────────────────────────────────
     try:
         raw_bytes = path.read_bytes()
     except OSError:
@@ -111,10 +127,9 @@ def extract(
         )
 
     content_hash = hashlib.sha256(raw_bytes).hexdigest()
-    file_size_bytes = len(raw_bytes)
     original_filename = path.name
 
-    # ── 2. Compute vault_path ────────────────────────────────────────────
+    # ── 3. Compute vault_path ────────────────────────────────────────────
     try:
         rel = path.resolve().relative_to(vault_root.resolve())
     except ValueError:

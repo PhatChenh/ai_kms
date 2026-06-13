@@ -140,14 +140,36 @@ class _DaemonEventHandler(FileSystemEventHandler):
         return should_skip_path(path, self._ignore_patterns, root=self._root)
 
     def _debounce(self, key: str, fn: Callable, args: tuple) -> None:
-        """Cancel any running timer for *key*, then start a new one."""
+        """Cancel any running timer for *key*, then start a new one.
+
+        The new timer will remove itself from ``_timers`` after firing to
+        prevent unbounded memory growth over long-running daemon sessions.
+        """
+        def _wrapped() -> None:
+            fn(*args)
+            with self._lock:
+                self._timers.pop(key, None)
+
         with self._lock:
             existing = self._timers.get(key)
             if existing is not None:
                 existing[0].cancel()
-            timer = threading.Timer(self._debounce_seconds, fn, args)
+            timer = threading.Timer(self._debounce_seconds, _wrapped)
             self._timers[key] = (timer, fn, args)
             timer.start()
+
+    # ── lifecycle ────────────────────────────────────────────────────────
+
+    def _shutdown(self) -> None:
+        """Cancel all pending timers and clear debounce state.
+
+        Must be called before the observer is stopped to prevent use-after-free
+        on the callback references stored in timer threads.
+        """
+        with self._lock:
+            for timer, _fn, _args in self._timers.values():
+                timer.cancel()
+            self._timers.clear()
 
     # ── event dispatch ───────────────────────────────────────────────────
 
@@ -235,7 +257,8 @@ class DaemonWatcher:
         self._observer.start()
 
     def stop(self) -> None:
-        """Signal the observer thread to stop."""
+        """Signal the observer to stop, cancelling all pending debounce timers."""
+        self._handler._shutdown()
         self._observer.stop()
 
     def join(self) -> None:
