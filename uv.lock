@@ -35,6 +35,7 @@ dependencies = [
     { name = "sentence-transformers" },
     { name = "sqlite-vec" },
     { name = "structlog" },
+    { name = "uvicorn" },
     { name = "watchdog" },
     { name = "youtube-transcript-api" },
 ]
@@ -74,6 +75,7 @@ requires-dist = [
     { name = "sentence-transformers", specifier = ">=2.2.0" },
     { name = "sqlite-vec", specifier = ">=0.1.9" },
     { name = "structlog" },
+    { name = "uvicorn" },
     { name = "watchdog", specifier = ">=4.0" },
     { name = "youtube-transcript-api", specifier = ">=0.6" },
 ]
