@@ -8,7 +8,7 @@
 #   STAGING = parent of VAULT — staging files the tester copies/drags into VAULT
 #
 # IMPORTANT: This script operates on the TEST vault, never the real vault.
-# Last generated: 2026-06-10
+# Last generated: 2026-06-13
 
 set -euo pipefail
 
@@ -571,6 +571,37 @@ setup_P2_CIC_12() {
 
     Test fixture for P2-CIC-12."
 }
+# ─── Phase 3 (phase) ───────────────────────────────────────────────────────
+
+# phase | P3-SRCH-01: A question finds a semantically related note even when the wording differs (vector match, not just keywords)
+setup_P3_SRCH_01() {
+    echo "P3-SRCH-01: No pre-created fixtures. Trigger: kms search \"<query>\""
+}
+
+# phase | P3-SRCH-02: A project filter with no question returns every note in that project, newest first (filter-only mode)
+setup_P3_SRCH_02() {
+    echo "P3-SRCH-02: No pre-created fixtures. Trigger: kms search --project <Name>"
+}
+
+# phase | P3-SRCH-03: A question plus a project filter searches semantically but only within that project
+setup_P3_SRCH_03() {
+    echo "P3-SRCH-03: No pre-created fixtures. Trigger: kms search \"<query>\" --project <Name>"
+}
+
+# phase | P3-SRCH-05: A result for a binary's sibling summary shows a usable title, not the raw "report.pdf.md" filename
+setup_P3_SRCH_05() {
+    echo "P3-SRCH-05: No pre-created fixtures. Trigger: kms search \"<query>\""
+}
+
+# phase | P3-SRCH-07: Rebuilding both indexes is idempotent — running reindex twice yields identical results
+setup_P3_SRCH_07() {
+    echo "P3-SRCH-07: No pre-created fixtures. Trigger: kms search --reindex"
+}
+
+# phase | P3-SRCH-10: A captured binary's sibling note carries an AI-generated descriptive title in frontmatter
+setup_P3_SRCH_10() {
+    echo "P3-SRCH-10: No pre-created fixtures. Trigger: kms capture <Projects/Alpha/report.pdf>"
+}
 # ─── Phase 1 — Capture Pipeline (full) ─────────────────────────────────────
 
 # full | P1-DEV-01: Audit trail written for every capture decision
@@ -785,6 +816,78 @@ setup_P2_CIC_13() {
 
     Test fixture for P2-CIC-13."
 }
+# ─── Phase 3 (full) ────────────────────────────────────────────────────────
+
+# full | P3-SRCH-04: Every search result carries a triage payload (handle, summary, snippet, score, metadata) and never the full note body
+setup_P3_SRCH_04() {
+    echo "P3-SRCH-04: No pre-created fixtures. Trigger: kms search \"<query>\""
+}
+
+# full | P3-SRCH-06: Search skips index rows whose underlying note was deleted instead of crashing
+setup_P3_SRCH_06() {
+    echo "P3-SRCH-06: No pre-created fixtures. Trigger: kms search \"<query>\""
+}
+
+# full | P3-SRCH-08: A date-range filter with no question returns recent notes (supports a future weekly synthesis caller)
+setup_P3_SRCH_08() {
+    echo "P3-SRCH-08: No pre-created fixtures. Trigger: kms search --since <window>"
+}
+
+# full | P3-SRCH-09: Classify no longer accepts a domain name as a valid project destination (cross-type leak closed, TD-051)
+setup_P3_SRCH_09() {
+    echo "P3-SRCH-09: No pre-created fixtures. Trigger: classify() with a domain name supplied as project"
+}
+# ─── Phase 5 (full) ────────────────────────────────────────────────────────
+
+# full | P5-DATA-01: The new knowledge_entries table exists after the database is initialized, with all eleven columns
+setup_P5_DATA_01() {
+    echo "P5-DATA-01: No pre-created fixtures. Trigger: init_db() runs (migration 008 applied)"
+}
+
+# full | P5-DATA-02: The documents table gains three new nullable columns and every existing row reads back with them NULL (no breakage)
+setup_P5_DATA_02() {
+    echo "P5-DATA-02: No pre-created fixtures. Trigger: init_db() runs on a database that already has documents rows"
+}
+
+# full | P5-DATA-03: A knowledge entry can be created and read back by dimension, carrying its fact, status, confidence, and source list
+setup_P5_DATA_03() {
+    echo "P5-DATA-03: No pre-created fixtures. Trigger: knowledge_entries.upsert(...) then knowledge_entries.query_by_dimension(...)"
+}
+
+# full | P5-DATA-04: Querying by entity returns only that entity's entries across its tags
+setup_P5_DATA_04() {
+    echo "P5-DATA-04: No pre-created fixtures. Trigger: knowledge_entries.query_by_entity(...)"
+}
+
+# full | P5-DATA-05: Retiring an entry flips its status to retired with a reason and never deletes the row
+setup_P5_DATA_05() {
+    echo "P5-DATA-05: No pre-created fixtures. Trigger: knowledge_entries.retire(entry_id, reason)"
+}
+
+# full | P5-DATA-06: get_confident_and_pending returns confident and pending entries but excludes retired ones (the set fed to the extraction prompt)
+setup_P5_DATA_06() {
+    echo "P5-DATA-06: No pre-created fixtures. Trigger: knowledge_entries.get_confident_and_pending(...)"
+}
+
+# full | P5-DATA-07: A valid dimension/tag pair is accepted and an invented one is rejected
+setup_P5_DATA_07() {
+    echo "P5-DATA-07: No pre-created fixtures. Trigger: validate_dimension_tag(dimension, tag, config)"
+}
+
+# full | P5-DATA-08: Every dimension in the config carries a mandatory "other" catch-all tag
+setup_P5_DATA_08() {
+    echo "P5-DATA-08: No pre-created fixtures. Trigger: validate_dimension_tag(any_dimension, \"other\", config)"
+}
+
+# full | P5-DATA-09: A confidence score maps to a confident/pending status using thresholds read from config, not hardcoded floats
+setup_P5_DATA_09() {
+    echo "P5-DATA-09: No pre-created fixtures. Trigger: status-from-confidence mapping used by knowledge_entries.upsert / classify"
+}
+
+# full | P5-DATA-10: The full existing test suite stays green after the additive migration and new modules land, except the expected migration version-pin bump
+setup_P5_DATA_10() {
+    echo "P5-DATA-10: No pre-created fixtures. Trigger: uv run pytest"
+}
 
 # ─── Tier runners ──────────────────────────────────────────────────────────────
 
@@ -832,6 +935,12 @@ run_phase() {
     setup_P2_CIC_10
     setup_P2_CIC_11
     setup_P2_CIC_12
+    setup_P3_SRCH_01
+    setup_P3_SRCH_02
+    setup_P3_SRCH_03
+    setup_P3_SRCH_05
+    setup_P3_SRCH_07
+    setup_P3_SRCH_10
 }
 
 run_all() {
@@ -858,6 +967,20 @@ run_all() {
     setup_P2_CIC_08
     setup_P2_CIC_09
     setup_P2_CIC_13
+    setup_P3_SRCH_04
+    setup_P3_SRCH_06
+    setup_P3_SRCH_08
+    setup_P3_SRCH_09
+    setup_P5_DATA_01
+    setup_P5_DATA_02
+    setup_P5_DATA_03
+    setup_P5_DATA_04
+    setup_P5_DATA_05
+    setup_P5_DATA_06
+    setup_P5_DATA_07
+    setup_P5_DATA_08
+    setup_P5_DATA_09
+    setup_P5_DATA_10
 }
 
 # ─── Main dispatch ─────────────────────────────────────────────────────────────
@@ -921,6 +1044,12 @@ case "${1:-all}" in
     P2-CIC-10)  reset_db; clean_vault; setup_P2_CIC_10 ;;
     P2-CIC-11)  reset_db; clean_vault; setup_P2_CIC_11 ;;
     P2-CIC-12)  reset_db; clean_vault; setup_P2_CIC_12 ;;
+    P3-SRCH-01)  reset_db; clean_vault; setup_P3_SRCH_01 ;;
+    P3-SRCH-02)  reset_db; clean_vault; setup_P3_SRCH_02 ;;
+    P3-SRCH-03)  reset_db; clean_vault; setup_P3_SRCH_03 ;;
+    P3-SRCH-05)  reset_db; clean_vault; setup_P3_SRCH_05 ;;
+    P3-SRCH-07)  reset_db; clean_vault; setup_P3_SRCH_07 ;;
+    P3-SRCH-10)  reset_db; clean_vault; setup_P3_SRCH_10 ;;
     # ── Full ──
     P1-DEV-01)  reset_db; clean_vault; setup_P1_DEV_01 ;;
     P1-DEV-02)  reset_db; clean_vault; setup_P1_DEV_02 ;;
@@ -944,6 +1073,20 @@ case "${1:-all}" in
     P2-CIC-08)  reset_db; clean_vault; setup_P2_CIC_08 ;;
     P2-CIC-09)  reset_db; clean_vault; setup_P2_CIC_09 ;;
     P2-CIC-13)  reset_db; clean_vault; setup_P2_CIC_13 ;;
+    P3-SRCH-04)  reset_db; clean_vault; setup_P3_SRCH_04 ;;
+    P3-SRCH-06)  reset_db; clean_vault; setup_P3_SRCH_06 ;;
+    P3-SRCH-08)  reset_db; clean_vault; setup_P3_SRCH_08 ;;
+    P3-SRCH-09)  reset_db; clean_vault; setup_P3_SRCH_09 ;;
+    P5-DATA-01)  reset_db; clean_vault; setup_P5_DATA_01 ;;
+    P5-DATA-02)  reset_db; clean_vault; setup_P5_DATA_02 ;;
+    P5-DATA-03)  reset_db; clean_vault; setup_P5_DATA_03 ;;
+    P5-DATA-04)  reset_db; clean_vault; setup_P5_DATA_04 ;;
+    P5-DATA-05)  reset_db; clean_vault; setup_P5_DATA_05 ;;
+    P5-DATA-06)  reset_db; clean_vault; setup_P5_DATA_06 ;;
+    P5-DATA-07)  reset_db; clean_vault; setup_P5_DATA_07 ;;
+    P5-DATA-08)  reset_db; clean_vault; setup_P5_DATA_08 ;;
+    P5-DATA-09)  reset_db; clean_vault; setup_P5_DATA_09 ;;
+    P5-DATA-10)  reset_db; clean_vault; setup_P5_DATA_10 ;;
     *)
         echo "Unknown test ID: ${1}"
         echo "Usage: $0 [test-id|all|smoke|phase]"

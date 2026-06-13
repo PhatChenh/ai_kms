@@ -12,7 +12,7 @@ AI-enhanced knowledge management system for busy managers. Watches an Obsidian v
 
 **Target user:** a non-technical executive. Zero organisational effort is the baseline assumption. The AI does the work; the human does the judgment.
 
-**Key constraint:** Hard delivery deadline 30 June 2026. Current phase: Vault-Restructure complete (ADR-0006 editable/no-edit split, 956 tests). Next: Phase 2 — Classify pipeline. Three milestones:
+**Key constraint:** Hard delivery deadline 30 June 2026. Current phase: Cloud-native rearchitecture — P5 Slice 1 (Data/Config Foundation) complete (1275 tests, merged to cloud-native). Three milestones:
 - M1 ~15 May — Capture + Classify + Search end-to-end
 - M2 ~30 May — MCP MVP live for boss demo
 - M3 30 June — Full feature set (Promotion, Documentation, Self-learning, Briefing)
@@ -329,7 +329,7 @@ The following rules are enforced by hooks in `.claude/settings.json` — Claude 
 
 ## Build progress
 
-**Overall:** Phase 1 of 8 complete + Brief #2/#3 done + Phase 1.5 Pay-Debt complete + Phase Pre-2 complete + Vault-Restructure complete (2026-06-04, 956 tests). TD-042 deprecated-key strip complete (2026-06-07, 959 tests). P2-CL classify() pure function implemented (2026-06-08). **P2-CIC Classify Inline in Capture — all 9 phases COMPLETE (2026-06-08, 1080 tests, merged to main).** **TD-040/TD-041 Batch-ID Fix COMPLETE (2026-06-09).** **P3 Session A Index Layer COMPLETE (2026-06-10, 1147 tests).** **P3 Session B Query Path COMPLETE (2026-06-11, ~1370 tests, merged to main). Phase 3 (Search) COMPLETE. M1 milestone (Capture + Classify + Search end-to-end) ACHIEVED.** **Phase 4 (MCP Server) — ALL 7 PHASES COMPLETE (2026-06-12, 1258 tests, merged to main).** New `src/mcp_server/` package: `server.py` (FastMCP stdio), `context.py` (ContextInjectionEngine), `_resolve.py` (binary text extractor), `_move.py` (7-step mover), `tools.py` (5 logic-free shims: `kms_vault_info`, `kms_search`, `kms_read`, `kms_inspect`, `kms_move`), `AI_INSTRUCTIONS.md` (TD-055). ADR-0010/0011 accepted. **Next: Phase 5/6/7 — all independent.**
+**Overall:** Phase 1 of 8 complete + Brief #2/#3 done + Phase 1.5 Pay-Debt complete + Phase Pre-2 complete + Vault-Restructure complete (2026-06-04, 956 tests). TD-042 deprecated-key strip complete (2026-06-07, 959 tests). P2-CL classify() pure function implemented (2026-06-08). **P2-CIC Classify Inline in Capture — all 9 phases COMPLETE (2026-06-08, 1080 tests, merged to main).** **TD-040/TD-041 Batch-ID Fix COMPLETE (2026-06-09).** **P3 Session A Index Layer COMPLETE (2026-06-10, 1147 tests).** **P3 Session B Query Path COMPLETE (2026-06-11, ~1370 tests, merged to main). Phase 3 (Search) COMPLETE. M1 milestone (Capture + Classify + Search end-to-end) ACHIEVED.** **Phase 4 (MCP Server) — ALL 7 PHASES COMPLETE (2026-06-12, 1258 tests, merged to main).** **P5 Slice 1 (Data/Config Foundation) — COMPLETE (2026-06-13, 1275 tests, merged to cloud-native).** Migration 008 (`knowledge_entries` table + 3 optional document columns), dimension/tag rulebook (`dimensions.yaml` + `validate_dimension_tag()` + `confidence_to_status()`), knowledge entry store (5 CRUD ops in `src/storage/knowledge_entries.py`). Purely additive per ADR-0012. **Next: consult `docs/0_draft/cloud_native_rearchitecture.md` for next slice.**
 
 (Phase 0 + Phase 1 checklists closed — see STATE.md for full history.)
 

@@ -1,7 +1,7 @@
 # AI-KMS Testing Guide
 _For non-technical testers. No coding required for Smoke and Phase checks._
 _Auto-generated from `behavior_inventory.yaml`. Fill in **Current result** fields after testing. All other content is regenerated — do not edit._
-_Last generated: 2026-06-10_
+_Last generated: 2026-06-13_
 
 ---
 
@@ -1243,6 +1243,129 @@ uv run kms capture inbox/p2cic-12-multi-domain-note.md
 
 ---
 
+### Phase 3
+
+---
+
+### P3-SRCH-01 · A question finds a semantically related note even when the wording differs (vector match, not just keywords)
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Capture a note whose summary/body describes "managing pushback in meetings".
+
+Run: uv run kms search "stakeholder resistance"
+
+**Check:**
+- [ ] The pushback note appears in the result list
+- [ ] Each result block shows the note's real title, a score, and a snippet
+
+**Last tested:** 2026-06-11
+**Last result:** passed
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P3-SRCH-02 · A project filter with no question returns every note in that project, newest first (filter-only mode)
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Capture several notes into Projects/Alpha/ over time.
+
+Run: uv run kms search --project Alpha
+
+**Check:**
+- [ ] All Alpha notes are returned with no query term required
+- [ ] Results are ordered most-recently-updated first
+
+**Last tested:** 2026-06-11
+**Last result:** passed
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P3-SRCH-03 · A question plus a project filter searches semantically but only within that project
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Capture notes into two projects, both touching the query topic.
+
+Run: uv run kms search "budget Q3" --project Alpha
+
+**Check:**
+- [ ] Only Alpha notes appear in the results
+- [ ] Results are ranked by relevance to the question
+
+**Last tested:** 2026-06-11
+**Last result:** passed
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P3-SRCH-05 · A result for a binary's sibling summary shows a usable title, not the raw "report.pdf.md" filename
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Capture a PDF/binary so its sibling summary note is indexed.
+
+Run a query that matches the binary's content.
+
+**Check:**
+- [ ] The result's title is the human-readable note title from the index
+
+**Last tested:** 2026-06-11
+**Last result:** passed
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P3-SRCH-07 · Rebuilding both indexes is idempotent — running reindex twice yields identical results
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Run: uv run kms search --reindex
+
+Run the same reindex a second time.
+
+**Check:**
+- [ ] The reindex reports a count of notes processed
+- [ ] Second run produces no duplicate index rows
+
+**Last tested:** 2026-06-11
+**Last result:** passed
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P3-SRCH-10 · A captured binary's sibling note carries an AI-generated descriptive title in frontmatter
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Capture a PDF/binary so its sibling summary note is written and indexed.
+
+Open the sibling .md and inspect its frontmatter.
+
+**Check:**
+- [ ] Sibling frontmatter carries a descriptive title field (the AI's title)
+- [ ] The documents.title for the sibling row is the descriptive title
+
+**Last tested:** 2026-06-11
+**Last result:** passed
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
 ## FULL — Developer Only (Terminal + DB Access)
 
 ---
@@ -1967,6 +2090,293 @@ Compare the folder portion of vault_path against the stamped project (or primary
 - [ ] If a project is stamped, vault_path is under Projects/<that project>/
 - [ ] If no project but a primary domain, vault_path is under Domain/<that primary domain>/
 - [ ] The folder NEVER points at a project/domain the frontmatter does not name (derived, not free pick)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### Phase 3
+
+---
+
+### P3-SRCH-04 · Every search result carries a triage payload (handle, summary, snippet, score, metadata) and never the full note body
+_Origin: design · Granularity: mechanism_
+
+**Run:**
+Run any query that returns at least one result.
+
+**Check:**
+- [ ] Each result has vault_path, summary, snippet, score, and metadata
+- [ ] No result contains the full note body
+
+**Last tested:** 2026-06-11
+**Last result:** passed
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P3-SRCH-06 · Search skips index rows whose underlying note was deleted instead of crashing
+_Origin: design · Granularity: mechanism_
+
+**Run:**
+Leave an index entry whose documents row was removed.
+
+Run a query that would otherwise return that entry.
+
+**Check:**
+- [ ] Search returns the other valid results and silently skips the stale entry
+
+**Last tested:** 2026-06-11
+**Last result:** passed
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P3-SRCH-08 · A date-range filter with no question returns recent notes (supports a future weekly synthesis caller)
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Capture notes across several days.
+
+Run: uv run kms search --since 7d
+
+**Check:**
+- [ ] Only notes updated within the window are returned, newest first
+
+**Last tested:** 2026-06-11
+**Last result:** passed
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P3-SRCH-09 · Classify no longer accepts a domain name as a valid project destination (cross-type leak closed, TD-051)
+_Origin: design · Granularity: mechanism_
+
+**Run:**
+Drive classify() so the AI response puts a domain name in the project field.
+
+**Check:**
+- [ ] classify() returns Failure(recoverable=True)
+- [ ] project validated only against project names, primary_domain only against domain names
+
+**Last tested:** 2026-06-11
+**Last result:** passed
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### Phase 5
+
+---
+
+### P5-DATA-01 · The new knowledge_entries table exists after the database is initialized, with all eleven columns
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Initialize a fresh database (run any command that calls init_db, or init_db directly against a temp db path).
+
+Inspect the schema: `sqlite3 <db> "PRAGMA table_info(knowledge_entries)"`
+
+Check the version: `sqlite3 <db> "SELECT version FROM schema_version"`
+
+**Check:**
+- [ ] knowledge_entries table exists with columns id, dimension, entity, tag, fact, status, confidence, sources, reasoning, created_at, updated_at
+- [ ] schema_version is 8
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P5-DATA-02 · The documents table gains three new nullable columns and every existing row reads back with them NULL (no breakage)
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Initialize a database that already contains captured documents rows (migration 008 applied on top).
+
+Inspect the schema: `sqlite3 <db> "PRAGMA table_info(documents)"`
+
+Read an existing row: `sqlite3 <db> "SELECT full_body, original_filename, file_size_bytes FROM documents LIMIT 1"`
+
+**Check:**
+- [ ] documents has the new columns full_body (TEXT), original_filename (TEXT), file_size_bytes (INTEGER), all nullable
+- [ ] The three new columns read back as NULL on every pre-existing row (nothing populates them in Slice 1)
+- [ ] get_by_path returns a DocumentRow without error for an existing row
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P5-DATA-03 · A knowledge entry can be created and read back by dimension, carrying its fact, status, confidence, and source list
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Call upsert() to store an entry (e.g. dimension=people, entity=Anthony, tag=role, fact="Product Lead for Movie Q2", status=confident, a confidence score, sources=[a document reference]).
+
+Call query_by_dimension("people") and inspect the returned rows.
+
+**Check:**
+- [ ] upsert returns Success with the new row id
+- [ ] query_by_dimension returns the entry with its fact, status, confidence, and source list intact (sources round-trips as a list)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P5-DATA-04 · Querying by entity returns only that entity's entries across its tags
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Store two entries for one entity under different tags, plus one entry for a different entity.
+
+Call query_by_entity for the first entity.
+
+**Check:**
+- [ ] Only the two entries for that entity are returned; the other entity's entry is excluded
+- [ ] Each returned entry carries its own tag and fact
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P5-DATA-05 · Retiring an entry flips its status to retired with a reason and never deletes the row
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Store a confident entry, then call retire() on it with a reason string.
+
+Read the row back by its id.
+
+**Check:**
+- [ ] The row still exists (not deleted)
+- [ ] status is now retired and reasoning records the supplied reason
+- [ ] updated_at is refreshed
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P5-DATA-06 · get_confident_and_pending returns confident and pending entries but excludes retired ones (the set fed to the extraction prompt)
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Store three entries for one entity — one confident, one pending, one retired.
+
+Call get_confident_and_pending for that entity (or dimension).
+
+**Check:**
+- [ ] The confident and pending entries are returned
+- [ ] The retired entry is NOT returned (retired entries are excluded from extraction input)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P5-DATA-07 · A valid dimension/tag pair is accepted and an invented one is rejected
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Load the dimension/tag config.
+
+Call validate_dimension_tag("people", "role", config) and validate_dimension_tag("people", "invented_tag", config).
+
+**Check:**
+- [ ] The valid pair returns Success
+- [ ] The invalid tag returns Failure (unknown tag for that dimension)
+- [ ] An unknown dimension also returns Failure
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P5-DATA-08 · Every dimension in the config carries a mandatory "other" catch-all tag
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Load the dimension/tag config.
+
+For each configured dimension, call validate_dimension_tag(dimension, "other", config).
+
+**Check:**
+- [ ] The tag "other" validates as a known tag for every dimension (catch-all present everywhere)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P5-DATA-09 · A confidence score maps to a confident/pending status using thresholds read from config, not hardcoded floats
+_Origin: design · Granularity: mechanism_
+
+**Run:**
+Feed a high confidence score (above the configured confident threshold) and a low one (below it) through the status mapping.
+
+Inspect the source: confirm the threshold comes from config, not a literal in code.
+
+**Check:**
+- [ ] High score maps to status confident; low score maps to status pending
+- [ ] The threshold value is read from config (no float literal in an if/elif drives the mapping)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P5-DATA-10 · The full existing test suite stays green after the additive migration and new modules land, except the expected migration version-pin bump
+_Origin: design · Granularity: mechanism_
+
+**Run:**
+Run the full suite: `uv run pytest`
+
+**Check:**
+- [ ] All previously-passing tests still pass, EXCEPT the two version-pin assertions in tests/test_storage/test_migration_007.py (lines 41, 56) which are updated 7->8 as the expected migration-version bump (research A1, 2026-06-12) — not a regression
+- [ ] No other existing test is rewritten or deleted to accommodate Slice 1
+- [ ] documents.upsert() still accepts a WriteOutcome (signature unchanged)
 
 **Last tested:** never
 **Last result:** none
