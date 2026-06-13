@@ -1,7 +1,7 @@
 """
 mcp_server/api.py — REST handlers + secret-key gate + health route (Phase 3)
 
-Implements C2-2: upload, event, and health endpoints with a bearer-token gate
+Implements C2-2: upload, state, event, and health endpoints with a bearer-token gate
 scoped to /api/* only.
 """
 
@@ -17,6 +17,7 @@ from starlette.routing import Route
 
 from core.result import Failure, Success
 from storage.documents import (
+    all_paths,
     delete_by_path,
     rename,
     upsert_from_upload,
@@ -68,7 +69,7 @@ async def health_handler(request: Request) -> JSONResponse:
 async def upload_handler(request: Request) -> JSONResponse:
     """Accept an uploaded document, upsert it, return the document id.
 
-    Body (JSON)::
+    **JSON text path** (Content-Type: application/json)::
 
         {
             "vault_path": "...",
@@ -80,60 +81,182 @@ async def upload_handler(request: Request) -> JSONResponse:
             "metadata": { ... }           (accepted and discarded)
         }
 
+    **Binary path** (Content-Type: multipart/form-data)::
+
+        Form fields:
+            vault_path        (required)
+            content_hash      (required)
+            original_filename (optional)
+            file_size_bytes   (optional)
+            mime_type         (optional, accepted and discarded)
+            file              (optional, accepted and discarded in A1)
+
+        ``extracted_text`` is set to ``None`` — ``full_body`` will be NULL.
+
     Requires valid ``Authorization: Bearer <KMS_DAEMON_API_KEY>``.
     """
     key = require_key(request)
     if key is None:
         return JSONResponse({"status": "unauthorized"}, status_code=401)
 
-    try:
-        body: Any = await request.json()
-    except Exception:
-        return JSONResponse(
-            {"status": "error", "detail": "invalid JSON body"},
-            status_code=400,
+    content_type: str = request.headers.get("content-type", "")
+
+    # ── Multipart binary path ──────────────────────────────────────────
+    if content_type.startswith("multipart/form-data"):
+        try:
+            form = await request.form()
+        except Exception:
+            return JSONResponse(
+                {"status": "error", "detail": "invalid multipart form data"},
+                status_code=400,
+            )
+
+        vault_path: str | None = form.get("vault_path")
+        if not vault_path:
+            return JSONResponse(
+                {"status": "error", "detail": "vault_path is required"},
+                status_code=400,
+            )
+
+        content_hash: str | None = form.get("content_hash")
+        if not content_hash:
+            return JSONResponse(
+                {"status": "error", "detail": "content_hash is required"},
+                status_code=400,
+            )
+
+        original_filename: str | None = form.get("original_filename") or None
+        file_size_bytes_raw: str | None = form.get("file_size_bytes")
+        file_size_bytes: int | None = None
+        if file_size_bytes_raw:
+            try:
+                file_size_bytes = int(file_size_bytes_raw)
+            except (ValueError, TypeError):
+                return JSONResponse(
+                    {"status": "error", "detail": "file_size_bytes must be an integer"},
+                    status_code=400,
+                )
+
+        # file bytes and mime_type are accepted but discarded in A1
+        # (blob storage arrives in Phase 7)
+
+        result = upsert_from_upload(
+            vault_path=vault_path,
+            extracted_text=None,
+            content_hash=content_hash,
+            original_filename=original_filename,
+            file_size_bytes=file_size_bytes,
+            db_path=_db_path,
         )
 
-    if not isinstance(body, dict):
-        return JSONResponse(
-            {"status": "error", "detail": "body must be a JSON object"},
-            status_code=400,
+        match result:
+            case Success(document_id):
+                return JSONResponse({"status": "ok", "document_id": document_id})
+            case Failure(error=err):
+                return JSONResponse(
+                    {"status": "error", "detail": str(err)},
+                    status_code=500,
+                )
+
+    # ── JSON text path (existing) ──────────────────────────────────────
+    if content_type.startswith("application/json"):
+        try:
+            body: Any = await request.json()
+        except Exception:
+            return JSONResponse(
+                {"status": "error", "detail": "invalid JSON body"},
+                status_code=400,
+            )
+
+        if not isinstance(body, dict):
+            return JSONResponse(
+                {"status": "error", "detail": "body must be a JSON object"},
+                status_code=400,
+            )
+
+        vault_path = body.get("vault_path")
+        if not vault_path:
+            return JSONResponse(
+                {"status": "error", "detail": "vault_path is required"},
+                status_code=400,
+            )
+
+        extracted_text: str | None = body.get("extracted_text")
+        if not extracted_text:
+            return JSONResponse(
+                {"status": "error", "detail": "extracted_text is required"},
+                status_code=400,
+            )
+
+        content_hash = body.get("content_hash")
+        if not content_hash:
+            return JSONResponse(
+                {"status": "error", "detail": "content_hash is required"},
+                status_code=400,
+            )
+
+        result = upsert_from_upload(
+            vault_path=vault_path,
+            extracted_text=extracted_text,
+            content_hash=content_hash,
+            original_filename=body.get("original_filename"),
+            file_size_bytes=body.get("file_size_bytes"),
+            title=body.get("title"),
+            db_path=_db_path,
         )
 
-    vault_path: str | None = body.get("vault_path")
-    if not vault_path:
-        return JSONResponse(
-            {"status": "error", "detail": "vault_path is required"},
-            status_code=400,
-        )
+        match result:
+            case Success(document_id):
+                return JSONResponse({"status": "ok", "document_id": document_id})
+            case Failure(error=err):
+                return JSONResponse(
+                    {"status": "error", "detail": str(err)},
+                    status_code=500,
+                )
 
-    extracted_text: str | None = body.get("extracted_text")
-    if not extracted_text:
-        return JSONResponse(
-            {"status": "error", "detail": "extracted_text is required"},
-            status_code=400,
-        )
-
-    content_hash: str | None = body.get("content_hash")
-    if not content_hash:
-        return JSONResponse(
-            {"status": "error", "detail": "content_hash is required"},
-            status_code=400,
-        )
-
-    result = upsert_from_upload(
-        vault_path=vault_path,
-        extracted_text=extracted_text,
-        content_hash=content_hash,
-        original_filename=body.get("original_filename"),
-        file_size_bytes=body.get("file_size_bytes"),
-        title=body.get("title"),
-        db_path=_db_path,
+    # ── Unsupported content type ───────────────────────────────────────
+    return JSONResponse(
+        {"status": "error", "detail": "Content-Type must be application/json or multipart/form-data"},
+        status_code=400,
     )
 
+
+async def state_handler(request: Request) -> JSONResponse:
+    """Return all documents known to the cloud: their vault_path and content_hash.
+
+    GET /api/state
+
+    Requires valid ``Authorization: Bearer <KMS_DAEMON_API_KEY>``.
+
+    Returns::
+
+        {
+            "status": "ok",
+            "documents": [
+                {"vault_path": "...", "content_hash": "..."},
+                ...
+            ]
+        }
+
+    content_hash may be ``null`` for pre-P5 data that was inserted without a
+    content fingerprint.
+    """
+    key = require_key(request)
+    if key is None:
+        return JSONResponse({"status": "unauthorized"}, status_code=401)
+
+    result = all_paths(db_path=_db_path)
+
     match result:
-        case Success(document_id):
-            return JSONResponse({"status": "ok", "document_id": document_id})
+        case Success(rows):
+            documents = [
+                {
+                    "vault_path": vp,
+                    "content_hash": ch,
+                }
+                for vp, ch in rows
+            ]
+            return JSONResponse({"status": "ok", "documents": documents})
         case Failure(error=err):
             return JSONResponse(
                 {"status": "error", "detail": str(err)},
@@ -222,6 +345,7 @@ async def event_handler(request: Request) -> JSONResponse:
 
 api_routes: list[Route] = [
     Route("/api/upload", endpoint=upload_handler, methods=["POST"]),
+    Route("/api/state", endpoint=state_handler, methods=["GET"]),
     Route("/api/event", endpoint=event_handler, methods=["POST"]),
 ]
 

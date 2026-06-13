@@ -155,7 +155,8 @@ def upsert(
 
 def upsert_from_upload(
     vault_path: str,
-    extracted_text: str,
+    extracted_text: str | None = None,
+    *,
     content_hash: str,
     original_filename: str | None = None,
     file_size_bytes: int | None = None,
@@ -173,6 +174,7 @@ def upsert_from_upload(
     Args:
         vault_path:        POSIX-relative path for the documents row.
         extracted_text:    Full extracted text to store in ``full_body``.
+                           May be None for binary uploads.
         content_hash:      Content fingerprint for dedup / change detection.
         original_filename: Original upload filename (optional).
         file_size_bytes:   File size in bytes (optional).

@@ -455,3 +455,313 @@ class TestHealthGateIsolation:
 
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
+
+
+# ============================================================================
+# P6-A1-01 — GET /api/state returns document list
+# ============================================================================
+
+
+class TestState:
+    """GET /api/state — returns all known documents."""
+
+    @pytest.fixture(autouse=True)
+    def _set_key(self, monkeypatch):
+        monkeypatch.setenv("KMS_DAEMON_API_KEY", API_KEY)
+
+    def test_state_empty_db_returns_empty_list(self, db):
+        """GET /api/state on empty database → 200 with empty documents list."""
+        import mcp_server.api as api
+
+        api._db_path = db
+
+        app = Starlette(routes=api.api_routes)
+        client = TestClient(app)
+
+        resp = client.get(
+            "/api/state",
+            headers={"Authorization": f"Bearer {API_KEY}"},
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["documents"] == []
+
+    def test_state_returns_all_documents(self, db):
+        """GET /api/state returns all (vault_path, content_hash) pairs."""
+        import mcp_server.api as api
+
+        api._db_path = db
+
+        # Insert a couple of documents
+        from storage.documents import upsert_from_upload
+
+        upsert_from_upload(
+            vault_path="docs/alpha.md",
+            extracted_text="alpha content",
+            content_hash="hash-alpha",
+            db_path=db,
+        )
+        upsert_from_upload(
+            vault_path="docs/beta.md",
+            extracted_text="beta content",
+            content_hash="hash-beta",
+            db_path=db,
+        )
+
+        app = Starlette(routes=api.api_routes)
+        client = TestClient(app)
+
+        resp = client.get(
+            "/api/state",
+            headers={"Authorization": f"Bearer {API_KEY}"},
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        docs = data["documents"]
+        assert len(docs) == 2
+
+        # Order is insertion order; verify both present
+        paths = {d["vault_path"] for d in docs}
+        assert paths == {"docs/alpha.md", "docs/beta.md"}
+        hashes = {d["content_hash"] for d in docs}
+        assert hashes == {"hash-alpha", "hash-beta"}
+
+    def test_state_missing_key_returns_401(self, db):
+        """GET /api/state without Authorization → 401."""
+        import mcp_server.api as api
+
+        api._db_path = db
+
+        app = Starlette(routes=api.api_routes)
+        client = TestClient(app)
+
+        resp = client.get("/api/state")
+
+        assert resp.status_code == 401
+        assert resp.json() == {"status": "unauthorized"}
+
+    def test_state_wrong_key_returns_401(self, db):
+        """GET /api/state with wrong bearer token → 401."""
+        import mcp_server.api as api
+
+        api._db_path = db
+
+        app = Starlette(routes=api.api_routes)
+        client = TestClient(app)
+
+        resp = client.get(
+            "/api/state",
+            headers={"Authorization": "Bearer wrong-key"},
+        )
+
+        assert resp.status_code == 401
+        assert resp.json() == {"status": "unauthorized"}
+
+
+# ============================================================================
+# P6-A1-03 — Multipart binary upload
+# ============================================================================
+
+
+class TestMultipartUpload:
+    """POST /api/upload with Content-Type: multipart/form-data."""
+
+    @pytest.fixture(autouse=True)
+    def _set_key(self, monkeypatch):
+        monkeypatch.setenv("KMS_DAEMON_API_KEY", API_KEY)
+
+    def test_multipart_upload_creates_row_with_null_full_body(self, db):
+        """Multipart upload creates a documents row with NULL full_body."""
+        import mcp_server.api as api
+
+        api._db_path = db
+
+        app = Starlette(routes=api.api_routes)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/upload",
+            data={
+                "vault_path": "uploads/binary.pdf",
+                "content_hash": "abc123def",
+                "original_filename": "report.pdf",
+                "file_size_bytes": "2048",
+            },
+            files={"file": ("report.pdf", b"fake binary content", "application/pdf")},
+            headers={"Authorization": f"Bearer {API_KEY}"},
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert isinstance(data["document_id"], int)
+
+        # Verify row inserted with NULL full_body
+        from storage.documents import get_by_path
+
+        row = get_by_path("uploads/binary.pdf", db_path=db)
+        assert row.is_success()
+        doc = row.value
+        assert doc is not None
+        assert doc.vault_path == "uploads/binary.pdf"
+        assert doc.full_body is None
+        assert doc.content_hash == "abc123def"
+        assert doc.original_filename == "report.pdf"
+        assert doc.file_size_bytes == 2048
+
+    def test_multipart_upload_same_hash_is_noop(self, db):
+        """Re-upload with same content_hash → no-op, returns existing id."""
+        import mcp_server.api as api
+
+        api._db_path = db
+
+        app = Starlette(routes=api.api_routes)
+        client = TestClient(app)
+
+        form_data = {
+            "vault_path": "uploads/immutable.bin",
+            "content_hash": "same-hash-123",
+        }
+
+        # First upload
+        resp1 = client.post(
+            "/api/upload",
+            data=form_data,
+            files={"file": ("", b"")},
+            headers={"Authorization": f"Bearer {API_KEY}"},
+        )
+        assert resp1.status_code == 200
+        id1 = resp1.json()["document_id"]
+
+        # Second upload with same hash
+        resp2 = client.post(
+            "/api/upload",
+            data=form_data,
+            files={"file": ("", b"")},
+            headers={"Authorization": f"Bearer {API_KEY}"},
+        )
+        assert resp2.status_code == 200
+        id2 = resp2.json()["document_id"]
+
+        assert id1 == id2
+
+    def test_multipart_upload_missing_key_returns_401(self, db):
+        """Multipart upload without Authorization → 401."""
+        import mcp_server.api as api
+
+        api._db_path = db
+
+        app = Starlette(routes=api.api_routes)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/upload",
+            data={
+                "vault_path": "uploads/nope.bin",
+                "content_hash": "hash-nope",
+            },
+            files={"file": ("", b"")},
+        )
+
+        assert resp.status_code == 401
+        assert resp.json() == {"status": "unauthorized"}
+
+    def test_multipart_upload_missing_vault_path_returns_400(self, db):
+        """Multipart upload without vault_path → 400."""
+        import mcp_server.api as api
+
+        api._db_path = db
+
+        app = Starlette(routes=api.api_routes)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/upload",
+            data={"content_hash": "hash"},
+            files={"file": ("", b"")},
+            headers={"Authorization": f"Bearer {API_KEY}"},
+        )
+
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "vault_path is required"
+
+    def test_multipart_upload_missing_content_hash_returns_400(self, db):
+        """Multipart upload without content_hash → 400."""
+        import mcp_server.api as api
+
+        api._db_path = db
+
+        app = Starlette(routes=api.api_routes)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/upload",
+            data={"vault_path": "path.bin"},
+            files={"file": ("", b"")},
+            headers={"Authorization": f"Bearer {API_KEY}"},
+        )
+
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "content_hash is required"
+
+    def test_multipart_upload_invalid_file_size_returns_400(self, db):
+        """Multipart upload with non-integer file_size_bytes → 400."""
+        import mcp_server.api as api
+
+        api._db_path = db
+
+        app = Starlette(routes=api.api_routes)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/upload",
+            data={
+                "vault_path": "path.bin",
+                "content_hash": "hash",
+                "file_size_bytes": "not-a-number",
+            },
+            files={"file": ("", b"")},
+            headers={"Authorization": f"Bearer {API_KEY}"},
+        )
+
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "file_size_bytes must be an integer"
+
+
+# ============================================================================
+# P6-A1-02 — upsert_from_upload with extracted_text=None
+# ============================================================================
+
+
+class TestUpsertFromUploadNullExtractedText:
+    """Call upsert_from_upload(extracted_text=None) directly."""
+
+    def test_null_extracted_text_inserts_null_full_body(self, db):
+        """upsert_from_upload(extracted_text=None) → row with NULL full_body."""
+        from storage.documents import get_by_path, upsert_from_upload
+
+        result = upsert_from_upload(
+            vault_path="binaries/photo.png",
+            extracted_text=None,
+            content_hash="img-hash-001",
+            original_filename="photo.png",
+            file_size_bytes=4096,
+            db_path=db,
+        )
+
+        assert result.is_success()
+        doc_id = result.value
+        assert isinstance(doc_id, int)
+
+        row = get_by_path("binaries/photo.png", db_path=db)
+        assert row.is_success()
+        doc = row.value
+        assert doc is not None
+        assert doc.full_body is None
+        assert doc.content_hash == "img-hash-001"
+        assert doc.original_filename == "photo.png"
+        assert doc.file_size_bytes == 4096
