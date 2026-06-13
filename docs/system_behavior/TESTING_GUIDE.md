@@ -2385,3 +2385,260 @@ Run the full suite: `uv run pytest`
 ⚠ AI-authored — not yet human-verified.
 
 ---
+
+### P5-DEPLOY-01 · The container image builds for the cloud target platform and the container starts and reports itself alive on the one shared port
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Build the image targeting linux/amd64.
+
+Run the container mapping port 8080.
+
+Hit the health path: `curl -s http://localhost:8080/health`
+
+**Check:**
+- [ ] The image build completes without error
+- [ ] The container starts and stays up
+- [ ] GET /health returns HTTP 200 with a small ok body (e.g. {"status":"ok"})
+- [ ] /health needs no secret key (it is open)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P5-DEPLOY-02 · The existing knowledge-assistant (MCP) interface answers a tool-list request on the same single port, served from the HTTP entry point
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Start the container.
+
+Send an MCP tools/list request to the MCP path on port 8080.
+
+**Check:**
+- [ ] The MCP server responds with the registered tool list (the five existing KMS tools)
+- [ ] It is reachable on the same port as /health and /api/* (one port, different paths)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P5-DEPLOY-03 · A first upload of a new file stores a document record carrying its full extracted text and returns the new record id
+_Origin: design · Granularity: outcome_
+
+**Run:**
+POST a payload to /api/upload with the correct Authorization bearer key: a new vault_path, extracted_text, a content_hash, original_filename, file_size_bytes, and a metadata object.
+
+Read the stored row: `sqlite3 <db> "SELECT full_body, original_filename, file_size_bytes, content_hash FROM documents WHERE vault_path = ?"`
+
+**Check:**
+- [ ] The response is HTTP 200 with a document id
+- [ ] A documents row exists for that vault_path with full_body equal to the uploaded extracted text, original_filename, file_size_bytes, and content_hash set
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P5-DEPLOY-04 · Re-uploading the identical file (same path, same content fingerprint) is idempotent — the stored record is not duplicated or rewritten
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Upload a file once (as in P5-DEPLOY-03).
+
+Upload the exact same payload again.
+
+Count rows: `sqlite3 <db> "SELECT COUNT(*) FROM documents WHERE vault_path = ?"`
+
+**Check:**
+- [ ] Both requests return HTTP 200
+- [ ] There is exactly one documents row for that vault_path (no duplicate)
+- [ ] The second upload makes no content change (skip-on-same-hash)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P5-DEPLOY-05 · Uploading the same path with a different content fingerprint updates the stored text and details in place
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Upload a file once.
+
+Upload the same vault_path again with changed extracted_text and a different content_hash.
+
+Read the row back: `sqlite3 <db> "SELECT full_body, content_hash FROM documents WHERE vault_path = ?"`
+
+**Check:**
+- [ ] The single documents row for that vault_path now holds the new extracted text and the new content_hash
+- [ ] Still exactly one row (update in place, not a second insert)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P5-DEPLOY-06 · A move/rename event updates the stored file's location, carrying its search-index entries along
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Upload a file so a documents row (and its search entries) exist at the old path.
+
+POST /api/event with type=moved, old_path, new_path, using a valid secret key.
+
+Read back: `sqlite3 <db> "SELECT vault_path FROM documents WHERE vault_path = <new_path>"` and confirm the old path is gone.
+
+**Check:**
+- [ ] The response is HTTP 200
+- [ ] The documents row now reads at new_path; no row remains at old_path
+- [ ] The search-index entries (keyword + meaning) for that note moved to new_path too
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P5-DEPLOY-07 · A delete event removes the stored file completely, including its search-index entries, within one transaction
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Upload a file so its row and search entries exist.
+
+POST /api/event with type=deleted and that path, using a valid secret key.
+
+Confirm removal across all three tables: `sqlite3 <db> "SELECT COUNT(*) FROM documents WHERE vault_path = ?"` (and the two search tables).
+
+**Check:**
+- [ ] The response is HTTP 200
+- [ ] No row remains for that path in documents, the keyword index, or the meaning index
+- [ ] Removal is hard delete (no soft-delete flag left behind)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P5-DEPLOY-08 · An event naming a path that was never captured replies not_found instead of erroring
+_Origin: design · Granularity: outcome_
+
+**Run:**
+With a fresh DB (or a path known to be absent), POST /api/event delete (or move) for that path using a valid secret key.
+
+**Check:**
+- [ ] The response is HTTP 200 with a body indicating not_found (e.g. {"status":"not_found"})
+- [ ] It is NOT treated as an error (no 4xx/5xx) — the file may simply not have been captured yet
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P5-DEPLOY-09 · A request to a sync endpoint with a wrong or missing secret key is rejected as unauthorized
+_Origin: design · Granularity: outcome_
+
+**Run:**
+POST to /api/upload with no Authorization header.
+
+POST to /api/upload with an incorrect bearer key.
+
+**Check:**
+- [ ] Both requests return HTTP 401 (unauthorized)
+- [ ] No documents row is created or changed by the rejected requests
+- [ ] /health remains reachable without any key (the gate covers /api/* only)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P5-DEPLOY-10 · First-ever start with no backup creates a fresh database with the correct, fully-migrated schema
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Start the container with no prior backup available.
+
+Inspect the created database: `sqlite3 <db> "SELECT version FROM schema_version"` and `sqlite3 <db> "SELECT name FROM sqlite_master WHERE type='table'"`.
+
+**Check:**
+- [ ] A new database file is created at the dedicated data path
+- [ ] The schema is fully migrated (schema_version at the latest, all tables present including documents with full_body and the knowledge_entries table)
+- [ ] The app starts and serves requests against the fresh DB
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P5-DEPLOY-11 · After a container restart with cloud backup configured, the database is restored from object storage rather than starting empty
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Start the container with backup configured; upload one or more files so rows exist and a backup streams up.
+
+Stop the container; start it again with the same backup settings.
+
+Confirm the rows survived: `sqlite3 <db> "SELECT COUNT(*) FROM documents"`
+
+**Check:**
+- [ ] On the second start the database is restored from object storage before the app serves traffic
+- [ ] The previously-uploaded documents are present (no data loss across restart, modulo the accepted ~1 second crash window)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P5-DEPLOY-12 · The existing stdio entry point for the knowledge-assistant interface still works unchanged for local desktop use
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Run the original stdio MCP entry point locally.
+
+Send a tools/list request over stdio (as a desktop client would).
+
+**Check:**
+- [ ] The stdio server starts and responds with the registered tool list, exactly as before this slice
+- [ ] Adding the HTTP/cloud entry point did not break or alter the stdio path
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---

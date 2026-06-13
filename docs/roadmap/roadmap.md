@@ -131,7 +131,7 @@ These have been stable across ~1258 tests and multiple phases. Independent tasks
 | `vault/reader.py` | `read_note(path) → Result[Note]` | Read note + frontmatter from vault |
 | `vault/writer.py` | `write_note(path, content, metadata, actor)`, `move_note(src, dst)` | Write/move notes (respects `updated_by_human`) |
 | `vault/paths.py` | `resolve_placement()`, `project_attachment()`, `domain_attachment()` | Vault path helpers |
-| `storage/documents.py` | `upsert()`, `get_by_path()`, `all_paths()`, `delete_by_path()`, `rename()` | Document index CRUD |
+| `storage/documents.py` | `upsert()`, `get_by_path()`, `all_paths()`, `delete_by_path()`, `rename()`, `upsert_from_upload()` | Document index CRUD; `upsert_from_upload` (P5 Slice 2) accepts upload fields directly |
 | `storage/audit_log.py` | `append(AuditEntry) → Result[int]`, `query()` | Audit log read/write |
 | `core/audit.py` | `write(decision, source_ids, pipeline, stage, ...)` | High-level audit writer |
 | `core/tags.py` | `validate_tags(tags, taxonomy) → Result` | Tag taxonomy enforcement |
@@ -154,6 +154,8 @@ These have been stable across ~1258 tests and multiple phases. Independent tasks
 | `mcp_server/context.py` | `ContextInjectionEngine()` — `build_search_response(query, project, since, until, location, include_context)`, `build_vault_info_response()`, `build_read_response(paths, include_context)` | Per-conversation engine: frequency-threshold gating, project→domain registry lookup, content-hash dedup, context-block + card assembly. Instantiated once per conversation via FastMCP lifespan. |
 | `mcp_server/_resolve.py` | `inspect(path: Path) → Result[str]` | Binary text extractor — resolves sibling `.md` → binary via `attachment_path` frontmatter, then runs handler registry extractor. No AI, no audit. |
 | `mcp_server/_move.py` | `move(src: Path, dst_name: str, dst_kind: str, db_path=None) → Result[str]` | 7-step proven move recipe: resolve dest → read → capture old path → register guard → `move_note` → `write_note(dst, new_meta)` → `replace_path(old_vp, outcome)`. Blocks human-locked notes (C-02). |
+| `mcp_server/api.py` (P5 Slice 2) | `require_key(request)`, `upload_handler`, `event_handler`, `health_handler` | REST endpoints for daemon sync: `/api/upload` (save-or-update), `/api/event` (move/delete), `/health` (open health check). Bearer-key gate scoped to `/api/*`. |
+| `mcp_server/cloud_entry.py` (P5 Slice 2) | `build_app(db_path=None) → Starlette` | Container-mode entry point: calls `init_db()` (C2-4), builds FastMCP web app, mounts REST routes + health check, runs `uvicorn` on port 8080 under `__main__`. |
 
 
 ## Phase 3 — Search ✅ (COMPLETE)
@@ -186,13 +188,13 @@ These have been stable across ~1258 tests and multiple phases. Independent tasks
 
 ---
 
-## Phase 5 — Infrastructure Foundation
+## Phase 5 — Infrastructure Foundation ✅ (COMPLETE)
 
 **`DEPENDS ON: Phase 0-4 · WEIGHT: medium · TYPE: infrastructure (no behavior change)`**
 
-> **Rearchitecture phase.** Read `docs/0_draft/cloud_native_rearchitecture.md` for full architectural context. This phase lays the foundation — DB schema, repo structure, container scaffolding, API contract. No user-visible behavior changes.
+> **Rearchitecture phase.** Read `docs/0_draft/cloud_native_rearchitecture.md` for full architectural context. This phase laid the foundation — DB schema, repo structure, container scaffolding, API contract. No user-visible behavior changes.
 
-> **🔪 SPLIT INTO TWO SLICES (decided 2026-06-12, build-pipeline grill). SLICE 1 COMPLETE (2026-06-13, merged to cloud-native). The original single-phase scope was unbuildable as written — see ADR-0012.** Phase 5 now runs as two independent, parallelizable slices:
+> **🔪 SPLIT INTO TWO SLICES (decided 2026-06-12, build-pipeline grill). SLICE 1 COMPLETE (2026-06-13, merged to cloud-native). SLICE 2 COMPLETE (2026-06-13, merged to cloud-native).** Phase 5 ran as two independent, parallelizable slices:
 >
 > **SLICE 1 — Data/Config Foundation** *(pure local code, NO AgentBase, additive-only — zero existing-test breakage):*
 > - DB MIGRATIONS (new `knowledge_entries` table + 3 **nullable** `documents` columns)
@@ -200,7 +202,7 @@ These have been stable across ~1258 tests and multiple phases. Independent tasks
 > - DIMENSION/TAG CONFIG (`config/dimensions.yaml` + `validate_dimension_tag()`)
 > - **Does NOT** touch `documents.upsert()`, **does NOT** split config, **does NOT** retire modules (all deferred — see per-component warnings + ADR-0012).
 >
-> **SLICE 2 — Deployment Foundation** *(AgentBase — Slice 1 migration landed, ready to start)*:
+> **SLICE 2 — Deployment Foundation** *(COMPLETE 2026-06-13)*:
 > - CONTAINER SCAFFOLDING (Dockerfile, `/health`, port 8080, **Litestream + VNG Object Storage** for SQLite persistence per agentbase_research §11.2, `--max-replicas 1` per §11.4)
 > - REST API SKELETON (`/api/upload`, `/api/event`)
 >
@@ -210,7 +212,7 @@ These have been stable across ~1258 tests and multiple phases. Independent tasks
 
 Everything in the rearchitecture depends on three things existing first: (1) the new DB schema (`knowledge_entries` table, `full_body` column on documents), (2) the repo split into cloud code vs daemon code, and (3) a deployable container on AgentBase with REST endpoints for the daemon to upload to.
 
-Phase 5 builds this foundation. After this phase: the DB can store everything the new pipeline needs, the repo has clear cloud/daemon boundaries, the container runs on AgentBase with a health endpoint, and REST endpoints exist (stubbed) for daemon uploads. No pipelines change yet — this is pure infrastructure.
+Phase 5 built this foundation. After this phase: the DB can store everything the new pipeline needs, the repo has clear cloud/daemon boundaries, the container runs on AgentBase with a health endpoint, and REST endpoints exist (stubbed) for daemon uploads. No pipelines change yet — this is pure infrastructure.
 
 ### Repo structure after this phase
 

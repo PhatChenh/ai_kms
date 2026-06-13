@@ -889,6 +889,66 @@ setup_P5_DATA_10() {
     echo "P5-DATA-10: No pre-created fixtures. Trigger: uv run pytest"
 }
 
+# full | P5-DEPLOY-01: The container image builds for the cloud target platform and the container starts and reports itself alive on the one shared port
+setup_P5_DEPLOY_01() {
+    echo "P5-DEPLOY-01: No pre-created fixtures. Trigger: docker build --platform linux/amd64 . ; docker run -p 8080:8080 <image>"
+}
+
+# full | P5-DEPLOY-02: The existing knowledge-assistant (MCP) interface answers a tool-list request on the same single port, served from the HTTP entry point
+setup_P5_DEPLOY_02() {
+    echo "P5-DEPLOY-02: No pre-created fixtures. Trigger: HTTP MCP request to the running container on port 8080"
+}
+
+# full | P5-DEPLOY-03: A first upload of a new file stores a document record carrying its full extracted text and returns the new record id
+setup_P5_DEPLOY_03() {
+    echo "P5-DEPLOY-03: No pre-created fixtures. Trigger: POST /api/upload with a valid secret key and a new vault_path payload"
+}
+
+# full | P5-DEPLOY-04: Re-uploading the identical file (same path, same content fingerprint) is idempotent — the stored record is not duplicated or rewritten
+setup_P5_DEPLOY_04() {
+    echo "P5-DEPLOY-04: No pre-created fixtures. Trigger: POST /api/upload twice with the same vault_path and the same content_hash"
+}
+
+# full | P5-DEPLOY-05: Uploading the same path with a different content fingerprint updates the stored text and details in place
+setup_P5_DEPLOY_05() {
+    echo "P5-DEPLOY-05: No pre-created fixtures. Trigger: POST /api/upload with an existing vault_path but a new content_hash"
+}
+
+# full | P5-DEPLOY-06: A move/rename event updates the stored file's location, carrying its search-index entries along
+setup_P5_DEPLOY_06() {
+    echo "P5-DEPLOY-06: No pre-created fixtures. Trigger: POST /api/event with type=moved, an old_path and a new_path"
+}
+
+# full | P5-DEPLOY-07: A delete event removes the stored file completely, including its search-index entries, within one transaction
+setup_P5_DEPLOY_07() {
+    echo "P5-DEPLOY-07: No pre-created fixtures. Trigger: POST /api/event with type=deleted and a path"
+}
+
+# full | P5-DEPLOY-08: An event naming a path that was never captured replies not_found instead of erroring
+setup_P5_DEPLOY_08() {
+    echo "P5-DEPLOY-08: No pre-created fixtures. Trigger: POST /api/event (move or delete) for a path with no stored record"
+}
+
+# full | P5-DEPLOY-09: A request to a sync endpoint with a wrong or missing secret key is rejected as unauthorized
+setup_P5_DEPLOY_09() {
+    echo "P5-DEPLOY-09: No pre-created fixtures. Trigger: POST /api/upload or /api/event with a missing or incorrect Authorization bearer key"
+}
+
+# full | P5-DEPLOY-10: First-ever start with no backup creates a fresh database with the correct, fully-migrated schema
+setup_P5_DEPLOY_10() {
+    echo "P5-DEPLOY-10: No pre-created fixtures. Trigger: container start with backup turned off (or no backup present in object storage)"
+}
+
+# full | P5-DEPLOY-11: After a container restart with cloud backup configured, the database is restored from object storage rather than starting empty
+setup_P5_DEPLOY_11() {
+    echo "P5-DEPLOY-11: No pre-created fixtures. Trigger: stop and restart the container with backup settings present and a prior backup in object storage"
+}
+
+# full | P5-DEPLOY-12: The existing stdio entry point for the knowledge-assistant interface still works unchanged for local desktop use
+setup_P5_DEPLOY_12() {
+    echo "P5-DEPLOY-12: No pre-created fixtures. Trigger: python -m mcp_server.server (stdio transport, no container)"
+}
+
 # ─── Tier runners ──────────────────────────────────────────────────────────────
 
 run_smoke() {
@@ -981,6 +1041,18 @@ run_all() {
     setup_P5_DATA_08
     setup_P5_DATA_09
     setup_P5_DATA_10
+    setup_P5_DEPLOY_01
+    setup_P5_DEPLOY_02
+    setup_P5_DEPLOY_03
+    setup_P5_DEPLOY_04
+    setup_P5_DEPLOY_05
+    setup_P5_DEPLOY_06
+    setup_P5_DEPLOY_07
+    setup_P5_DEPLOY_08
+    setup_P5_DEPLOY_09
+    setup_P5_DEPLOY_10
+    setup_P5_DEPLOY_11
+    setup_P5_DEPLOY_12
 }
 
 # ─── Main dispatch ─────────────────────────────────────────────────────────────
@@ -1087,6 +1159,18 @@ case "${1:-all}" in
     P5-DATA-08)  reset_db; clean_vault; setup_P5_DATA_08 ;;
     P5-DATA-09)  reset_db; clean_vault; setup_P5_DATA_09 ;;
     P5-DATA-10)  reset_db; clean_vault; setup_P5_DATA_10 ;;
+    P5-DEPLOY-01)  reset_db; clean_vault; setup_P5_DEPLOY_01 ;;
+    P5-DEPLOY-02)  reset_db; clean_vault; setup_P5_DEPLOY_02 ;;
+    P5-DEPLOY-03)  reset_db; clean_vault; setup_P5_DEPLOY_03 ;;
+    P5-DEPLOY-04)  reset_db; clean_vault; setup_P5_DEPLOY_04 ;;
+    P5-DEPLOY-05)  reset_db; clean_vault; setup_P5_DEPLOY_05 ;;
+    P5-DEPLOY-06)  reset_db; clean_vault; setup_P5_DEPLOY_06 ;;
+    P5-DEPLOY-07)  reset_db; clean_vault; setup_P5_DEPLOY_07 ;;
+    P5-DEPLOY-08)  reset_db; clean_vault; setup_P5_DEPLOY_08 ;;
+    P5-DEPLOY-09)  reset_db; clean_vault; setup_P5_DEPLOY_09 ;;
+    P5-DEPLOY-10)  reset_db; clean_vault; setup_P5_DEPLOY_10 ;;
+    P5-DEPLOY-11)  reset_db; clean_vault; setup_P5_DEPLOY_11 ;;
+    P5-DEPLOY-12)  reset_db; clean_vault; setup_P5_DEPLOY_12 ;;
     *)
         echo "Unknown test ID: ${1}"
         echo "Usage: $0 [test-id|all|smoke|phase]"
