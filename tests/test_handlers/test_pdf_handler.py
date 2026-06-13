@@ -69,3 +69,25 @@ def test_can_handle_pdf_uppercase():
 
 def test_can_handle_rejects_md():
     assert PdfHandler().can_handle(Path("note.md")) is False
+
+
+def test_extract_with_explicit_max_size_accepts_small_file():
+    """When max_file_size_bytes is provided, a file smaller than the limit succeeds."""
+    result = PdfHandler().extract(FIXTURE_PDF, max_file_size_bytes=2_000_000)
+    assert isinstance(result, Success)
+    assert len(result.value.text) > 0
+
+
+def test_extract_with_explicit_max_size_rejects_oversized_file():
+    """When max_file_size_bytes is provided, a file larger than the limit is rejected."""
+    result = PdfHandler().extract(FIXTURE_PDF, max_file_size_bytes=500)
+    assert isinstance(result, Failure)
+    assert result.recoverable is False
+    assert "too large" in result.error.lower()
+
+
+def test_extract_with_default_param_still_works():
+    """Calling extract(path) without the new parameter is unaffected."""
+    result = PdfHandler().extract(FIXTURE_PDF)
+    assert isinstance(result, Success)
+    assert len(result.value.text) > 0

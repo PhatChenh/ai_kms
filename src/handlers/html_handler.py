@@ -21,11 +21,14 @@ class HtmlHandler(BaseHandler):
     def can_handle(self, path: Path) -> bool:
         return path.suffix.lower() in (".html", ".htm")
 
-    def extract(self, path: Path) -> Result[RawContent]:
-        # Lazy import — see handlers/pdf_handler.py for rationale.
-        from core.config import CONFIG
+    def extract(self, path: Path, *, max_file_size_bytes: int | None = None) -> Result[RawContent]:
+        if max_file_size_bytes is None:
+            # Lazy import — see handlers/pdf_handler.py for rationale.
+            from core.config import CONFIG
 
-        max_bytes = CONFIG.main.handlers.max_file_size_bytes
+            max_bytes = CONFIG.main.handlers.max_file_size_bytes
+        else:
+            max_bytes = max_file_size_bytes
 
         try:
             size = path.stat().st_size

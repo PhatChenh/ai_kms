@@ -78,11 +78,15 @@ class BaseHandler(ABC):
         """
 
     @abstractmethod
-    def extract(self, path: Path) -> Result[RawContent]:
+    def extract(self, path: Path, *, max_file_size_bytes: int | None = None) -> Result[RawContent]:
         """Extract plain text from the file at path.
 
         Args:
             path: Path to the dropped file.
+            max_file_size_bytes: When None (default), the max file size is read
+                from CONFIG.  When provided, that value is used instead, allowing
+                callers that don't have access to a CONFIG singleton (e.g. the
+                daemon) to supply their own limit.
 
         Returns:
             Success(RawContent) on success.

@@ -18,7 +18,7 @@ class PngHandler(BaseHandler):
     def can_handle(self, path: Path) -> bool:
         return path.suffix.lower() == ".png"
 
-    def extract(self, path: Path) -> Result[RawContent]:
+    def extract(self, path: Path, *, max_file_size_bytes: int | None = None) -> Result[RawContent]:
         return Failure(
             error="image extraction requires a vision-capable LLM — not yet implemented",
             recoverable=False,
@@ -31,7 +31,7 @@ class JpgHandler(BaseHandler):
     def can_handle(self, path: Path) -> bool:
         return path.suffix.lower() in (".jpg", ".jpeg")
 
-    def extract(self, path: Path) -> Result[RawContent]:
+    def extract(self, path: Path, *, max_file_size_bytes: int | None = None) -> Result[RawContent]:
         return Failure(
             error="image extraction requires a vision-capable LLM — not yet implemented",
             recoverable=False,

@@ -79,6 +79,12 @@ class TestPngHandlerExtract:
         assert isinstance(result, Failure)
         assert "vision-capable" in result.error
 
+    def test_explicit_max_size_parameter_accepted(self, png_path: Path) -> None:
+        """PngHandler accepts max_file_size_bytes even though it ignores it."""
+        result = PngHandler().extract(png_path, max_file_size_bytes=50_000_000)
+        assert isinstance(result, Failure)
+        assert "vision-capable" in result.error
+
 
 class TestJpgHandlerExtract:
     def test_jpg_always_returns_failure(self, jpg_path: Path) -> None:
@@ -96,5 +102,11 @@ class TestJpgHandlerExtract:
 
     def test_failure_mentions_vision(self, jpg_path: Path) -> None:
         result = JpgHandler().extract(jpg_path)
+        assert isinstance(result, Failure)
+        assert "vision-capable" in result.error
+
+    def test_explicit_max_size_parameter_accepted(self, jpg_path: Path) -> None:
+        """JpgHandler accepts max_file_size_bytes even though it ignores it."""
+        result = JpgHandler().extract(jpg_path, max_file_size_bytes=50_000_000)
         assert isinstance(result, Failure)
         assert "vision-capable" in result.error
