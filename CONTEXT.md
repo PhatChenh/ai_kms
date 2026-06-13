@@ -198,3 +198,39 @@ _Avoid_: "active/inactive", "verified/unverified", "archived" (retired rows are 
 **sources (on a knowledge entry):**
 The list of documents a fact was extracted from, stored inside the knowledge entry row itself as a list of document references. Every entry MUST have at least one source — no fact without traceability back to where it was learned.
 _Avoid_: "citations", "links", "provenance" (acceptable but plainer is preferred)
+
+### Cloud-Native — Deployment Foundation (P5 Slice 2)
+
+> Introduced by P5 Slice 2 (`docs/1_design/P5_slice2_deployment_foundation.md`). These concepts let the existing cloud code run as a container on AgentBase and give the future daemon (Phase 6) a cloud endpoint to send files to. Purely additive infrastructure — no pipeline changes.
+
+**cloud entry point:**
+The container-mode startup module that boots the system as a web server instead of as a local command-line tool. It loads the existing knowledge-assistant (MCP) interface, attaches the new web endpoints (`/health`, `/api/upload`, `/api/event`), and runs them all on one network port (8080). The existing local "stdio" startup (for Claude Desktop on the user's laptop) is left untouched and keeps working. Distinct from the MCP server module itself — the cloud entry point wraps and serves it; it does not replace it.
+_Avoid_: "main entry", "server" (be specific — it is the HTTP/container entry, separate from the stdio entry)
+
+**/health endpoint:**
+A tiny open web address the cloud platform pings to confirm the container is alive and ready. Returns a 200 "ok" with no secret-key check. AgentBase marks the container ACTIVE only once this responds; a failing or slow health check leaves the container stuck. Distinct from the sync endpoints — `/health` is the only path with no authentication.
+_Avoid_: "ping", "status page"
+
+**/api/upload (upload contract):**
+The web endpoint the future daemon calls to send one file's already-extracted text plus its details (location, original filename, size, a content fingerprint, and an open-ended metadata block) into the cloud database. In Slice 2 it is a deliberate STUB: it only stores or updates the document record — no summarizing, no search indexing, no fact extraction (those come in Phase 7). It is idempotent by content fingerprint: same location + same fingerprint = do nothing; same location + different fingerprint = overwrite. Protected by a shared secret key.
+_Avoid_: "capture endpoint" (it does NOT run the capture pipeline in Slice 2), "ingest API"
+
+**/api/event (event contract):**
+The web endpoint the future daemon calls to report that the user moved/renamed or deleted a file, so the cloud database can keep file locations in sync. A move updates the stored location (carrying search-index entries along); a delete removes the record and its search entries outright (hard delete). Naming a file the system never captured returns a plain "not found", not an error. One event type ("moved") covers both moves and renames. Protected by the same shared secret key as upload.
+_Avoid_: "sync API" (too broad), "webhook"
+
+**content fingerprint (content_hash, as idempotency key):**
+A short hash of a file's content used by `/api/upload` to decide whether an incoming file is new, unchanged, or changed — without needing a separate request ID. Same location + same fingerprint means "already have it, skip"; a different fingerprint for the same location means "content changed, overwrite". Network retries that resend an identical file naturally de-duplicate.
+_Avoid_: "checksum" (acceptable, but tie it to the idempotency role), "etag"
+
+**Litestream:**
+A small background helper that runs inside the cloud container next to the main app and continuously copies every database change up to cloud file storage roughly once per second. On container restart it downloads the latest copy back before the app starts, so the database survives even though the container itself keeps no permanent disk. The app reads and writes its database normally and is unaware Litestream exists. A crash can lose up to about one second of the most recent writes — an accepted trade-off at the current scale (3-4 testers).
+_Avoid_: "backup script", "database" (Litestream is NOT a database — it only mirrors the SQLite file)
+
+**(VNG) Object Storage:**
+Cloud file storage (an S3-compatible "USB drive in the cloud") that holds the database backup files Litestream produces. It stores files; it cannot run database queries itself. The container has no permanent disk of its own, so the database must live here between restarts. Access is configured via environment-variable credentials, never baked into the container image.
+_Avoid_: "the cloud", "bucket" (acceptable shorthand once introduced), "database store"
+
+**dummy vault path (TD-059):**
+A throwaway empty folder the container creates only to satisfy a current start-up validation that still insists a "vault root" folder exists on disk — even though no file-watching or vault code runs in the cloud. A stopgap until the configuration split (Phases 6/7/9) removes the vault-root requirement from the cloud side entirely. See TD-059. (Note: how the path is actually supplied to the running cloud process is an open question — see the Slice 2 design doc.)
+_Avoid_: "vault" (there is no real vault cloud-side — it is an empty placeholder)
