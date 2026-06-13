@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from core.config import CONFIG
+import core.config
 from core.result import Failure, Result, Success
 from handlers.registry import HandlerRegistry
 from vault.reader import read_note
@@ -34,7 +34,7 @@ def inspect(path: Path) -> Result[str]:
         match read_note(path):
             case Success(note):
                 if note.metadata.attachment_path:
-                    binary_path = CONFIG.main.vault.root / note.metadata.attachment_path
+                    binary_path = core.config.CONFIG.main.vault.root / note.metadata.attachment_path
                 else:
                     return Failure(
                         error="Not a binary resolver target — no attachment_path "
