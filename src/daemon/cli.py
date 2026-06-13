@@ -119,7 +119,7 @@ def status(config_path: str) -> None:
 # ── scan command ─────────────────────────────────────────────────────────────
 
 
-@cli.command()
+@cli.command(name="scan")
 @_CONFIG_OPTION
 def scan_cmd(config_path: str) -> None:
     """Run a one-shot reconcile and print the summary."""

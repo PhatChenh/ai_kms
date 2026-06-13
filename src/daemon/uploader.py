@@ -4,8 +4,7 @@ daemon/uploader.py
 HTTP uploads with exponential-backoff retry for the sync daemon.
 
 Sends extracted text (JSON) or binary content (multipart) to the cloud
-upload endpoint.  Shares a private ``_retry_with_backoff`` helper with
-``event_reporter.py``.
+upload endpoint.  Retry logic is shared via ``daemon._http_retry``.
 
 Usage:
     from daemon.uploader import upload_text, upload_binary
@@ -19,84 +18,50 @@ Usage:
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
-from typing import Awaitable, Callable
 
 import httpx
 
 from core.result import Failure, Result, Success
+from daemon._http_retry import retry_with_backoff
 from daemon.config import DaemonConfig
 from daemon.extractor import BinaryContent, TextContent
 
-# ── shared retry helper ──────────────────────────────────────────────────────
+
+# ── helpers ──────────────────────────────────────────────────────────────────
 
 
-async def _retry_with_backoff(
-    client: httpx.AsyncClient,
-    config: DaemonConfig,
-    request_fn: Callable[[], Awaitable[httpx.Response]],
-) -> Result[httpx.Response]:
-    """Execute *request_fn* with exponential-backoff retry.
+def _parse_upload_response(response: httpx.Response) -> Result[int]:
+    """Extract ``document_id`` from a cloud upload response.
 
-    - Base delay: 1 second, doubled on each retry.
-    - Max *config.retry_max* attempts (minimum 1).
-    - Retries on transient errors: HTTP 500, 502, 503, or connection errors.
-    - Returns ``Failure`` on 4xx responses (not retried — auth / bad request).
-    - After exhausting retries, returns ``Failure(recoverable=True)``.
+    Returns:
+        ``Success(document_id)`` on success.
+        ``Failure(recoverable=False)`` if the response body is malformed or
+        missing the expected ``document_id`` field.
     """
-    TRANSIENT_STATUSES = frozenset({500, 502, 503})
-    TRANSIENT_EXCEPTIONS = (
-        httpx.ConnectError,
-        httpx.TimeoutException,
-        httpx.RemoteProtocolError,
-        httpx.NetworkError,
-    )
-
-    last_failure: Failure | None = None
-
-    for attempt in range(1, config.retry_max + 1):
-        try:
-            response = await request_fn()
-        except TRANSIENT_EXCEPTIONS as exc:
-            last_failure = Failure(
-                error=f"HTTP request failed (attempt {attempt}/{config.retry_max}): {exc}",
-                recoverable=True,
-                context={"attempt": attempt, "exception": type(exc).__name__},
-            )
-        else:
-            # ── Transient server error → retry ──────────────────────────
-            if response.status_code in TRANSIENT_STATUSES:
-                last_failure = Failure(
-                    error=f"Server error {response.status_code} (attempt {attempt}/{config.retry_max})",
-                    recoverable=True,
-                    context={
-                        "attempt": attempt,
-                        "status_code": response.status_code,
-                    },
-                )
-            # ── Client error (4xx) → fail immediately ───────────────────
-            elif 400 <= response.status_code < 500:
-                return Failure(
-                    error=f"Client error {response.status_code}: {response.text[:200]}",
-                    recoverable=False,
-                    context={
-                        "status_code": response.status_code,
-                        "attempt": attempt,
-                    },
-                )
-            # ── Success (2xx, 3xx) or 1xx → done ────────────────────────
-            else:
-                return Success(response)
-
-        # ── Backoff before next retry ────────────────────────────────────
-        if attempt < config.retry_max:
-            delay = 1.0 * (2 ** (attempt - 1))  # 1, 2, 4, 8, ...
-            await asyncio.sleep(delay)
-
-    # ── Exhausted all retries ────────────────────────────────────────────
-    assert last_failure is not None
-    return last_failure
+    # Cloud responds with {"status": "ok", "document_id": <int>}
+    try:
+        body: dict = response.json()
+    except Exception as exc:
+        return Failure(
+            error=f"Invalid JSON in upload response: {exc}",
+            recoverable=False,
+            context={"status_code": response.status_code},
+        )
+    if not isinstance(body, dict):
+        return Failure(
+            error=f"Upload response is not a JSON object: {type(body).__name__}",
+            recoverable=False,
+            context={"status_code": response.status_code},
+        )
+    doc_id = body.get("document_id")
+    if not isinstance(doc_id, int) or doc_id < 0:
+        return Failure(
+            error=f"Upload response missing or invalid document_id: {body}",
+            recoverable=False,
+            context={"response": body},
+        )
+    return Success(doc_id)
 
 
 # ── public upload functions ──────────────────────────────────────────────────
@@ -112,6 +77,9 @@ async def upload_text(
     POST ``{cloud_endpoint}/api/upload`` with ``application/json`` body
     containing vault_path, extracted_text, content_hash, original_filename,
     file_size_bytes, and title (derived from the vault_path stem).
+
+    The caller's ``httpx.AsyncClient`` should be configured with a timeout
+    to prevent hung requests (e.g. ``httpx.AsyncClient(timeout=30)``).
 
     Returns:
         ``Success(document_id)`` on success.
@@ -134,18 +102,9 @@ async def upload_text(
             headers={"Authorization": f"Bearer {config.api_key}"},
         )
 
-    match await _retry_with_backoff(client, config, _request):
+    match await retry_with_backoff(client, config, _request):
         case Success(value=response):
-            # Cloud responds with {"status": "ok", "document_id": <int>}
-            body = response.json()
-            doc_id: int = body.get("document_id", -1)
-            if doc_id == -1:
-                return Failure(
-                    error=f"Upload response missing document_id: {body}",
-                    recoverable=False,
-                    context={"response": body},
-                )
-            return Success(doc_id)
+            return _parse_upload_response(response)
         case Failure() as f:
             return f
 
@@ -160,6 +119,9 @@ async def upload_binary(
     POST ``{cloud_endpoint}/api/upload`` with multipart body containing
     the file bytes and metadata form fields (vault_path, content_hash,
     original_filename, file_size_bytes, mime_type).
+
+    The caller's ``httpx.AsyncClient`` should be configured with a timeout
+    to prevent hung requests (e.g. ``httpx.AsyncClient(timeout=30)``).
 
     Returns:
         ``Success(document_id)`` on success.
@@ -187,16 +149,8 @@ async def upload_binary(
             headers={"Authorization": f"Bearer {config.api_key}"},
         )
 
-    match await _retry_with_backoff(client, config, _request):
+    match await retry_with_backoff(client, config, _request):
         case Success(value=response):
-            body = response.json()
-            doc_id: int = body.get("document_id", -1)
-            if doc_id == -1:
-                return Failure(
-                    error=f"Upload response missing document_id: {body}",
-                    recoverable=False,
-                    context={"response": body},
-                )
-            return Success(doc_id)
+            return _parse_upload_response(response)
         case Failure() as f:
             return f

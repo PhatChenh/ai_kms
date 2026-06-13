@@ -151,7 +151,7 @@ class TestBuildDiskState:
 
     def test_empty_vault(self, tmp_path: Path):
         config = _make_config(tmp_path=tmp_path, vault_root=tmp_path)
-        state = _build_disk_state(config)
+        state, _unreadable = _build_disk_state(config)
         assert state == {}
 
     def test_single_file(self, tmp_path: Path):
@@ -159,7 +159,7 @@ class TestBuildDiskState:
         f = tmp_path / "notes" / "hello.md"
         h = _make_file(f, b"hello world")
 
-        state = _build_disk_state(config)
+        state, _unreadable = _build_disk_state(config)
         assert state == {"notes/hello.md": h}
 
     def test_multiple_files(self, tmp_path: Path):
@@ -167,7 +167,7 @@ class TestBuildDiskState:
         h1 = _make_file(tmp_path / "a.txt", b"aaa")
         h2 = _make_file(tmp_path / "sub" / "b.txt", b"bbb")
 
-        state = _build_disk_state(config)
+        state, _unreadable = _build_disk_state(config)
         assert state == {
             "a.txt": h1,
             "sub/b.txt": h2,
@@ -183,7 +183,7 @@ class TestBuildDiskState:
         _make_file(tmp_path / "notes.tmp", b"tmp data")
         _make_file(tmp_path / ".git" / "config", b"git config")
 
-        state = _build_disk_state(config)
+        state, _unreadable = _build_disk_state(config)
         # Only a.txt should be present
         assert list(state.keys()) == ["a.txt"]
 
@@ -198,7 +198,7 @@ class TestBuildDiskState:
         _make_file(tmp_path / ".git" / "HEAD", b"ref: master")
         _make_file(tmp_path / ".git" / "objects" / "ab" / "cd123", b"blob")
 
-        state = _build_disk_state(config)
+        state, _unreadable = _build_disk_state(config)
         assert list(state.keys()) == ["readme.md"]
 
     def test_nfc_normalization(self, tmp_path: Path):
@@ -208,7 +208,7 @@ class TestBuildDiskState:
         f = tmp_path / "café.md"
         h = _make_file(f, b"cafe content")
 
-        state = _build_disk_state(config)
+        state, _unreadable = _build_disk_state(config)
         # The path should be NFC-normalised (café is already NFC on most systems)
         assert "café.md" in state
         assert state["café.md"] == h

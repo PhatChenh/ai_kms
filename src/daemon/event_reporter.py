@@ -3,8 +3,8 @@ daemon/event_reporter.py
 
 HTTP event reporting with exponential-backoff retry for the sync daemon.
 
-Sends moved/deleted events to the cloud event endpoint.  Uses the shared
-``_retry_with_backoff`` helper from ``daemon.uploader``.
+Sends moved/deleted events to the cloud event endpoint.  Retry logic is
+shared via ``daemon._http_retry``.
 
 Usage:
     from daemon.event_reporter import report_moved, report_deleted
@@ -21,8 +21,8 @@ from __future__ import annotations
 import httpx
 
 from core.result import Failure, Result, Success
+from daemon._http_retry import retry_with_backoff
 from daemon.config import DaemonConfig
-from daemon.uploader import _retry_with_backoff
 
 
 # ── public event-reporting functions ─────────────────────────────────────────
@@ -39,6 +39,9 @@ async def report_moved(
     POST ``{cloud_endpoint}/api/event`` with JSON body::
 
         {"type": "moved", "old_path": "...", "new_path": "..."}
+
+    The caller's ``httpx.AsyncClient`` should be configured with a timeout
+    to prevent hung requests (e.g. ``httpx.AsyncClient(timeout=30)``).
 
     Returns:
         ``Success(None)`` on success.
@@ -57,7 +60,7 @@ async def report_moved(
             headers={"Authorization": f"Bearer {config.api_key}"},
         )
 
-    match await _retry_with_backoff(client, config, _request):
+    match await retry_with_backoff(client, config, _request):
         case Success():
             return Success(None)
         case Failure() as f:
@@ -67,13 +70,16 @@ async def report_moved(
 async def report_deleted(
     client: httpx.AsyncClient,
     config: DaemonConfig,
-    path: str,
+    vault_path: str,
 ) -> Result[None]:
     """Report a deleted document event to the cloud.
 
     POST ``{cloud_endpoint}/api/event`` with JSON body::
 
         {"type": "deleted", "path": "..."}
+
+    The caller's ``httpx.AsyncClient`` should be configured with a timeout
+    to prevent hung requests (e.g. ``httpx.AsyncClient(timeout=30)``).
 
     Returns:
         ``Success(None)`` on success.
@@ -86,12 +92,12 @@ async def report_deleted(
             url,
             json={
                 "type": "deleted",
-                "path": path,
+                "path": vault_path,
             },
             headers={"Authorization": f"Bearer {config.api_key}"},
         )
 
-    match await _retry_with_backoff(client, config, _request):
+    match await retry_with_backoff(client, config, _request):
         case Success():
             return Success(None)
         case Failure() as f:

@@ -40,7 +40,7 @@ class DaemonConfig(BaseModel):
     api_key: str = Field(exclude=True, repr=False)
 
     # ── optional fields with defaults ────────────────────────────────────
-    debounce_seconds: float = 1.0
+    debounce_seconds: float = Field(default=1.0, gt=0)
     ignore_patterns: list[str] = Field(
         default_factory=lambda: [
             ".git",
@@ -55,10 +55,10 @@ class DaemonConfig(BaseModel):
             ".~lock*",
         ]
     )
-    upload_concurrency: int = 4
-    retry_max: int = 3
-    scan_batch_size: int = 50
-    max_file_size_bytes: int = 50_000_000  # 50 MB
+    upload_concurrency: int = Field(default=4, ge=1)
+    retry_max: int = Field(default=3, ge=1)
+    scan_batch_size: int = Field(default=50, ge=1)
+    max_file_size_bytes: int = Field(default=50_000_000, ge=0)  # 50 MB
 
     # ── validators ──────────────────────────────────────────────────────
 
@@ -66,19 +66,23 @@ class DaemonConfig(BaseModel):
     @classmethod
     def _vault_root_must_exist(cls, v: Path) -> Path:
         """Fail fast if the vault path doesn't exist on disk."""
-        if not v.exists():
-            raise ValueError(f"vault_root does not exist: {v}")
-        if not v.is_dir():
-            raise ValueError(f"vault_root is not a directory: {v}")
-        return v
+        try:
+            if not v.exists():
+                raise ValueError(f"vault_root does not exist: {v}")
+            if not v.is_dir():
+                raise ValueError(f"vault_root is not a directory: {v}")
+            return v
+        except PermissionError as exc:
+            raise ValueError(f"cannot access vault_root: {v} ({exc})") from exc
 
     @field_validator("cloud_endpoint")
     @classmethod
     def _cloud_endpoint_not_empty(cls, v: str) -> str:
         """Reject empty or whitespace-only strings."""
-        if not v or not v.strip():
+        stripped = v.strip()
+        if not stripped:
             raise ValueError("cloud_endpoint must be a non-empty string")
-        return v.strip()
+        return stripped
 
 
 def load_daemon_config(path: Path | None = None) -> DaemonConfig:
@@ -97,15 +101,25 @@ def load_daemon_config(path: Path | None = None) -> DaemonConfig:
         pydantic.ValidationError: if any field fails validation.
         yaml.YAMLError: if the YAML file is syntactically invalid.
     """
-    if path is None:
+    is_default_path = path is None
+    if is_default_path:
         path = Path.home() / ".kms-daemon" / "config.yaml"
 
-    # Read YAML (tolerate missing file only at the default path)
+    # ── Read YAML ──────────────────────────────────────────────────────
     if path.exists():
         with path.open("r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-    else:
+            raw = yaml.safe_load(f)
+        if raw is None:
+            data = {}
+        elif not isinstance(raw, dict):
+            raise yaml.YAMLError("config YAML root must be a mapping")
+        else:
+            data = raw
+    elif is_default_path:
+        # Missing default path → empty dict (validators catch missing required fields).
         data = {}
+    else:
+        raise FileNotFoundError(f"config file not found: {path}")
 
     # ── api_key: always from the environment, never from YAML ──────────
     api_key = os.environ.get("KMS_DAEMON_API_KEY")

@@ -36,7 +36,8 @@ import pytest
 from core.result import Failure, Success
 from daemon.config import DaemonConfig
 from daemon.extractor import BinaryContent, TextContent
-from daemon.uploader import _retry_with_backoff, upload_binary, upload_text
+from daemon._http_retry import retry_with_backoff as _retry_with_backoff
+from daemon.uploader import upload_binary, upload_text
 
 
 # ===========================================================================
@@ -249,7 +250,7 @@ class TestRetryWithBackoff:
             sleep_times.append(delay)
             # Don't actually sleep — just record
 
-        with patch("daemon.uploader.asyncio.sleep", fake_sleep):
+        with patch("daemon._http_retry.asyncio.sleep", fake_sleep):
             async def _req():
                 return await client.post("https://cloud.example.com/api/upload", json={})
             await _retry_with_backoff(client, config, _req)
