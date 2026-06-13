@@ -520,6 +520,7 @@ class ApiKeys(BaseSettings):
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     kms_db_path: Path | None = Field(default=None, alias="KMS_DB_PATH")
+    vault_root: Path | None = Field(default=None, alias="VAULT_ROOT")
 
     @field_validator("anthropic_api_key", "openai_api_key", mode="before")
     @classmethod
@@ -587,6 +588,11 @@ def load_config() -> "Config":
 
         try:
             keys = ApiKeys()
+            # COUPLING / TD-059: throwaway cloud bridge — removed at config split.
+            # MUST be pre-construction: validate_vault_root_exists (config.py:372-382) runs at
+            # MainConfig construction and VaultConfig has no validate_assignment.
+            if keys.vault_root is not None:
+                raw_main["vault"]["root"] = str(keys.vault_root)
             cfg = Config(
                 main=MainConfig(**raw_main),
                 thresholds=Thresholds(**raw_thresholds),
