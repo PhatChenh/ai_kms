@@ -1,0 +1,1 @@
+/Users/phatchenh/ai_kms/CLAUDE.md
