@@ -2722,8 +2722,8 @@
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_storage/test_migration_008.py::test_migration_008_creates_knowledge_entries_table
+  status: active
   retired: null
 - id: P5-DATA-02
   behavior: The documents table gains three new nullable columns and every existing
@@ -2750,8 +2750,8 @@
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_storage/test_migration_008.py::test_migration_008_document_columns_added
+  status: active
   retired: null
 - id: P5-DATA-03
   behavior: A knowledge entry can be created and read back by dimension, carrying its
@@ -2775,8 +2775,8 @@
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_storage/test_knowledge_entries.py::test_upsert_and_query_by_dimension
+  status: active
   retired: null
 - id: P5-DATA-04
   behavior: Querying by entity returns only that entity's entries across its tags
@@ -2797,8 +2797,8 @@
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_storage/test_knowledge_entries.py::test_query_by_entity_returns_only_that_entity
+  status: active
   retired: null
 - id: P5-DATA-05
   behavior: Retiring an entry flips its status to retired with a reason and never deletes
@@ -2820,8 +2820,8 @@
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_storage/test_knowledge_entries.py::test_retire_keeps_row_flips_status
+  status: active
   retired: null
 - id: P5-DATA-06
   behavior: get_confident_and_pending returns confident and pending entries but excludes
@@ -2843,8 +2843,8 @@
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_storage/test_knowledge_entries.py::test_get_confident_and_pending_excludes_retired
+  status: active
   retired: null
 - id: P5-DATA-07
   behavior: A valid dimension/tag pair is accepted and an invented one is rejected
@@ -2866,8 +2866,8 @@
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_core/test_dimensions.py::TestDimensionValidation::test_known_dimension_known_tag_returns_success
+  status: active
   retired: null
 - id: P5-DATA-08
   behavior: Every dimension in the config carries a mandatory "other" catch-all tag
@@ -2886,8 +2886,8 @@
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_core/test_dimensions.py::TestDimensionValidation::test_catch_all_other_tag_returns_success_for_every_dimension
+  status: active
   retired: null
 - id: P5-DATA-09
   behavior: A confidence score maps to a confident/pending status using thresholds
@@ -2910,8 +2910,8 @@
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_core/test_dimensions.py::TestConfidenceToStatus::test_high_score_maps_to_confident
+  status: active
   retired: null
 - id: P5-DATA-10
   behavior: The full existing test suite stays green after the additive migration and
@@ -2934,6 +2934,6 @@
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_storage/test_migration_007.py
+  status: active
   retired: null

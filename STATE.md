@@ -1,9 +1,31 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-06-12 (Phase 4 MCP Server — all 7 phases COMPLETE, 1258 tests)_
+_Last updated: 2026-06-13 (P5 Slice 1 Data/Config Foundation — merged to cloud-native, 1275 tests)_
 
 ## Current Position
-**Phase**: Phase 4 (MCP Server) **COMPLETE** (2026-06-12, 1258 tests). MCP Server MVP live — 5 tools (`kms_vault_info`, `kms_search`, `kms_read`, `kms_inspect`, `kms_move`) over stdio. ADR-0010/0011 accepted. TD-055 AI usage instructions shipped (`AI_INSTRUCTIONS.md` + tool descriptions). **Next**: Phase 5 (Promotion), Phase 6 (Documentation), or Phase 7 (Self-Learning) depending on priority — all independent of each other.
+**Phase**: Phase 5 Slice 1 (Data/Config Foundation) **COMPLETE** (2026-06-13, 1275 tests). Cloud-native rearchitecture data layer shipped — `knowledge_entries` table (migration 008), dimension/tag validation (`dimensions.yaml` + `validate_dimension_tag()`), knowledge entry store (5 CRUD ops: `upsert`, `query_by_dimension`, `query_by_entity`, `retire`, `get_confident_and_pending`). 3 optional document columns added (`full_body`, `original_filename`, `file_size_bytes`). Merged to cloud-native branch. **Next**: Phase 5 Slice 2 or other cloud-native work — consult `docs/0_draft/cloud_native_rearchitecture.md`.
+
+**[P5 Slice 1 — Data/Config Foundation — ✅ COMPLETE 2026-06-13]** _(merged to cloud-native, 1275 tests; 18 new tests)_:
+- [x] **Phase 1 — Schema Upgrade**: Migration 008 (`knowledge_entries` table, 11 columns + 3 optional `documents` columns: `full_body`, `original_filename`, `file_size_bytes`). Single-file migration. `DocumentRow` +3 trailing fields with guarded reads in `_row_from_sqlite`. Version pin 7→8.
+- [x] **Phase 2 — Rulebook Config + Two Pure Checks**: `src/config/dimensions.yaml` (provisional starter taxonomy: people/projects/domains, each with `other` catch-all). `load_dimensions()` standalone loader, `validate_dimension_tag()` Result-returning validator, `confidence_to_status()` pure helper using `band.route()` (no float literal). 8 new tests.
+- [x] **Phase 3 — Knowledge Entry Store**: `src/storage/knowledge_entries.py` — `KnowledgeEntry` dataclass + 5 CRUD ops (`upsert`, `query_by_dimension`, `query_by_entity`, `retire`, `get_confident_and_pending`). Sources round-trip via json. retire NEVER deletes. upsert derives status from `confidence_to_status()`. 7 new tests.
+- [x] **Code review fixes**: double-commit removed (rely on context manager commit), `readonly=True` added to read queries, upsert UPDATE path checks rowcount (returns Failure for nonexistent IDs).
+- [x] **Phase 4 — Suite-wide green**: 1275 passed, 0 failures, 1 skip. Only expected test edit: `test_migration_007.py` version pin 7→8.
+
+**Plan:** `docs/4_plans/P5_slice1_data_foundation.md`
+**Spec:** `docs/2_specs/P5_slice1_data_foundation.md`
+**Research:** `docs/3_research/P5_slice1_data_foundation.md`
+**Design:** `docs/1_design/P5_slice1_data_foundation.md`
+**Context:** `docs/0_draft/cloud_native_rearchitecture.md`
+**Key decisions locked:**
+- Single-file migration 008 (not split) per research A1
+- Permissive schema: no NOT NULL beyond id, no CHECK on status
+- `route()→status` mapping: AUTO→"confident", SUGGEST+CLUELESS→"pending"
+- Validator takes pre-loaded rulebook object (loader exposed)
+- `upsert` uniqueness is id-only this slice (natural-key dedupe deferred to Phase 8)
+- No module-scope CONFIG import in new tests
+- No DDL, LLM calls, or audit writes in knowledge_entries.py
+- `sources` stored as JSON array (loose ref, no FK/junction table)
 
 **Phase 0 Final Checklist** _(CLOSED)_:
 - [x] core/exceptions.py
