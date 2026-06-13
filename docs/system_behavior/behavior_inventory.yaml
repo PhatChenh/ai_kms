@@ -21,9 +21,11 @@
   last_result: passed
   pytest_ref: tests/test_pipelines/test_capture.py::test_capture_file_md_end_to_end_returns_write_outcome
   status: retired
-  retired: '2026-06-09: classify_step now runs on all inbox files. Inbox .md behavior covered by P2-CIC-01 (AUTO move), P2-CIC-02 (SUGGEST), P2-CIC-03 (CLUELESS).'
+  retired: '2026-06-09: classify_step now runs on all inbox files. Inbox .md behavior
+    covered by P2-CIC-01 (AUTO move), P2-CIC-02 (SUGGEST), P2-CIC-03 (CLUELESS).'
 - id: P1-CAP-02
-  behavior: PDF already in a project folder creates sibling .md and moves binary to attachment/
+  behavior: PDF already in a project folder creates sibling .md and moves binary to
+    attachment/
   tier: smoke
   phase: 1
   origin: implementation
@@ -47,7 +49,8 @@
   status: active
   retired: null
 - id: P1-CAP-03
-  behavior: Body text of .md file preserved exactly after capture (classify_step runs on inbox files but does not affect body)
+  behavior: Body text of .md file preserved exactly after capture (classify_step runs
+    on inbox files but does not affect body)
   tier: smoke
   phase: 1
   origin: implementation
@@ -60,7 +63,8 @@
   - '`uv run kms capture inbox/test-body-preservation.md`'
   expected:
   - Body text below second --- is byte-identical to original
-  - classify_step runs on this inbox file — candidate fields (suggested_project etc.) may appear in frontmatter depending on AI confidence
+  - classify_step runs on this inbox file — candidate fields (suggested_project etc.)
+    may appear in frontmatter depending on AI confidence
   - 'summary: appears only inside frontmatter (between --- markers), never in body'
   spec_ref: roadmap §Phase1 'frontmatter-only writes'; updated P2-CIC 2026-06-09
   human_reviewed: 'yes'
@@ -70,7 +74,8 @@
   status: active
   retired: null
 - id: P1-CAP-04
-  behavior: Re-capture does not rename already-captured .md file (rename gate Rule 1)
+  behavior: Re-capture does not rename already-captured .md file (rename gate Rule
+    1)
   tier: smoke
   phase: 1
   origin: implementation
@@ -93,7 +98,9 @@
   last_result: passed
   pytest_ref: tests/test_pipelines/test_capture_rename.py::test_rename_gate_skip_on_recapture
   status: retired
-  retired: '2026-06-09: inbox fixture broken by classify_step — first capture may AUTO-move file, second capture on old inbox path hits FILE_LOST. Rename gate on LOCATED files covered by P2-CIC-04.'
+  retired: '2026-06-09: inbox fixture broken by classify_step — first capture may
+    AUTO-move file, second capture on old inbox path hits FILE_LOST. Rename gate on
+    LOCATED files covered by P2-CIC-04.'
 - id: P1-CAP-05
   behavior: Scan captures un-indexed .md files, skips already-indexed
   tier: smoke
@@ -118,9 +125,11 @@
   last_result: passed
   pytest_ref: tests/test_pipelines/test_capture_phase10.py::test_scan_capture_added_unindexed_captured_indexed_unchanged_skipped
   status: retired
-  retired: '2026-06-09: scan now runs classify_step on inbox files. Scan behavior covered by P2-CIC entries + P2-BAT-04/05.'
+  retired: '2026-06-09: scan now runs classify_step on inbox files. Scan behavior
+    covered by P2-CIC entries + P2-BAT-04/05.'
 - id: P1-CAP-06
-  behavior: DOCX file dropped in inbox gets real-summary sibling AND is classified at capture time
+  behavior: DOCX file dropped in inbox gets real-summary sibling AND is classified
+    at capture time
   tier: phase
   phase: 1
   origin: implementation
@@ -134,7 +143,8 @@
   - 'On AUTO: binary moves to project attachment/; sibling moves alongside'
   - Sibling .md created at inbox/.summaries/q3-planning-brief.docx.md
   - 'Sibling frontmatter has type: attachment-summary'
-  - 'Sibling frontmatter has status: needs-review (NOT pending-routing — concept retired in P2-CIC Phase 7)'
+  - 'Sibling frontmatter has status: needs-review (NOT pending-routing — concept retired
+    in P2-CIC Phase 7)'
   - Sibling frontmatter has source_hash set (idempotent re-entry)
   - Sibling body contains a real AI-generated summary (NOT placeholder text)
   spec_ref: 'roadmap §Phase1 ''handler: docx''; P2-CIC-05 2026-06-09'
@@ -162,16 +172,19 @@
   expected:
   - 'auto-capture-test.md gets summary: in frontmatter automatically'
   - No manual kms capture was needed
-  - Only one capture pipeline fires per drop (in-flight guard prevents concurrent pipelines on same path)
+  - Only one capture pipeline fires per drop (in-flight guard prevents concurrent
+    pipelines on same path)
   spec_ref: roadmap §Phase1 'watcher auto-capture'
   human_reviewed: true
   last_tested: '2026-06-07'
   last_result: passed
   pytest_ref: null
   status: retired
-  retired: '2026-06-09: watcher drops now run classify_step. Watcher capture behavior covered by P2-CIC-01/02/03 (inbox) and P2-CIC-04 (LOCATED).'
+  retired: '2026-06-09: watcher drops now run classify_step. Watcher capture behavior
+    covered by P2-CIC-01/02/03 (inbox) and P2-CIC-04 (LOCATED).'
 - id: P1-CAP-08
-  behavior: Gibberish-named inbox PDF gets real-summary marker with needs-review status (was pending-routing pre-P2-CIC)
+  behavior: Gibberish-named inbox PDF gets real-summary marker with needs-review status
+    (was pending-routing pre-P2-CIC)
   tier: phase
   phase: 1
   origin: implementation
@@ -187,15 +200,19 @@
   - Sibling frontmatter has source_hash set
   - Sibling body has a real AI summary (NOT placeholder)
   - Audit log shows outcome=CLUELESS
-  spec_ref: 'roadmap §Phase1 ''CLUELESS path: inbox binary parked'' (DECISION-027); updated P2-CIC Phase 7 2026-06-09'
+  spec_ref: 'roadmap §Phase1 ''CLUELESS path: inbox binary parked'' (DECISION-027);
+    updated P2-CIC Phase 7 2026-06-09'
   human_reviewed: false
   last_tested: '2026-06-07'
-  last_result: passed — P2-CIC Phase 7 replaced pending-routing with needs-review; re-verify needed
+  last_result: passed — P2-CIC Phase 7 replaced pending-routing with needs-review;
+    re-verify needed
   pytest_ref: tests/test_pipelines/test_capture_rename.py::test_rename_gate_full_rename_on_illegible_binary
   status: retired
-  retired: '2026-06-09: classify_step may AUTO-move or SUGGEST instead of CLUELESS. Inbox binary classify behavior covered by P2-CIC-05 (AUTO), P2-CIC-03 (CLUELESS).'
+  retired: '2026-06-09: classify_step may AUTO-move or SUGGEST instead of CLUELESS.
+    Inbox binary classify behavior covered by P2-CIC-05 (AUTO), P2-CIC-03 (CLUELESS).'
 - id: P1-CAP-09
-  behavior: 'Idempotent capture — unchanged .md file skipped (content_hash match). Note: inbox fixture may be AUTO-moved by classify_step on first capture.'
+  behavior: 'Idempotent capture — unchanged .md file skipped (content_hash match).
+    Note: inbox fixture may be AUTO-moved by classify_step on first capture.'
   tier: phase
   phase: 1
   origin: implementation
@@ -212,7 +229,8 @@
   - Second run returns OK (SKIPPED) in terminal output
   - content_hash match — no LLM call made
   - 'summary: field identical to first capture'
-  - If file was AUTO-moved by classify_step on first capture, second capture on original inbox path returns FILE_LOST
+  - If file was AUTO-moved by classify_step on first capture, second capture on original
+    inbox path returns FILE_LOST
   spec_ref: roadmap §Phase1 'idempotent capture guard'; updated P2-CIC 2026-06-09
   human_reviewed: true
   last_tested: '2026-06-07'
@@ -221,7 +239,8 @@
   status: active
   retired: null
 - id: P1-CAP-10
-  behavior: Inbox binary gets real summary AND is classified — may be CLUELESS, SUGGEST, or AUTO
+  behavior: Inbox binary gets real summary AND is classified — may be CLUELESS, SUGGEST,
+    or AUTO
   tier: phase
   phase: 1
   origin: implementation
@@ -231,7 +250,8 @@
   - inbox/mystery-file.pdf
   steps:
   - '`uv run kms capture inbox/mystery-file.pdf`'
-  - No project/domain hint in filename or content — capture parks binary + writes real-summary sibling.
+  - No project/domain hint in filename or content — capture parks binary + writes
+    real-summary sibling.
   expected:
   - 'On CLUELESS/SUGGEST: mystery-file.pdf stays in inbox/; sibling at inbox/.summaries/'
   - 'On AUTO: binary moves to project attachment/; sibling moves alongside'
@@ -240,7 +260,8 @@
   - 'Sibling frontmatter has type: attachment-summary'
   - Sibling frontmatter has source_hash set (non-empty — enables idempotent re-entry)
   - Sibling body contains a real AI-generated summary (NOT a one-line placeholder)
-  spec_ref: docs/1_design/phase2/classify-inline-capture.md P2-CIC Phase 7 'retire pending-routing'
+  spec_ref: docs/1_design/phase2/classify-inline-capture.md P2-CIC Phase 7 'retire
+    pending-routing'
   human_reviewed: false
   last_tested: '2026-06-07'
   last_result: passed — behavior changed in P2-CIC Phase 7; re-verify needed
@@ -248,7 +269,8 @@
   status: active
   retired: null
 - id: P1-CAP-11
-  behavior: URL enrichment — sparse note with URLs gets content fetched (classify_step also runs on inbox files)
+  behavior: URL enrichment — sparse note with URLs gets content fetched (classify_step
+    also runs on inbox files)
   tier: phase
   phase: 1
   origin: implementation
@@ -266,7 +288,8 @@
   - '`uv run kms capture inbox/test-url-note.md`'
   - File body must contain a URL and less than 500 chars of text to trigger URL enrichment.
   expected:
-  - 'Open file — summary: reflects content from the URL, not just the sparse body text'
+  - 'Open file — summary: reflects content from the URL, not just the sparse body
+    text'
   - classify_step runs — candidate fields or AUTO-move possible
   spec_ref: roadmap §Phase1 'enrich_urls stage'
   human_reviewed: true
@@ -288,10 +311,12 @@
   - 'Capture the test file:'
   - '`uv run kms capture inbox/p1-dev-01-test.md`'
   - 'Then query:'
-  - '`sqlite3 data/kb.db "SELECT stage, outcome FROM audit_log ORDER BY rowid DESC LIMIT 5"`'
+  - '`sqlite3 data/kb.db "SELECT stage, outcome FROM audit_log ORDER BY rowid DESC
+    LIMIT 5"`'
   expected:
   - audit_log row exists with stage=metadata, outcome=CAPTURED
-  - audit_log row exists with stage=classify (AUTO, SUGGEST, or CLUELESS — classify_step runs on inbox files)
+  - audit_log row exists with stage=classify (AUTO, SUGGEST, or CLUELESS — classify_step
+    runs on inbox files)
   - correlation_id matches the ID shown in terminal output
   - reasoning field is non-empty in both rows
   spec_ref: CONSTRAINTS.md C-12 'audit log non-negotiable'; P2-CIC-06 2026-06-09
@@ -310,8 +335,10 @@
   trigger: kms capture <file.md> (LLM returns bad tag)
   fixtures: []
   steps:
-  - 'Force a capture where LLM returns a tag not in tags.yaml taxonomy (developer test — requires mocking LLM response). Then query the audit log:'
-  - '`sqlite3 data/kb.db "SELECT stage, outcome, reasoning FROM audit_log WHERE stage=''tag_violation'' ORDER BY rowid DESC LIMIT 3"`'
+  - 'Force a capture where LLM returns a tag not in tags.yaml taxonomy (developer
+    test — requires mocking LLM response). Then query the audit log:'
+  - '`sqlite3 data/kb.db "SELECT stage, outcome, reasoning FROM audit_log WHERE stage=''tag_violation''
+    ORDER BY rowid DESC LIMIT 3"`'
   expected:
   - audit_log row with stage=tag_violation, outcome=TAG_VIOLATION
   - Bad tag removed from final tags list in frontmatter
@@ -335,7 +362,8 @@
   - 'Run capture on a path that does not exist on disk:'
   - '`uv run kms capture inbox/nonexistent-file.md`'
   - 'Then verify audit log entry and no DB row created:'
-  - '`sqlite3 data/kb.db "SELECT stage, outcome FROM audit_log WHERE stage=''file_lost'' ORDER BY rowid DESC LIMIT 3"`'
+  - '`sqlite3 data/kb.db "SELECT stage, outcome FROM audit_log WHERE stage=''file_lost''
+    ORDER BY rowid DESC LIMIT 3"`'
   - '`sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path=''inbox/nonexistent-file.md''"`'
   expected:
   - Terminal shows Failure(recoverable=True)
@@ -357,9 +385,11 @@
   trigger: kms capture <file> (mtime < cooldown_seconds ago)
   fixtures: []
   steps:
-  - 'Write a new file to inbox/, then immediately run capture (within the cooldown window, before mtime ages):'
+  - 'Write a new file to inbox/, then immediately run capture (within the cooldown
+    window, before mtime ages):'
   - '`uv run kms capture inbox/<that-file>.md`'
-  - 'Then verify rejection was logged (look for ''cooldown'' or ''too recent'' in logs):'
+  - 'Then verify rejection was logged (look for ''cooldown'' or ''too recent'' in
+    logs):'
   - '`grep -i ''cooldown\|too_recent\|file_too_recent'' logs/app.log | tail -5`'
   expected:
   - Terminal shows Failure(recoverable=True)
@@ -398,8 +428,11 @@
   last_result: null
   pytest_ref: tests/test_pipelines/test_capture_phase3.py::test_pending_routing_guard_removed
   status: retired
-  retired: '2026-06-09: P2-CIC Phase 7 removed the pending-routing guard entirely — old status:pending-routing concept retired. Idempotent re-entry now uses source_hash comparison in _store_nonmd CLUELESS
-    path (capture.py). New test asserts the OPPOSITE: classify IS called on second run (guard removed). See P2-CIC-03 for current CLUELESS binary behavior.'
+  retired: '2026-06-09: P2-CIC Phase 7 removed the pending-routing guard entirely
+    — old status:pending-routing concept retired. Idempotent re-entry now uses source_hash
+    comparison in _store_nonmd CLUELESS path (capture.py). New test asserts the OPPOSITE:
+    classify IS called on second run (guard removed). See P2-CIC-03 for current CLUELESS
+    binary behavior.'
 - id: P15-LOC-01
   behavior: Note in Domain/ folder gets domain/<D> tag
   tier: smoke
@@ -458,7 +491,8 @@
   fixtures:
   - inbox/test-stale-domain-tag.md
   steps:
-  - 'Place inbox/test-stale-domain-tag.md with a domain/OldDomain tag in frontmatter (but no Domain/OldDomain/ folder exists on disk). Then run reconcile:'
+  - 'Place inbox/test-stale-domain-tag.md with a domain/OldDomain tag in frontmatter
+    (but no Domain/OldDomain/ folder exists on disk). Then run reconcile:'
   - '`uv run kms reconcile`'
   expected:
   - Open file — domain/OldDomain tag removed from frontmatter
@@ -480,7 +514,8 @@
   fixtures:
   - Domain/Engineering/test-missing-domain-tag.md
   steps:
-  - 'Place Domain/Engineering/test-missing-domain-tag.md without a domain/Engineering tag in frontmatter. Then run reconcile:'
+  - 'Place Domain/Engineering/test-missing-domain-tag.md without a domain/Engineering
+    tag in frontmatter. Then run reconcile:'
   - '`uv run kms reconcile`'
   expected:
   - Open file — domain/Engineering tag added to frontmatter
@@ -502,7 +537,8 @@
   fixtures:
   - Projects/Alpha/attachment/orphan-report.pdf
   steps:
-  - 'Place Projects/Alpha/attachment/orphan-report.pdf on disk without any .summaries/orphan-report.pdf.md sibling. Then run reconcile:'
+  - 'Place Projects/Alpha/attachment/orphan-report.pdf on disk without any .summaries/orphan-report.pdf.md
+    sibling. Then run reconcile:'
   - '`uv run kms reconcile`'
   expected:
   - Sibling .md created at Projects/Alpha/attachment/.summaries/orphan-report.pdf.md
@@ -530,7 +566,9 @@
 
     '
   steps:
-  - 'Place Projects/Alpha/attachment/.summaries/deleted-file.pdf.md on disk (with type: attachment-summary in frontmatter) but NO corresponding binary at the attachment_path. Then run reconcile:'
+  - 'Place Projects/Alpha/attachment/.summaries/deleted-file.pdf.md on disk (with
+    type: attachment-summary in frontmatter) but NO corresponding binary at the attachment_path.
+    Then run reconcile:'
   - '`uv run kms reconcile`'
   - 'Verify sibling deleted from disk (should return nothing):'
   - '`ls <vault>/Projects/Alpha/attachment/.summaries/deleted-file.pdf.md 2>&1`'
@@ -560,14 +598,17 @@
   - '**Step 1 — capture the file to seed a batch_id:**'
   - '`uv run kms capture <vault>/Projects/Alpha/note-batch-test.md`'
   - '**Step 2 — verify batch_id is set:**'
-  - '`sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE vault_path LIKE ''%note-batch-test%''"`'
+  - '`sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE vault_path
+    LIKE ''%note-batch-test%''"`'
   - Confirm batch_id column shows a non-NULL integer.
   - '**Step 3 — move the file to a different project:**'
-  - '`mkdir -p <vault>/Projects/Beta && mv <vault>/Projects/Alpha/note-batch-test.md <vault>/Projects/Beta/note-batch-test.md`'
+  - '`mkdir -p <vault>/Projects/Beta && mv <vault>/Projects/Alpha/note-batch-test.md
+    <vault>/Projects/Beta/note-batch-test.md`'
   - '**Step 4 — run reconcile:**'
   - '`uv run kms reconcile`'
   - '**Step 5 — verify batch_id cleared:**'
-  - '`sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE vault_path LIKE ''%note-batch-test%''"`'
+  - '`sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE vault_path
+    LIKE ''%note-batch-test%''"`'
   expected:
   - 'After Step 2: batch_id is a non-NULL integer for Projects/Alpha/note-batch-test.md'
   - 'After Step 5: batch_id is NULL for Projects/Beta/note-batch-test.md'
@@ -579,7 +620,8 @@
   status: active
   retired: null
 - id: P15-HDL-01
-  behavior: XLSX file dropped in inbox gets real-summary marker with needs-review status
+  behavior: XLSX file dropped in inbox gets real-summary marker with needs-review
+    status
   tier: phase
   phase: 1.5
   origin: implementation
@@ -592,7 +634,8 @@
   - q2-budget.xlsx stays in inbox/ (not moved — CLUELESS path)
   - Marker .md created at inbox/.summaries/q2-budget.xlsx.md
   - 'Marker frontmatter has type: attachment-summary'
-  - 'Marker frontmatter has status: needs-review (NOT pending-routing — concept retired in P2-CIC Phase 7)'
+  - 'Marker frontmatter has status: needs-review (NOT pending-routing — concept retired
+    in P2-CIC Phase 7)'
   - Marker frontmatter has source_hash set (idempotent re-entry)
   - Marker body contains a real AI-generated summary (NOT placeholder)
   spec_ref: 'roadmap §Phase1.5 ''handler: xlsx''; updated P2-CIC Phase 7 2026-06-09'
@@ -603,7 +646,8 @@
   status: active
   retired: null
 - id: P15-HDL-02
-  behavior: PPTX file dropped in inbox gets real-summary marker with needs-review status
+  behavior: PPTX file dropped in inbox gets real-summary marker with needs-review
+    status
   tier: phase
   phase: 1.5
   origin: implementation
@@ -651,7 +695,8 @@
   status: active
   retired: null
 - id: P15-HDL-04
-  behavior: HTML file dropped in inbox gets real-summary marker with needs-review status
+  behavior: HTML file dropped in inbox gets real-summary marker with needs-review
+    status
   tier: phase
   phase: 1.5
   origin: implementation
@@ -675,7 +720,8 @@
   status: active
   retired: null
 - id: P15-HDL-05
-  behavior: EML email file dropped in inbox gets real-summary marker with needs-review status
+  behavior: EML email file dropped in inbox gets real-summary marker with needs-review
+    status
   tier: phase
   phase: 1.5
   origin: implementation
@@ -699,7 +745,8 @@
   status: active
   retired: null
 - id: P15-HDL-06
-  behavior: MSG Outlook file dropped in inbox gets real-summary marker with needs-review status
+  behavior: MSG Outlook file dropped in inbox gets real-summary marker with needs-review
+    status
   tier: phase
   phase: 1.5
   origin: implementation
@@ -737,8 +784,10 @@
   expected_design: 'Sibling .md created with summary (OCR text or filename-based).
 
     '
-  expected_implementation: 'NOT implemented. PngHandler/JpgHandler.extract() return Failure("image extraction requires a vision-capable LLM — not yet implemented", recoverable=False) at src/handlers/image_handler.py:21-26
-    and :30-38. No sibling .md is created; no summary is produced. Images are NOT captured.
+  expected_implementation: 'NOT implemented. PngHandler/JpgHandler.extract() return
+    Failure("image extraction requires a vision-capable LLM — not yet implemented",
+    recoverable=False) at src/handlers/image_handler.py:21-26 and :30-38. No sibling
+    .md is created; no summary is produced. Images are NOT captured.
 
     '
   spec_ref: 'roadmap §Phase1.5 ''handler: image'''
@@ -759,18 +808,26 @@
   - inbox/new-project-folder/file1.md
   - inbox/new-project-folder/file2.pdf
   steps:
-  - 'Create inbox/new-project-folder/ with inbox/new-project-folder/file1.md and inbox/new-project-folder/file2.pdf inside. Then run scan:'
+  - 'Create inbox/new-project-folder/ with inbox/new-project-folder/file1.md and inbox/new-project-folder/file2.pdf
+    inside. Then run scan:'
   - '`uv run kms capture --scan`'
   - 'Verify batches row created:'
-  - '`sqlite3 data/kb.db "SELECT folder_name, destination_type, destination_name, confidence, status FROM batches ORDER BY rowid DESC LIMIT 5"`'
+  - '`sqlite3 data/kb.db "SELECT folder_name, destination_type, destination_name,
+    confidence, status FROM batches ORDER BY rowid DESC LIMIT 5"`'
   - 'If status=ROUTING: verify files captured with batch_id:'
-  - '`sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE batch_id = (SELECT batch_id FROM batches ORDER BY rowid DESC LIMIT 1)"`'
+  - '`sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE batch_id
+    = (SELECT batch_id FROM batches ORDER BY rowid DESC LIMIT 1)"`'
   expected:
-  - 'batches row created with folder_name=new-project-folder, confidence > 0, status one of: ROUTING | PENDING_REVIEW | CLUELESS'
-  - 'AUTO (status=ROUTING): folder moved to Projects/<name>/ or Domain/<name>/; files captured; documents rows present with matching batch_id'
-  - 'SUGGEST (status=PENDING_REVIEW): folder stays in inbox/; no documents rows for its files yet'
-  - 'CLUELESS (status=CLUELESS): folder stays in inbox/; per-file needs-review markers with real summaries at inbox/.summaries/; documents rows with batch_id'
-  - All files inside the folder (including subfolders of Projects/<A>/ or Domain/<D>/) captured with a batch_id
+  - 'batches row created with folder_name=new-project-folder, confidence > 0, status
+    one of: ROUTING | PENDING_REVIEW | CLUELESS'
+  - 'AUTO (status=ROUTING): folder moved to Projects/<name>/ or Domain/<name>/; files
+    captured; documents rows present with matching batch_id'
+  - 'SUGGEST (status=PENDING_REVIEW): folder stays in inbox/; no documents rows for
+    its files yet'
+  - 'CLUELESS (status=CLUELESS): folder stays in inbox/; per-file needs-review markers
+    with real summaries at inbox/.summaries/; documents rows with batch_id'
+  - All files inside the folder (including subfolders of Projects/<A>/ or Domain/<D>/)
+    captured with a batch_id
   spec_ref: roadmap §Phase1.5 'folder drop classification' — see TD-041 for scan gap
   human_reviewed: true
   last_tested: '2026-06-07'
@@ -794,9 +851,11 @@
   - '`uv run kms watch`'
   - 'In Terminal 2, delete the binary and wait ~5 seconds:'
   - '`rm $VAULT/Projects/Alpha/attachment/p15-dev-01-report.pdf`'
-  - 'In Terminal 2, verify sibling removed from DB (count should be 0) and audit entry written:'
+  - 'In Terminal 2, verify sibling removed from DB (count should be 0) and audit entry
+    written:'
   - '`sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path LIKE ''%p15-dev-01-report.pdf.md%''"`'
-  - '`sqlite3 data/kb.db "SELECT stage, outcome FROM audit_log WHERE stage=''watcher:binary_delete'' ORDER BY rowid DESC LIMIT 3"`'
+  - '`sqlite3 data/kb.db "SELECT stage, outcome FROM audit_log WHERE stage=''watcher:binary_delete''
+    ORDER BY rowid DESC LIMIT 3"`'
   expected:
   - Sibling .md at `.summaries/<binary.name>.md` deleted from disk
   - DB row for sibling removed from documents table
@@ -825,7 +884,8 @@
   - 'In Terminal 2, rename the binary and wait ~5 seconds:'
   - '`mv $VAULT/Projects/Alpha/attachment/p15-dev-02-old.pdf $VAULT/Projects/Alpha/attachment/p15-dev-02-new.pdf`'
   - 'In Terminal 2, verify DB row updated with new path and attachment_path:'
-  - '`sqlite3 data/kb.db "SELECT vault_path, attachment_path FROM documents WHERE vault_path LIKE ''%p15-dev-02-new.pdf.md%''"`'
+  - '`sqlite3 data/kb.db "SELECT vault_path, attachment_path FROM documents WHERE
+    vault_path LIKE ''%p15-dev-02-new.pdf.md%''"`'
   expected:
   - Sibling renamed from old.pdf.md to new.pdf.md in .summaries/
   - Open sibling — attachment_path in frontmatter updated to new.pdf
@@ -853,7 +913,8 @@
   - '`mkdir -p $VAULT/Projects/Beta/attachment`'
   - 'In Terminal 1, start the watcher:'
   - '`uv run kms watch`'
-  - 'In Terminal 2, move the binary to a different project''s attachment/ and wait ~5 seconds:'
+  - 'In Terminal 2, move the binary to a different project''s attachment/ and wait
+    ~5 seconds:'
   - '`mv $VAULT/Projects/Alpha/attachment/p15-dev-03-file.pdf $VAULT/Projects/Beta/attachment/p15-dev-03-file.pdf`'
   - 'In Terminal 2, verify old sibling DB row removed (count should be 0):'
   - '`sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path LIKE ''%Projects/Alpha/attachment/.summaries/p15-dev-03-file.pdf.md%''"`'
@@ -880,13 +941,15 @@
   steps:
   - 'First, capture the binary to establish sibling in DB and record the initial content_hash:'
   - '`uv run kms capture Projects/Alpha/attachment/p15-dev-04-report.pdf`'
-  - '`sqlite3 data/kb.db "SELECT vault_path, content_hash FROM documents WHERE vault_path LIKE ''%p15-dev-04-report.pdf.md%''"`'
+  - '`sqlite3 data/kb.db "SELECT vault_path, content_hash FROM documents WHERE vault_path
+    LIKE ''%p15-dev-04-report.pdf.md%''"`'
   - 'Touch the binary to make it newer than the sibling .md:'
   - '`touch $VAULT/Projects/Alpha/attachment/p15-dev-04-report.pdf`'
   - 'Run reconcile:'
   - '`uv run kms reconcile`'
   - 'Verify sibling DB row has an updated content_hash:'
-  - '`sqlite3 data/kb.db "SELECT vault_path, content_hash FROM documents WHERE vault_path LIKE ''%p15-dev-04-report.pdf.md%''"`'
+  - '`sqlite3 data/kb.db "SELECT vault_path, content_hash FROM documents WHERE vault_path
+    LIKE ''%p15-dev-04-report.pdf.md%''"`'
   expected:
   - Sibling .md re-summarized with updated content
   - DB row updated with new content_hash
@@ -913,7 +976,8 @@
   - '`uv run kms watch`'
   - 'In Terminal 2, touch the file 5 times within 1 second:'
   - '`for i in 1 2 3 4 5; do touch $VAULT/inbox/p15-dev-05-debounce.md; done`'
-  - 'After the debounce window (~3 sec), verify only one DB row exists (count should be 1):'
+  - 'After the debounce window (~3 sec), verify only one DB row exists (count should
+    be 1):'
   - '`sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path=''inbox/p15-dev-05-debounce.md''"`'
   expected:
   - Only one capture_file call fires (after 3.0s debounce window)
@@ -942,7 +1006,8 @@
   steps:
   - 'Run scan:'
   - '`uv run kms capture --scan`'
-  - 'Verify the sibling fixture was NOT captured as a new document (count should be 0):'
+  - 'Verify the sibling fixture was NOT captured as a new document (count should be
+    0):'
   - '`sqlite3 data/kb.db "SELECT count(*) FROM documents WHERE vault_path=''Projects/Alpha/attachment/.summaries/p15-dev-06-test.pdf.md''"`'
   expected:
   - Sibling .md files inside .summaries/ NOT re-captured by scan
@@ -956,24 +1021,28 @@
   status: active
   retired: null
 - id: P15-DEV-07
-  behavior: In-flight guard — modify event during running pipeline does not launch second capture
+  behavior: In-flight guard — modify event during running pipeline does not launch
+    second capture
   tier: full
   phase: 1.5
   origin: bugfix
   granularity: mechanism
-  trigger: kms watch + on_modified fires while on_created pipeline still running (gap > debounce window)
+  trigger: kms watch + on_modified fires while on_created pipeline still running (gap
+    > debounce window)
   fixtures:
   - inbox/sample.md
   steps:
   - 'In Terminal 1, start the watcher:'
   - '`uv run kms watch`'
-  - 'In Terminal 2, drop file and wait for pipeline to start (but not finish), then touch it:'
+  - 'In Terminal 2, drop file and wait for pipeline to start (but not finish), then
+    touch it:'
   - '`cp tests/fixtures/sample.md <vault>/inbox/ && sleep 5 && touch <vault>/inbox/sample.md`'
   - 'In Terminal 2, check logs for the skip marker and verify only one capture fired:'
   - '`grep ''skip_in_flight'' logs/app.log | tail -5`'
   - '`grep ''metadata.captured'' logs/app.log | tail -5`'
   - 'Verify only one audit entry for this path:'
-  - '`sqlite3 data/kb.db "SELECT count(*), stage, outcome FROM audit_log WHERE outcome=''CAPTURED'' GROUP BY stage, outcome ORDER BY rowid DESC LIMIT 5"`'
+  - '`sqlite3 data/kb.db "SELECT count(*), stage, outcome FROM audit_log WHERE outcome=''CAPTURED''
+    GROUP BY stage, outcome ORDER BY rowid DESC LIMIT 5"`'
   expected:
   - watcher.skip_in_flight debug log appears for the modify event
   - Only one metadata.captured log line appears
@@ -982,7 +1051,7 @@
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
+  pytest_ref: tests/test_mcp_server/test_cloud_entry.py::test_health_returns_200_without_key
   status: active
   retired: null
 - id: PRE2-DB-01
@@ -997,7 +1066,8 @@
   steps:
   - '`uv run kms capture Projects/Alpha/test-db-columns.md`'
   - 'Then query the DB to verify columns:'
-  - '`sqlite3 data/kb.db "SELECT vault_path, project, status, key_topics FROM documents WHERE vault_path LIKE ''%test-db-columns%''"`'
+  - '`sqlite3 data/kb.db "SELECT vault_path, project, status, key_topics FROM documents
+    WHERE vault_path LIKE ''%test-db-columns%''"`'
   expected:
   - DB row has project=Alpha
   - key_topics contains a JSON array of topic tags
@@ -1015,7 +1085,8 @@
   phase: pre-2
   origin: implementation
   granularity: outcome
-  trigger: kms reconcile (Stage 5 — stale-tags sweep writes file, dumps() strips deprecated key)
+  trigger: kms reconcile (Stage 5 — stale-tags sweep writes file, dumps() strips deprecated
+    key)
   fixtures:
   - Domain/Finance/test-pre2-dom-01.md
   fixture_frontmatter: 'domain: finance
@@ -1036,7 +1107,8 @@
   - 'domain/Finance still present in tags: list'
   - 'type/capture still present in tags: list'
   - Body content unchanged
-  spec_ref: roadmap §Phase-Pre-2 'TD-038 deprecated keys filter'; TD-042 (Stage 5 must mark dirty for deprecated keys)
+  spec_ref: roadmap §Phase-Pre-2 'TD-038 deprecated keys filter'; TD-042 (Stage 5
+    must mark dirty for deprecated keys)
   human_reviewed: true
   last_tested: '2026-06-07'
   last_result: failed - all frontmatter changed
@@ -1122,11 +1194,13 @@
   fixtures:
   - Projects/Alpha/attachment/vr-rehome-01-test.xlsx
   steps:
-  - 'Run reconcile (stage 7 detects editable binary in attachment/ and moves it to root):'
+  - 'Run reconcile (stage 7 detects editable binary in attachment/ and moves it to
+    root):'
   - '`uv run kms reconcile`'
   expected:
   - vr-rehome-01-test.xlsx GONE from Projects/Alpha/attachment/
-  - File appears at Projects/Alpha/vr-rehome-01-test.xlsx (project root, visible in Obsidian)
+  - File appears at Projects/Alpha/vr-rehome-01-test.xlsx (project root, visible in
+    Obsidian)
   - Sibling .md path updated to reflect new location
   spec_ref: ADR-0006 'reconcile_editable_migration'
   human_reviewed: 'yes'
@@ -1148,15 +1222,19 @@
   - 'Ensure the binary has been captured first (creates sibling in .summaries/):'
   - '`uv run kms capture Projects/Alpha/attachment/vr-content-01-test.xlsx`'
   - 'Record the current content_hash:'
-  - '`sqlite3 data/kb.db "SELECT vault_path, content_hash FROM documents WHERE vault_path LIKE ''%vr-content-01%''"`'
+  - '`sqlite3 data/kb.db "SELECT vault_path, content_hash FROM documents WHERE vault_path
+    LIKE ''%vr-content-01%''"`'
   - 'In Terminal 1, start the watcher:'
   - '`uv run kms watch`'
-  - In Terminal 2, edit the XLSX content (actual data change, not just touch) and wait ~5 seconds for watcher to detect SHA-256 change.
+  - In Terminal 2, edit the XLSX content (actual data change, not just touch) and
+    wait ~5 seconds for watcher to detect SHA-256 change.
   - 'Verify content_hash changed:'
-  - '`sqlite3 data/kb.db "SELECT vault_path, content_hash FROM documents WHERE vault_path LIKE ''%vr-content-01%''"`'
+  - '`sqlite3 data/kb.db "SELECT vault_path, content_hash FROM documents WHERE vault_path
+    LIKE ''%vr-content-01%''"`'
   expected:
   - Sibling .md re-summarized with updated content
-  - source_hash updated in sibling frontmatter (open .summaries/vr-content-01-test.xlsx.md to verify)
+  - source_hash updated in sibling frontmatter (open .summaries/vr-content-01-test.xlsx.md
+    to verify)
   - content_hash in DB row differs from pre-edit value
   spec_ref: ADR-0006 'content_change_detect'
   human_reviewed: false
@@ -1166,17 +1244,20 @@
   status: active
   retired: null
 - id: P2-BAT-01
-  behavior: Single file captured into a project subfolder gets batch_id set in the documents row
+  behavior: Single file captured into a project subfolder gets batch_id set in the
+    documents row
   tier: full
   phase: 2
   origin: design
   granularity: outcome
   trigger: kms capture <Projects/Alpha/subdir/report.pdf>
   fixtures: []
-  steps: 'Drop a file into Projects/Alpha/subdir/ and run `uv run kms capture Projects/Alpha/subdir/report.pdf`. Query the DB: `sqlite3 data/kb.db ''SELECT vault_path, batch_id FROM documents WHERE vault_path
-    LIKE "%report%"''`'
+  steps: 'Drop a file into Projects/Alpha/subdir/ and run `uv run kms capture Projects/Alpha/subdir/report.pdf`.
+    Query the DB: `sqlite3 data/kb.db ''SELECT vault_path, batch_id FROM documents
+    WHERE vault_path LIKE "%report%"''`'
   expected:
-  - batch_id column is non-NULL; the value references a row in the batches table with folder_path = 'Projects/Alpha/subdir'
+  - batch_id column is non-NULL; the value references a row in the batches table with
+    folder_path = 'Projects/Alpha/subdir'
   spec_ref: docs/1_design/td040-td041-batch-id-fix.md §Success criteria
   human_reviewed: false
   last_tested: null
@@ -1192,9 +1273,11 @@
   granularity: outcome
   trigger: kms capture <file1>; kms capture <file2> (same folder)
   fixtures: []
-  steps: Capture two files from the same subfolder in separate CLI invocations. Query batch_id for both vault_path rows.
+  steps: Capture two files from the same subfolder in separate CLI invocations. Query
+    batch_id for both vault_path rows.
   expected:
-  - Both documents rows have identical batch_id values; the batches row for that folder_path has file_count >= 2
+  - Both documents rows have identical batch_id values; the batches row for that folder_path
+    has file_count >= 2
   spec_ref: docs/1_design/td040-td041-batch-id-fix.md §Success criteria
   human_reviewed: false
   last_tested: null
@@ -1210,7 +1293,8 @@
   granularity: outcome
   trigger: kms capture <inbox/report.pdf>
   fixtures: []
-  steps: Capture a file dropped directly into inbox/ (not inside a subfolder). Query batch_id for the resulting documents row.
+  steps: Capture a file dropped directly into inbox/ (not inside a subfolder). Query
+    batch_id for the resulting documents row.
   expected:
   - batch_id column is NULL — inbox root is not batch-worthy
   spec_ref: docs/1_design/td040-td041-batch-id-fix.md §Success criteria
@@ -1231,12 +1315,16 @@
   - inbox/test-batch-drop/note-a.md
   - inbox/test-batch-drop/note-b.md
   steps:
-  - 'Create the subfolder and two files: `mkdir -p <vault>/inbox/test-batch-drop` then drop any two .md files inside it (can be blank or with a line of text).'
+  - 'Create the subfolder and two files: `mkdir -p <vault>/inbox/test-batch-drop`
+    then drop any two .md files inside it (can be blank or with a line of text).'
   - Run `uv run kms capture --scan` from the repo root.
-  - 'Check both files were indexed: `sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE vault_path LIKE ''inbox/test-batch-drop/%'' ORDER BY vault_path"`'
-  - 'Check a batch row was created: `sqlite3 data/kb.db "SELECT folder_path, status FROM batches WHERE folder_path LIKE ''%test-batch-drop%''"`'
+  - 'Check both files were indexed: `sqlite3 data/kb.db "SELECT vault_path, batch_id
+    FROM documents WHERE vault_path LIKE ''inbox/test-batch-drop/%'' ORDER BY vault_path"`'
+  - 'Check a batch row was created: `sqlite3 data/kb.db "SELECT folder_path, status
+    FROM batches WHERE folder_path LIKE ''%test-batch-drop%''"`'
   expected:
-  - Both vault_path rows returned by the first query, both with the same non-NULL batch_id (a UUID-style string).
+  - Both vault_path rows returned by the first query, both with the same non-NULL
+    batch_id (a UUID-style string).
   - The batches query returns exactly one row with folder_path containing 'test-batch-drop'.
   spec_ref: docs/1_design/td040-td041-batch-id-fix.md §Success criteria
   human_reviewed: false
@@ -1246,16 +1334,19 @@
   status: active
   retired: null
 - id: P2-BAT-05
-  behavior: scan_capture skips a subfolder already captured by the watcher (no duplicate batch)
+  behavior: scan_capture skips a subfolder already captured by the watcher (no duplicate
+    batch)
   tier: full
   phase: 2
   origin: design
   granularity: outcome
   trigger: kms capture --scan (after watcher already processed the folder)
   fixtures: []
-  steps: Start watcher, drop a subfolder into inbox/. After watcher captures it, stop watcher and run `kms capture --scan`.
+  steps: Start watcher, drop a subfolder into inbox/. After watcher captures it, stop
+    watcher and run `kms capture --scan`.
   expected:
-  - No second batches row created for the same folder_path. Existing documents rows unchanged. Log shows subfolder skipped.
+  - No second batches row created for the same folder_path. Existing documents rows
+    unchanged. Log shows subfolder skipped.
   spec_ref: docs/1_design/td040-td041-batch-id-fix.md §Success criteria
   human_reviewed: false
   last_tested: null
@@ -1264,25 +1355,29 @@
   status: active
   retired: null
 - id: P2-BAT-06
-  behavior: File moved into a batch-worthy subfolder by the watcher gets batch_id updated in-place
+  behavior: File moved into a batch-worthy subfolder by the watcher gets batch_id
+    updated in-place
   tier: full
   phase: 2
   origin: design
   granularity: outcome
   trigger: kms watch + file moved into Projects/Alpha/subdir/
   fixtures: []
-  steps: Start watcher. Move a previously-captured file from inbox/ into Projects/Alpha/subdir/. Query batch_id for the updated documents row.
+  steps: Start watcher. Move a previously-captured file from inbox/ into Projects/Alpha/subdir/.
+    Query batch_id for the updated documents row.
   expected:
-  - batch_id updated to the batch for Projects/Alpha/subdir. No re-capture triggered (summary and content_hash unchanged).
+  - batch_id updated to the batch for Projects/Alpha/subdir. No re-capture triggered
+    (summary and content_hash unchanged).
   spec_ref: docs/1_design/td040-td041-batch-id-fix.md §Success criteria
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
+  pytest_ref: tests/test_mcp_server/test_api.py::TestUpload::test_upload_new_path_returns_document_id
   status: active
   retired: null
 - id: P2-REC-01
-  behavior: reconcile strips deprecated frontmatter key from a note that already has valid tags and correct project field
+  behavior: reconcile strips deprecated frontmatter key from a note that already has
+    valid tags and correct project field
   tier: phase
   phase: 2
   origin: design
@@ -1315,7 +1410,8 @@
   status: active
   retired: null
 - id: P2-REC-02
-  behavior: reconcile leaves a human-locked note untouched even if it has a deprecated frontmatter key
+  behavior: reconcile leaves a human-locked note untouched even if it has a deprecated
+    frontmatter key
   tier: phase
   phase: 2
   origin: design
@@ -1350,7 +1446,8 @@
   status: active
   retired: null
 - id: P2-REC-03
-  behavior: reconcile does not write a note that has no deprecated keys and no other dirty reason
+  behavior: reconcile does not write a note that has no deprecated keys and no other
+    dirty reason
   tier: phase
   phase: 2
   origin: design
@@ -1380,12 +1477,14 @@
   status: active
   retired: null
 - id: P2-REG-01
-  behavior: Registry returns all Projects/<A>/ folders grouped under their declared domain
+  behavior: Registry returns all Projects/<A>/ folders grouped under their declared
+    domain
   tier: smoke
   phase: 2
   origin: design
   granularity: outcome
-  trigger: python -c 'from vault.registry import build_registry; ...' or internal pipeline call
+  trigger: python -c 'from vault.registry import build_registry; ...' or internal
+    pipeline call
   fixtures:
   - Projects/Alpha/CLAUDE.md
   - Projects/Beta/CLAUDE.md
@@ -1396,11 +1495,13 @@
 
     '
   steps:
-  - 'Set up Projects/Alpha/CLAUDE.md with tags: [domain/Finance] and Projects/Beta/CLAUDE.md with no domain tag.'
+  - 'Set up Projects/Alpha/CLAUDE.md with tags: [domain/Finance] and Projects/Beta/CLAUDE.md
+    with no domain tag.'
   - Ensure Domain/Finance/ folder exists.
   - Call build_registry(vault_cfg) and inspect the returned structure.
   expected:
-  - Finance group contains Alpha (has matching Domain/Finance/ folder and domain/Finance tag)
+  - Finance group contains Alpha (has matching Domain/Finance/ folder and domain/Finance
+    tag)
   - Uncategorized group contains Beta (no domain tag)
   - Domain/Finance/ listed as a direct destination
   - Domain/Finance/Archive/ NOT included as a destination
@@ -1462,7 +1563,8 @@
   status: planned
   retired: null
 - id: P2-REG-04
-  behavior: Only the first domain/D tag is used when CLAUDE.md has multiple domain tags
+  behavior: Only the first domain/D tag is used when CLAUDE.md has multiple domain
+    tags
   tier: phase
   phase: 2
   origin: design
@@ -1485,7 +1587,8 @@
   - 'Multi appears in exactly ONE group (the first domain tag: Finance)'
   - Multi does NOT appear in Operations group
   - Multi does NOT appear in Uncategorized
-  spec_ref: docs/1_design/project-registry.md §Success criteria (ADR-0009 one-domain rule)
+  spec_ref: docs/1_design/project-registry.md §Success criteria (ADR-0009 one-domain
+    rule)
   human_reviewed: false
   last_tested: null
   last_result: null
@@ -1517,7 +1620,8 @@
   status: planned
   retired: null
 - id: P2-REG-06
-  behavior: 'Watcher live-update: project CLAUDE.md created or updated changes domain grouping'
+  behavior: 'Watcher live-update: project CLAUDE.md created or updated changes domain
+    grouping'
   tier: full
   phase: 2
   origin: design
@@ -1543,7 +1647,8 @@
   status: planned
   retired: null
 - id: P2-CPROMPT-01
-  behavior: Classify prompt returns valid JSON with target_type, target_name, confidence, and reasoning fields
+  behavior: Classify prompt returns valid JSON with target_type, target_name, confidence,
+    and reasoning fields
   tier: smoke
   phase: 2
   origin: design
@@ -1567,22 +1672,28 @@
   last_result: null
   pytest_ref: null
   status: retired
-  retired: '2026-06-09: classify engine reshaped in P2-CIC Phase 3 — old target_type/target_name API replaced with project/domains/primary_domain. P2-CIC entries now cover classify behavior.'
+  retired: '2026-06-09: classify engine reshaped in P2-CIC Phase 3 — old target_type/target_name
+    API replaced with project/domains/primary_domain. P2-CIC entries now cover classify
+    behavior.'
 - id: P2-CPROMPT-02
-  behavior: Classify prompt routes active-work notes to a project and general-knowledge notes to a domain
+  behavior: Classify prompt routes active-work notes to a project and general-knowledge
+    notes to a domain
   tier: smoke
   phase: 2
   origin: design
   granularity: outcome
-  trigger: kms classify <file> with two distinct note types and a vault with both project and domain destinations
+  trigger: kms classify <file> with two distinct note types and a vault with both
+    project and domain destinations
   fixtures:
   - inbox/meeting-notes.md
   - inbox/industry-report.md
   - Projects/Alpha/CLAUDE.md
   - Domain/Finance/placeholder.md
   steps:
-  - Classify a note whose summary describes active project work (e.g. meeting notes, deliverable).
-  - Classify a note whose summary describes general reference material (e.g. industry report, background research).
+  - Classify a note whose summary describes active project work (e.g. meeting notes,
+    deliverable).
+  - Classify a note whose summary describes general reference material (e.g. industry
+    report, background research).
   expected:
   - 'Active-work note: target_type=''project'''
   - 'General-knowledge note: target_type=''domain'''
@@ -1592,18 +1703,23 @@
   last_result: null
   pytest_ref: null
   status: retired
-  retired: '2026-06-09: classify engine reshaped in P2-CIC Phase 3 — old target_type/target_name API replaced with project/domains/primary_domain. P2-CIC entries now cover classify behavior.'
+  retired: '2026-06-09: classify engine reshaped in P2-CIC Phase 3 — old target_type/target_name
+    API replaced with project/domains/primary_domain. P2-CIC entries now cover classify
+    behavior.'
 - id: P2-CPROMPT-03
-  behavior: Classify prompt never returns target_name='Uncategorized' — routes to actual project name within that group
+  behavior: Classify prompt never returns target_name='Uncategorized' — routes to
+    actual project name within that group
   tier: smoke
   phase: 2
   origin: design
   granularity: outcome
-  trigger: kms classify <file> when valid_destinations contains an Uncategorized group with one or more projects
+  trigger: kms classify <file> when valid_destinations contains an Uncategorized group
+    with one or more projects
   fixtures:
   - inbox/sample-note.md
   steps:
-  - Build a valid_destinations string that includes an Uncategorized group containing 'OrphanProject'.
+  - Build a valid_destinations string that includes an Uncategorized group containing
+    'OrphanProject'.
   - Classify a note that best matches OrphanProject.
   - Inspect target_name in the response.
   expected:
@@ -1615,9 +1731,12 @@
   last_result: null
   pytest_ref: null
   status: retired
-  retired: '2026-06-09: classify engine reshaped in P2-CIC Phase 3 — old target_type/target_name API replaced with project/domains/primary_domain. P2-CIC entries now cover classify behavior.'
+  retired: '2026-06-09: classify engine reshaped in P2-CIC Phase 3 — old target_type/target_name
+    API replaced with project/domains/primary_domain. P2-CIC entries now cover classify
+    behavior.'
 - id: P2-CPROMPT-04
-  behavior: Classify prompt returns low confidence rather than a forced answer when no destination fits well
+  behavior: Classify prompt returns low confidence rather than a forced answer when
+    no destination fits well
   tier: smoke
   phase: 2
   origin: design
@@ -1637,19 +1756,25 @@
   last_result: null
   pytest_ref: null
   status: retired
-  retired: '2026-06-09: classify engine reshaped in P2-CIC Phase 3 — old target_type/target_name API replaced with project/domains/primary_domain. P2-CIC entries now cover classify behavior.'
+  retired: '2026-06-09: classify engine reshaped in P2-CIC Phase 3 — old target_type/target_name
+    API replaced with project/domains/primary_domain. P2-CIC entries now cover classify
+    behavior.'
 - id: P2-CL-01
-  behavior: classify() returns Success(ClassifyResult) with all four fields when AI returns valid JSON
+  behavior: classify() returns Success(ClassifyResult) with all four fields when AI
+    returns valid JSON
   tier: unit
   phase: 2
   origin: design
   granularity: outcome
-  trigger: classify() called with valid title, summary, tags, valid_destinations and AI returns valid JSON
+  trigger: classify() called with valid title, summary, tags, valid_destinations and
+    AI returns valid JSON
   fixtures:
   - inbox/sample-note.md
   steps:
-  - Call classify() with a note's title, summary, tags, and a formatted destinations string.
-  - Mock the AI provider to return valid JSON with target_type, target_name, confidence, reasoning.
+  - Call classify() with a note's title, summary, tags, and a formatted destinations
+    string.
+  - Mock the AI provider to return valid JSON with target_type, target_name, confidence,
+    reasoning.
   - Inspect the return value.
   expected:
   - Returns Success(ClassifyResult)
@@ -1663,9 +1788,11 @@
   last_result: null
   pytest_ref: null
   status: retired
-  retired: '2026-06-09: ClassifyResult schema reshaped in P2-CIC Phase 3 — old target_type/target_name fields replaced with project/domains/primary_domain.'
+  retired: '2026-06-09: ClassifyResult schema reshaped in P2-CIC Phase 3 — old target_type/target_name
+    fields replaced with project/domains/primary_domain.'
 - id: P2-CL-02
-  behavior: classify() returns Failure(recoverable=True) when AI returns malformed JSON
+  behavior: classify() returns Failure(recoverable=True) when AI returns malformed
+    JSON
   tier: unit
   phase: 2
   origin: design
@@ -1688,7 +1815,8 @@
   status: active
   retired: null
 - id: P2-CL-03
-  behavior: classify() returns Failure(recoverable=True) when JSON is valid but target_type is not 'project' or 'domain'
+  behavior: classify() returns Failure(recoverable=True) when JSON is valid but target_type
+    is not 'project' or 'domain'
   tier: unit
   phase: 2
   origin: design
@@ -1709,14 +1837,16 @@
   last_result: null
   pytest_ref: null
   status: retired
-  retired: '2026-06-09: ClassifyResult schema reshaped in P2-CIC Phase 3 — old target_type/target_name fields replaced with project/domains/primary_domain.'
+  retired: '2026-06-09: ClassifyResult schema reshaped in P2-CIC Phase 3 — old target_type/target_name
+    fields replaced with project/domains/primary_domain.'
 - id: P2-CL-04
   behavior: classify() never raises an exception and never returns None
   tier: unit
   phase: 2
   origin: design
   granularity: outcome
-  trigger: classify() called under any failure condition (AI failure, bad JSON, network error)
+  trigger: classify() called under any failure condition (AI failure, bad JSON, network
+    error)
   fixtures: []
   steps:
   - Call classify() with valid inputs.
@@ -1733,7 +1863,8 @@
   status: active
   retired: null
 - id: P2-CL-05
-  behavior: classify() loads prompt from prompts/classify.yaml — no prompt string in Python code
+  behavior: classify() loads prompt from prompts/classify.yaml — no prompt string
+    in Python code
   tier: unit
   phase: 2
   origin: design
@@ -1754,12 +1885,14 @@
   status: active
   retired: null
 - id: P2-CL-06
-  behavior: classify() calls the AI via llm/provider.py get_provider() — no direct AI library import
+  behavior: classify() calls the AI via llm/provider.py get_provider() — no direct
+    AI library import
   tier: unit
   phase: 2
   origin: design
   granularity: outcome
-  trigger: 'Code review: inspect classify() implementation for direct anthropic or openai imports'
+  trigger: 'Code review: inspect classify() implementation for direct anthropic or
+    openai imports'
   fixtures: []
   steps:
   - Read src/pipelines/classify.py (or wherever classify() lives).
@@ -1775,7 +1908,8 @@
   status: active
   retired: null
 - id: P2-CIC-01
-  behavior: Loose inbox .md note with a confident destination is moved into the project/domain folder DERIVED from its assigned tags+project (AUTO)
+  behavior: Loose inbox .md note with a confident destination is moved into the project/domain
+    folder DERIVED from its assigned tags+project (AUTO)
   tier: phase
   phase: 2
   origin: design
@@ -1784,12 +1918,14 @@
   fixtures:
   - inbox/p2cic-01-clear-project-note.md
   steps:
-  - Place a note in inbox/ whose content clearly belongs to an existing project (e.g. meeting notes for Projects/Alpha).
+  - Place a note in inbox/ whose content clearly belongs to an existing project (e.g.
+    meeting notes for Projects/Alpha).
   - Ensure Projects/Alpha/ exists with a CLAUDE.md domain tag.
   - '`uv run kms capture inbox/p2cic-01-clear-project-note.md`'
   expected:
   - Note is GONE from inbox/ (moved to the DERIVED folder, e.g. Projects/Alpha/p2cic-01-clear-project-note.md)
-  - 'Frontmatter has project: Alpha AND the destination folder matches that project field (location derived from the field, not picked independently)'
+  - 'Frontmatter has project: Alpha AND the destination folder matches that project
+    field (location derived from the field, not picked independently)'
   - 'No status: needs-review field (AUTO acted, not suggested)'
   spec_ref: docs/1_design/phase2/classify-inline-capture.md §Routing model
   human_reviewed: false
@@ -1799,7 +1935,8 @@
   status: active
   retired: null
 - id: P2-CIC-02
-  behavior: Loose inbox note with a medium-confidence destination stays in inbox with suggested destination recorded (SUGGEST)
+  behavior: Loose inbox note with a medium-confidence destination stays in inbox with
+    suggested destination recorded (SUGGEST)
   tier: phase
   phase: 2
   origin: design
@@ -1812,7 +1949,8 @@
   - '`uv run kms capture inbox/p2cic-02-ambiguous-note.md`'
   expected:
   - Note STAYS at inbox/p2cic-02-ambiguous-note.md (not moved)
-  - 'Frontmatter records a suggested destination (e.g. status: needs-review plus a suggested-destination field)'
+  - 'Frontmatter records a suggested destination (e.g. status: needs-review plus a
+    suggested-destination field)'
   - Frontmatter records the AI confidence and one-sentence reasoning
   spec_ref: docs/1_design/phase2/classify-inline-capture.md §Success criteria
   human_reviewed: false
@@ -1845,7 +1983,8 @@
   status: active
   retired: null
 - id: P2-CIC-04
-  behavior: A file dropped directly into a project/domain folder is filed by location WITHOUT any AI classify call
+  behavior: A file dropped directly into a project/domain folder is filed by location
+    WITHOUT any AI classify call
   tier: phase
   phase: 2
   origin: design
@@ -1860,7 +1999,8 @@
   - Note stays in Projects/Alpha/ (location wins; no move)
   - 'Frontmatter has project: Alpha'
   - No suggested-destination / needs-review fields written (classify was skipped)
-  spec_ref: docs/1_design/phase2/classify-inline-capture.md §Success criteria (LOCATED symmetry)
+  spec_ref: docs/1_design/phase2/classify-inline-capture.md §Success criteria (LOCATED
+    symmetry)
   human_reviewed: 'yes'
   last_tested: '2026-06-10'
   last_result: passed
@@ -1868,7 +2008,8 @@
   status: active
   retired: null
 - id: P2-CIC-05
-  behavior: Loose inbox PDF gets a rich attachment summary AND is classified at drop time (two AI calls; pending-routing marker retired)
+  behavior: Loose inbox PDF gets a rich attachment summary AND is classified at drop
+    time (two AI calls; pending-routing marker retired)
   tier: phase
   phase: 2
   origin: design
@@ -1881,8 +2022,10 @@
   - '`uv run kms capture inbox/p2cic-05-clear-project-report.pdf`'
   expected:
   - Sibling .md has a real summary (NOT the one-line pending-routing placeholder)
-  - 'On AUTO: binary moved to the chosen folder''s attachment/, sibling moved alongside, both findable'
-  - 'On SUGGEST/CLUELESS: binary stays in inbox; sibling records the suggested destination or stuck state'
+  - 'On AUTO: binary moved to the chosen folder''s attachment/, sibling moved alongside,
+    both findable'
+  - 'On SUGGEST/CLUELESS: binary stays in inbox; sibling records the suggested destination
+    or stuck state'
   spec_ref: docs/1_design/phase2/classify-inline-capture.md §Success criteria
   human_reviewed: false
   last_tested: null
@@ -1891,7 +2034,8 @@
   status: active
   retired: null
 - id: P2-CIC-06
-  behavior: Every classify outcome (AUTO/SUGGEST/CLUELESS) writes exactly one decision-log audit row
+  behavior: Every classify outcome (AUTO/SUGGEST/CLUELESS) writes exactly one decision-log
+    audit row
   tier: full
   phase: 2
   origin: design
@@ -1901,7 +2045,8 @@
   - inbox/p2cic-06-audit-note.md
   steps:
   - '`uv run kms capture inbox/p2cic-06-audit-note.md`'
-  - '`sqlite3 data/kb.db "SELECT pipeline, stage, outcome, reasoning, source_ids FROM audit_log WHERE stage=''classify'' ORDER BY rowid DESC LIMIT 3"`'
+  - '`sqlite3 data/kb.db "SELECT pipeline, stage, outcome, reasoning, source_ids FROM
+    audit_log WHERE stage=''classify'' ORDER BY rowid DESC LIMIT 3"`'
   expected:
   - An audit_log row exists with pipeline=capture, stage=classify
   - outcome is one of AUTO | SUGGEST | CLUELESS
@@ -1914,7 +2059,8 @@
   status: active
   retired: null
 - id: P2-CIC-07
-  behavior: A classify AUTO-move to a project/domain root leaves batch_id NULL; index location stays consistent
+  behavior: A classify AUTO-move to a project/domain root leaves batch_id NULL; index
+    location stays consistent
   tier: full
   phase: 2
   origin: design
@@ -1924,11 +2070,14 @@
   - inbox/p2cic-07-batch-note.md
   steps:
   - Capture a loose inbox note that AUTO-routes to a project ROOT (e.g. Projects/Alpha/).
-  - '`sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE vault_path LIKE ''%p2cic-07-batch-note%''"`'
+  - '`sqlite3 data/kb.db "SELECT vault_path, batch_id FROM documents WHERE vault_path
+    LIKE ''%p2cic-07-batch-note%''"`'
   expected:
-  - documents.vault_path equals the new in-folder path (e.g. Projects/Alpha/p2cic-07-batch-note.md) — matches disk
+  - documents.vault_path equals the new in-folder path (e.g. Projects/Alpha/p2cic-07-batch-note.md)
+    — matches disk
   - batch_id is NULL (a tree root is not a batch-worthy subfolder)
-  - Exactly one documents row exists for the note (no orphan row at the old inbox path)
+  - Exactly one documents row exists for the note (no orphan row at the old inbox
+    path)
   spec_ref: docs/1_design/phase2/classify-inline-capture.md §Risks R2/R3
   human_reviewed: false
   last_tested: null
@@ -1937,7 +2086,8 @@
   status: active
   retired: null
 - id: P2-CIC-08
-  behavior: A classify AUTO-move under the running watcher does not double-fire re-home or create a duplicate row
+  behavior: A classify AUTO-move under the running watcher does not double-fire re-home
+    or create a duplicate row
   tier: full
   phase: 2
   origin: design
@@ -1946,11 +2096,14 @@
   fixtures: []
   steps:
   - Start kms watch.
-  - Drop a loose inbox file whose content clearly belongs to a project, wait for capture to AUTO-route it.
-  - '`sqlite3 data/kb.db "SELECT count(*), vault_path FROM documents WHERE vault_path LIKE ''%<that-file>%'' GROUP BY vault_path"`'
+  - Drop a loose inbox file whose content clearly belongs to a project, wait for capture
+    to AUTO-route it.
+  - '`sqlite3 data/kb.db "SELECT count(*), vault_path FROM documents WHERE vault_path
+    LIKE ''%<that-file>%'' GROUP BY vault_path"`'
   expected:
   - Exactly one documents row, pointing at the new destination path
-  - Watcher re-home was suppressed for the pipeline-initiated move (log shows rehome_skip reason=pipeline_initiated)
+  - Watcher re-home was suppressed for the pipeline-initiated move (log shows rehome_skip
+    reason=pipeline_initiated)
   - No second move back to inbox; the file stays at its classified destination
   spec_ref: docs/1_design/phase2/classify-inline-capture.md §Risks R1/R4
   human_reviewed: false
@@ -1960,7 +2113,8 @@
   status: active
   retired: null
 - id: P2-CIC-09
-  behavior: A file captured as part of a dropped folder is fully captured but NOT individually re-classified (SUPPRESS — the folder is the routing unit)
+  behavior: A file captured as part of a dropped folder is fully captured but NOT
+    individually re-classified (SUPPRESS — the folder is the routing unit)
   tier: full
   phase: 2
   origin: design
@@ -1968,14 +2122,20 @@
   trigger: kms watch / capture_folder on a folder dropped in inbox/
   fixtures: []
   steps:
-  - Drop a folder containing 2-3 loose files into inbox/ (a folder the system routes or marks CLUELESS).
+  - Drop a folder containing 2-3 loose files into inbox/ (a folder the system routes
+    or marks CLUELESS).
   - Let the folder capture flow process it (watcher stable-folder event, or capture_folder).
-  - '`sqlite3 data/kb.db "SELECT count(*) FROM audit_log WHERE stage=''classify''"` and inspect each file''s frontmatter.'
+  - '`sqlite3 data/kb.db "SELECT count(*) FROM audit_log WHERE stage=''classify''"`
+    and inspect each file''s frontmatter.'
   expected:
-  - Each file inside the folder is summarized + frontmatter-stamped + batch-stamped (full capture ran)
-  - 'NO file inside the folder carries suggested_type / suggested_name / classify_confidence / status: needs-review from an individual classify call'
-  - No per-file stage='classify' audit row is written for the folder's files (the folder verdict is the only classify decision)
-  spec_ref: docs/2_specs/phase2/classify-inline-capture.md §Component 3 (SUPPRESS); locked Decision 3
+  - Each file inside the folder is summarized + frontmatter-stamped + batch-stamped
+    (full capture ran)
+  - 'NO file inside the folder carries suggested_type / suggested_name / classify_confidence
+    / status: needs-review from an individual classify call'
+  - No per-file stage='classify' audit row is written for the folder's files (the
+    folder verdict is the only classify decision)
+  spec_ref: docs/2_specs/phase2/classify-inline-capture.md §Component 3 (SUPPRESS);
+    locked Decision 3
   human_reviewed: false
   last_tested: null
   last_result: null
@@ -1983,7 +2143,9 @@
   status: active
   retired: null
 - id: P2-CIC-10
-  behavior: A single file dropped in a project/domain folder is still summarized + frontmatter-stamped; only the classify step and the move are skipped (LOCATED is NOT a no-op)
+  behavior: A single file dropped in a project/domain folder is still summarized +
+    frontmatter-stamped; only the classify step and the move are skipped (LOCATED
+    is NOT a no-op)
   tier: phase
   phase: 2
   origin: design
@@ -1996,10 +2158,13 @@
   - '`uv run kms capture Projects/Alpha/p2cic-10-located-summary-note.md`'
   expected:
   - Note stays in Projects/Alpha/ (no move)
-  - 'Frontmatter has a real AI summary and project: Alpha (earlier capture stages ran)'
-  - No suggested-destination / classify_confidence / needs-review fields (classify step was skipped)
+  - 'Frontmatter has a real AI summary and project: Alpha (earlier capture stages
+    ran)'
+  - No suggested-destination / classify_confidence / needs-review fields (classify
+    step was skipped)
   - No stage='classify' audit row for this file (LOCATED — no classify AI call)
-  spec_ref: docs/2_specs/phase2/classify-inline-capture.md §Feature overview (LOCATED); locked Decision 4
+  spec_ref: docs/2_specs/phase2/classify-inline-capture.md §Feature overview (LOCATED);
+    locked Decision 4
   human_reviewed: false
   last_tested: null
   last_result: null
@@ -2007,7 +2172,8 @@
   status: active
   retired: null
 - id: P2-CIC-11
-  behavior: When the AI assigns a project, the note moves to that Project folder even though it also carries domain tags (project beats domain — precedence)
+  behavior: When the AI assigns a project, the note moves to that Project folder even
+    though it also carries domain tags (project beats domain — precedence)
   tier: phase
   phase: 2
   origin: design
@@ -2016,12 +2182,16 @@
   fixtures:
   - inbox/p2cic-11-project-and-domain-note.md
   steps:
-  - Place a loose inbox note that clearly belongs to an existing project AND carries one or more domain tags (e.g. a deliverable for Projects/Alpha that is also about domain/Finance).
+  - Place a loose inbox note that clearly belongs to an existing project AND carries
+    one or more domain tags (e.g. a deliverable for Projects/Alpha that is also about
+    domain/Finance).
   - Ensure both Projects/Alpha/ and Domain/Finance/ exist.
   - '`uv run kms capture inbox/p2cic-11-project-and-domain-note.md`'
   expected:
-  - Note moves to Projects/Alpha/ (the Project root), NOT Domain/Finance/ — project field wins over the domain tag
-  - Frontmatter still carries the domain/Finance tag (tags are not stripped; only the move follows precedence)
+  - Note moves to Projects/Alpha/ (the Project root), NOT Domain/Finance/ — project
+    field wins over the domain tag
+  - Frontmatter still carries the domain/Finance tag (tags are not stripped; only
+    the move follows precedence)
   - 'Frontmatter project: Alpha'
   spec_ref: docs/1_design/phase2/classify-inline-capture.md §Routing model (precedence)
   human_reviewed: false
@@ -2031,7 +2201,8 @@
   status: active
   retired: null
 - id: P2-CIC-12
-  behavior: A loose note with NO project and MULTIPLE domain tags moves to the AI's designated PRIMARY domain folder while keeping all its domain tags
+  behavior: A loose note with NO project and MULTIPLE domain tags moves to the AI's
+    designated PRIMARY domain folder while keeping all its domain tags
   tier: phase
   phase: 2
   origin: design
@@ -2040,14 +2211,18 @@
   fixtures:
   - inbox/p2cic-12-multi-domain-note.md
   steps:
-  - Place a loose inbox note that spans two existing domains (e.g. tagged domain/Finance and domain/Legal) and ties to no specific project.
+  - Place a loose inbox note that spans two existing domains (e.g. tagged domain/Finance
+    and domain/Legal) and ties to no specific project.
   - Ensure Domain/Finance/ and Domain/Legal/ both exist.
   - '`uv run kms capture inbox/p2cic-12-multi-domain-note.md`'
   expected:
-  - Note moves to exactly ONE domain folder — the AI's designated primary (e.g. Domain/Finance/), not both
-  - Frontmatter still lists BOTH domain tags (domain/Finance AND domain/Legal) — only the move uses the primary
+  - Note moves to exactly ONE domain folder — the AI's designated primary (e.g. Domain/Finance/),
+    not both
+  - Frontmatter still lists BOTH domain tags (domain/Finance AND domain/Legal) — only
+    the move uses the primary
   - Frontmatter records no project (no project field set)
-  spec_ref: docs/1_design/phase2/classify-inline-capture.md §Routing model (primary domain)
+  spec_ref: docs/1_design/phase2/classify-inline-capture.md §Routing model (primary
+    domain)
   human_reviewed: false
   last_tested: null
   last_result: null
@@ -2055,7 +2230,8 @@
   status: active
   retired: null
 - id: P2-CIC-13
-  behavior: 'Structural consistency: an AUTO-filed note''s on-disk folder always matches its stamped project/primary-domain (no free pick that could disagree)'
+  behavior: 'Structural consistency: an AUTO-filed note''s on-disk folder always matches
+    its stamped project/primary-domain (no free pick that could disagree)'
   tier: full
   phase: 2
   origin: design
@@ -2065,24 +2241,26 @@
   - inbox/p2cic-13-consistency-note.md
   steps:
   - Capture any loose inbox note that AUTO-routes.
-  - '`sqlite3 data/kb.db "SELECT vault_path, project FROM documents WHERE vault_path LIKE ''%p2cic-13-consistency-note%''"` and read the note''s frontmatter.'
-  - Compare the folder portion of vault_path against the stamped project (or primary domain) field.
+  - '`sqlite3 data/kb.db "SELECT vault_path, project FROM documents WHERE vault_path
+    LIKE ''%p2cic-13-consistency-note%''"` and read the note''s frontmatter.'
+  - Compare the folder portion of vault_path against the stamped project (or primary
+    domain) field.
   expected:
   - If a project is stamped, vault_path is under Projects/<that project>/
   - If no project but a primary domain, vault_path is under Domain/<that primary domain>/
-  - The folder NEVER points at a project/domain the frontmatter does not name (derived, not free pick)
-  spec_ref: docs/1_design/phase2/classify-inline-capture.md §Routing model (structural consistency)
+  - The folder NEVER points at a project/domain the frontmatter does not name (derived,
+    not free pick)
+  spec_ref: docs/1_design/phase2/classify-inline-capture.md §Routing model (structural
+    consistency)
   human_reviewed: false
   last_tested: null
   last_result: null
   pytest_ref: tests/test_pipelines/test_classify_step.py::test_auto_md_replace_path_atomic
   status: active
   retired: null
-
-
-# ── Phase 3 Session A — Index Layer ──
 - id: P3-IDX-01
-  behavior: After capture, an embeddings_vec row exists for the note (meaning index populated)
+  behavior: After capture, an embeddings_vec row exists for the note (meaning index
+    populated)
   tier: unit
   phase: 3
   origin: specification
@@ -2166,7 +2344,8 @@
   status: active
   retired: null
 - id: P3-IDX-05
-  behavior: Deleting a note removes its search entries from both embeddings_vec and notes_fts in the same transaction
+  behavior: Deleting a note removes its search entries from both embeddings_vec and
+    notes_fts in the same transaction
   tier: unit
   phase: 3
   origin: specification
@@ -2187,7 +2366,8 @@
   status: active
   retired: null
 - id: P3-IDX-06
-  behavior: Renaming a note copies its search entries to the new path and removes the old ones atomically
+  behavior: Renaming a note copies its search entries to the new path and removes
+    the old ones atomically
   tier: unit
   phase: 3
   origin: specification
@@ -2288,10 +2468,9 @@
   pytest_ref: tests/test_core/test_config.py::TestSearchConfig::test_search_config_defaults
   status: active
   retired: null
-
-# ── Phase 3 Session B — Query Path ──
 - id: P3-SRCH-01
-  behavior: A question finds a semantically related note even when the wording differs (vector match, not just keywords)
+  behavior: A question finds a semantically related note even when the wording differs
+    (vector match, not just keywords)
   tier: phase
   phase: 3
   origin: design
@@ -2312,7 +2491,8 @@
   status: active
   retired: null
 - id: P3-SRCH-02
-  behavior: A project filter with no question returns every note in that project, newest first (filter-only mode)
+  behavior: A project filter with no question returns every note in that project,
+    newest first (filter-only mode)
   tier: phase
   phase: 3
   origin: design
@@ -2333,7 +2513,8 @@
   status: active
   retired: null
 - id: P3-SRCH-03
-  behavior: A question plus a project filter searches semantically but only within that project
+  behavior: A question plus a project filter searches semantically but only within
+    that project
   tier: phase
   phase: 3
   origin: design
@@ -2354,7 +2535,8 @@
   status: active
   retired: null
 - id: P3-SRCH-04
-  behavior: Every search result carries a triage payload (handle, summary, snippet, score, metadata) and never the full note body
+  behavior: Every search result carries a triage payload (handle, summary, snippet,
+    score, metadata) and never the full note body
   tier: full
   phase: 3
   origin: design
@@ -2374,7 +2556,8 @@
   status: active
   retired: null
 - id: P3-SRCH-05
-  behavior: A result for a binary's sibling summary shows a usable title, not the raw "report.pdf.md" filename
+  behavior: A result for a binary's sibling summary shows a usable title, not the
+    raw "report.pdf.md" filename
   tier: phase
   phase: 3
   origin: design
@@ -2414,7 +2597,8 @@
   status: active
   retired: null
 - id: P3-SRCH-07
-  behavior: Rebuilding both indexes is idempotent — running reindex twice yields identical results
+  behavior: Rebuilding both indexes is idempotent — running reindex twice yields identical
+    results
   tier: phase
   phase: 3
   origin: design
@@ -2435,7 +2619,8 @@
   status: active
   retired: null
 - id: P3-SRCH-08
-  behavior: A date-range filter with no question returns recent notes (supports a future weekly synthesis caller)
+  behavior: A date-range filter with no question returns recent notes (supports a
+    future weekly synthesis caller)
   tier: full
   phase: 3
   origin: design
@@ -2455,7 +2640,8 @@
   status: active
   retired: null
 - id: P3-SRCH-09
-  behavior: Classify no longer accepts a domain name as a valid project destination (cross-type leak closed, TD-051)
+  behavior: Classify no longer accepts a domain name as a valid project destination
+    (cross-type leak closed, TD-051)
   tier: full
   phase: 3
   origin: design
@@ -2466,7 +2652,8 @@
   - Drive classify() so the AI response puts a domain name in the project field.
   expected:
   - classify() returns Failure(recoverable=True)
-  - project validated only against project names, primary_domain only against domain names
+  - project validated only against project names, primary_domain only against domain
+    names
   spec_ref: docs/1_design/P3_session_b_query_path.md
   human_reviewed: false
   last_tested: '2026-06-11'
@@ -2475,7 +2662,8 @@
   status: active
   retired: null
 - id: P3-SRCH-10
-  behavior: A captured binary's sibling note carries an AI-generated descriptive title in frontmatter
+  behavior: A captured binary's sibling note carries an AI-generated descriptive title
+    in frontmatter
   tier: phase
   phase: 3
   origin: design
@@ -2645,8 +2833,8 @@
   expected:
   - The note file moves into the named project/domain folder
   - Its frontmatter project / primary-domain reflects the destination
-  - The documents index path is updated (old search rows cleared) and the watcher does
-    not re-home it
+  - The documents index path is updated (old search rows cleared) and the watcher
+    does not re-home it
   spec_ref: docs/1_design/P4_mcp_context_injection.md §Success criteria
   human_reviewed: false
   last_tested: null
@@ -2668,7 +2856,8 @@
     same chat.
   expected:
   - The first response carries the full domain context
-  - The second response replaces it with a short "context for X already provided" note
+  - The second response replaces it with a short "context for X already provided"
+    note
   - A new conversation (new process) sends the full context again
   spec_ref: docs/1_design/P4_mcp_context_injection.md §Success criteria
   human_reviewed: false
@@ -2698,8 +2887,6 @@
   pytest_ref: null
   status: planned
   retired: null
-
-# ── Phase 5 Slice 1 — Data/Config Foundation ──
 - id: P5-DATA-01
   behavior: The new knowledge_entries table exists after the database is initialized,
     with all eleven columns
@@ -2715,8 +2902,8 @@
   - 'Inspect the schema: `sqlite3 <db> "PRAGMA table_info(knowledge_entries)"`'
   - 'Check the version: `sqlite3 <db> "SELECT version FROM schema_version"`'
   expected:
-  - knowledge_entries table exists with columns id, dimension, entity, tag, fact, status,
-    confidence, sources, reasoning, created_at, updated_at
+  - knowledge_entries table exists with columns id, dimension, entity, tag, fact,
+    status, confidence, sources, reasoning, created_at, updated_at
   - schema_version is 8
   spec_ref: docs/1_design/P5_slice1_data_foundation.md §Success criteria
   human_reviewed: false
@@ -2735,8 +2922,8 @@
   trigger: init_db() runs on a database that already has documents rows
   fixtures: []
   steps:
-  - Initialize a database that already contains captured documents rows (migration 008
-    applied on top).
+  - Initialize a database that already contains captured documents rows (migration
+    008 applied on top).
   - 'Inspect the schema: `sqlite3 <db> "PRAGMA table_info(documents)"`'
   - 'Read an existing row: `sqlite3 <db> "SELECT full_body, original_filename, file_size_bytes
     FROM documents LIMIT 1"`'
@@ -2754,8 +2941,8 @@
   status: active
   retired: null
 - id: P5-DATA-03
-  behavior: A knowledge entry can be created and read back by dimension, carrying its
-    fact, status, confidence, and source list
+  behavior: A knowledge entry can be created and read back by dimension, carrying
+    its fact, status, confidence, and source list
   tier: full
   phase: 5
   origin: design
@@ -2791,7 +2978,8 @@
     entity.
   - Call query_by_entity for the first entity.
   expected:
-  - Only the two entries for that entity are returned; the other entity's entry is excluded
+  - Only the two entries for that entity are returned; the other entity's entry is
+    excluded
   - Each returned entry carries its own tag and fact
   spec_ref: docs/1_design/P5_slice1_data_foundation.md §Success criteria
   human_reviewed: false
@@ -2801,8 +2989,8 @@
   status: active
   retired: null
 - id: P5-DATA-05
-  behavior: Retiring an entry flips its status to retired with a reason and never deletes
-    the row
+  behavior: Retiring an entry flips its status to retired with a reason and never
+    deletes the row
   tier: full
   phase: 5
   origin: design
@@ -2879,9 +3067,11 @@
   fixtures: []
   steps:
   - Load the dimension/tag config.
-  - For each configured dimension, call validate_dimension_tag(dimension, "other", config).
+  - For each configured dimension, call validate_dimension_tag(dimension, "other",
+    config).
   expected:
-  - The tag "other" validates as a known tag for every dimension (catch-all present everywhere)
+  - The tag "other" validates as a known tag for every dimension (catch-all present
+    everywhere)
   spec_ref: docs/1_design/P5_slice1_data_foundation.md §Success criteria
   human_reviewed: false
   last_tested: null
@@ -2899,13 +3089,14 @@
   trigger: status-from-confidence mapping used by knowledge_entries.upsert / classify
   fixtures: []
   steps:
-  - Feed a high confidence score (above the configured confident threshold) and a low
-    one (below it) through the status mapping.
-  - 'Inspect the source: confirm the threshold comes from config, not a literal in code.'
+  - Feed a high confidence score (above the configured confident threshold) and a
+    low one (below it) through the status mapping.
+  - 'Inspect the source: confirm the threshold comes from config, not a literal in
+    code.'
   expected:
   - High score maps to status confident; low score maps to status pending
-  - The threshold value is read from config (no float literal in an if/elif drives the
-    mapping)
+  - The threshold value is read from config (no float literal in an if/elif drives
+    the mapping)
   spec_ref: docs/1_design/P5_slice1_data_foundation.md §Success criteria
   human_reviewed: false
   last_tested: null
@@ -2914,8 +3105,8 @@
   status: active
   retired: null
 - id: P5-DATA-10
-  behavior: The full existing test suite stays green after the additive migration and
-    new modules land, except the expected migration version-pin bump
+  behavior: The full existing test suite stays green after the additive migration
+    and new modules land, except the expected migration version-pin bump
   tier: full
   phase: 5
   origin: design
@@ -2926,8 +3117,8 @@
   - 'Run the full suite: `uv run pytest`'
   expected:
   - All previously-passing tests still pass, EXCEPT the two version-pin assertions
-    in tests/test_storage/test_migration_007.py (lines 41, 56) which are updated 7->8 as the
-    expected migration-version bump (research A1, 2026-06-12) — not a regression
+    in tests/test_storage/test_migration_007.py (lines 41, 56) which are updated 7->8
+    as the expected migration-version bump (research A1, 2026-06-12) — not a regression
   - No other existing test is rewritten or deleted to accommodate Slice 1
   - documents.upsert() still accepts a WriteOutcome (signature unchanged)
   spec_ref: docs/1_design/P5_slice1_data_foundation.md §Success criteria
@@ -2959,8 +3150,8 @@
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_mcp_server/test_cloud_entry.py::test_health_returns_200_without_key
+  status: active
   retired: null
 - id: P5-DEPLOY-02
   behavior: The existing knowledge-assistant (MCP) interface answers a tool-list request
@@ -2981,8 +3172,8 @@
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_storage/test_upsert_from_upload.py::test_different_hash_updates_in_place
+  status: active
   retired: null
 - id: P5-DEPLOY-03
   behavior: A first upload of a new file stores a document record carrying its full
@@ -2994,8 +3185,8 @@
   trigger: POST /api/upload with a valid secret key and a new vault_path payload
   fixtures: []
   steps:
-  - 'POST a payload to /api/upload with the correct Authorization bearer key:
-    a new vault_path, extracted_text, a content_hash, original_filename, file_size_bytes,
+  - 'POST a payload to /api/upload with the correct Authorization bearer key: a new
+    vault_path, extracted_text, a content_hash, original_filename, file_size_bytes,
     and a metadata object.'
   - 'Read the stored row: `sqlite3 <db> "SELECT full_body, original_filename, file_size_bytes,
     content_hash FROM documents WHERE vault_path = ?"`'
@@ -3007,12 +3198,12 @@
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_mcp_server/test_api.py::TestUpload::test_upload_new_path_returns_document_id
+  status: active
   retired: null
 - id: P5-DEPLOY-04
-  behavior: Re-uploading the identical file (same path, same content fingerprint) is
-    idempotent — the stored record is not duplicated or rewritten
+  behavior: Re-uploading the identical file (same path, same content fingerprint)
+    is idempotent — the stored record is not duplicated or rewritten
   tier: full
   phase: 5
   origin: design
@@ -3022,7 +3213,8 @@
   steps:
   - Upload a file once (as in P5-DEPLOY-03).
   - Upload the exact same payload again.
-  - 'Count rows: `sqlite3 <db> "SELECT COUNT(*) FROM documents WHERE vault_path = ?"`'
+  - 'Count rows: `sqlite3 <db> "SELECT COUNT(*) FROM documents WHERE vault_path =
+    ?"`'
   expected:
   - Both requests return HTTP 200
   - There is exactly one documents row for that vault_path (no duplicate)
@@ -3031,8 +3223,8 @@
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_storage/test_upsert_from_upload.py::test_same_hash_skips_write
+  status: active
   retired: null
 - id: P5-DEPLOY-05
   behavior: Uploading the same path with a different content fingerprint updates the
@@ -3049,15 +3241,15 @@
   - 'Read the row back: `sqlite3 <db> "SELECT full_body, content_hash FROM documents
     WHERE vault_path = ?"`'
   expected:
-  - The single documents row for that vault_path now holds the new extracted text and
-    the new content_hash
+  - The single documents row for that vault_path now holds the new extracted text
+    and the new content_hash
   - Still exactly one row (update in place, not a second insert)
   spec_ref: docs/1_design/P5_slice2_deployment_foundation.md §Success criteria
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_storage/test_upsert_from_upload.py::test_different_hash_updates_in_place
+  status: active
   retired: null
 - id: P5-DEPLOY-06
   behavior: A move/rename event updates the stored file's location, carrying its search-index
@@ -3081,8 +3273,8 @@
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_mcp_server/test_api.py::TestEventMoved::test_event_moved_updates_vault_path
+  status: active
   retired: null
 - id: P5-DEPLOY-07
   behavior: A delete event removes the stored file completely, including its search-index
@@ -3096,8 +3288,8 @@
   steps:
   - Upload a file so its row and search entries exist.
   - POST /api/event with type=deleted and that path, using a valid secret key.
-  - 'Confirm removal across all three tables: `sqlite3 <db> "SELECT COUNT(*) FROM documents
-    WHERE vault_path = ?"` (and the two search tables).'
+  - 'Confirm removal across all three tables: `sqlite3 <db> "SELECT COUNT(*) FROM
+    documents WHERE vault_path = ?"` (and the two search tables).'
   expected:
   - The response is HTTP 200
   - No row remains for that path in documents, the keyword index, or the meaning index
@@ -3106,8 +3298,8 @@
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_mcp_server/test_api.py::TestEventDeleted::test_event_deleted_removes_row
+  status: active
   retired: null
 - id: P5-DEPLOY-08
   behavior: An event naming a path that was never captured replies not_found instead
@@ -3129,8 +3321,8 @@
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_mcp_server/test_api.py::TestEventNotFound::test_event_deleted_unknown_path_returns_not_found
+  status: active
   retired: null
 - id: P5-DEPLOY-09
   behavior: A request to a sync endpoint with a wrong or missing secret key is rejected
@@ -3153,8 +3345,8 @@
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_mcp_server/test_api.py::TestUnauthorized::test_upload_missing_key_returns_401
+  status: active
   retired: null
 - id: P5-DEPLOY-10
   behavior: First-ever start with no backup creates a fresh database with the correct,
@@ -3163,7 +3355,8 @@
   phase: 5
   origin: design
   granularity: outcome
-  trigger: container start with backup turned off (or no backup present in object storage)
+  trigger: container start with backup turned off (or no backup present in object
+    storage)
   fixtures: []
   steps:
   - Start the container with no prior backup available.
@@ -3178,8 +3371,8 @@
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_mcp_server/test_cloud_entry.py::test_first_call_creates_db
+  status: active
   retired: null
 - id: P5-DEPLOY-11
   behavior: After a container restart with cloud backup configured, the database is
@@ -3206,7 +3399,7 @@
   last_tested: null
   last_result: null
   pytest_ref: null
-  status: planned
+  status: active
   retired: null
 - id: P5-DEPLOY-12
   behavior: The existing stdio entry point for the knowledge-assistant interface still
@@ -3228,6 +3421,6 @@
   human_reviewed: false
   last_tested: null
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_mcp_server/test_cloud_entry.py::test_server_main_unchanged_after_cloud_entry_import
+  status: active
   retired: null
