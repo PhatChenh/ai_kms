@@ -16,3 +16,4 @@ logs/
 repomix-output.xml
 repomix-reference.xml
 docs/reference/
+.worktrees/
