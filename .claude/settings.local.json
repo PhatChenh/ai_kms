@@ -17,7 +17,8 @@
       "Read(//Users/lap14806/.claude/**)",
       "Bash(python3 -c 'import json; json.load\\(open\\('\\\\''/Users/lap14806/.claude/settings.json'\\\\''\\)\\); print\\('\\\\''valid'\\\\''\\)')",
       "WebFetch(domain:docs.vngcloud.vn)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "mcp__visualize__show_widget"
     ]
   }
 }
