@@ -140,7 +140,7 @@ def extract(
         )
     vault_path = unicodedata.normalize("NFC", rel.as_posix())
 
-    # ── 3. Try handler registry dispatch ─────────────────────────────────
+    # ── 4. Try handler registry dispatch ─────────────────────────────────
     from handlers.registry import HandlerRegistry
 
     match HandlerRegistry.resolve(path):
@@ -161,7 +161,7 @@ def extract(
         case Failure():
             pass  # fall through to binary fallback
 
-    # ── 4. Binary fallback ───────────────────────────────────────────────
+    # ── 5. Binary fallback ───────────────────────────────────────────────
     mime_type = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
 
     return Success(
