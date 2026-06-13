@@ -1,0 +1,12 @@
+# Controlled vocabulary for type/ tags.
+# domain/ values are loaded at runtime from vault/Domain/ folder names.
+allowed_types:
+  - meeting-note
+  - email
+  - report
+  - article
+  - reflection
+  - task-list
+  - transcript
+  - capture
+  - attachment-summary

@@ -1,0 +1,17 @@
+# config/routing.yaml
+# Phase 2 placeholder — do not delete this file.
+# Importing modules expect this file to exist even if empty.
+#
+# Phase 2 will define per-pipeline LLM routing rules here.
+# Example schema (do not uncomment yet):
+#
+# pipelines:
+#   journal_tagger:
+#     provider: "anthropic"
+#     model: "claude-haiku-3"
+#     fallback_provider: "ollama"
+#   resource_classifier:
+#     provider: "openai"
+#     model: "gpt-4o-mini"
+
+pipelines: {}
