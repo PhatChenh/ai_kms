@@ -8,8 +8,6 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-import pytest
-
 from core.result import Failure, Success
 
 FIXTURE_PDF = Path(__file__).parent.parent / "fixtures" / "sample_text.pdf"
@@ -95,8 +93,11 @@ class TestNoAiCall:
 
         monkeypatch.setattr(prov, "get_provider", _fake_get_provider)
 
-        # Set up a binary in the vault with sibling .md
-        binary_dir = vault_dir / "Projects" / "Gamma" / "attachment"
+        # Set up a binary in the vault with sibling .md.
+        # NOTE: fixture sibling_inspect_pdf.md hardcodes
+        #   attachment_path: Projects/Alpha/attachment/sample_text.pdf
+        # so the binary MUST be placed at Projects/Alpha/, not Gamma/.
+        binary_dir = vault_dir / "Projects" / "Alpha" / "attachment"
         binary_dir.mkdir(parents=True, exist_ok=True)
         binary_path = binary_dir / "sample_text.pdf"
         shutil.copy2(FIXTURE_PDF, binary_path)
