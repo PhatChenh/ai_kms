@@ -207,7 +207,7 @@ async def _fetch_cloud_state(
     return result
 
 
-def _build_disk_state(config: DaemonConfig) -> dict[str, str]:
+def _build_disk_state(config: DaemonConfig) -> tuple[dict[str, str], set[str]]:
     """Walk the vault and return ``({vault_path: sha256_hex}, unreadable_set)``.
 
     Directories are skipped; files matching *ignore_patterns* are skipped.
