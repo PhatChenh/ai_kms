@@ -153,6 +153,103 @@ def upsert(
         )
 
 
+def upsert_from_upload(
+    vault_path: str,
+    extracted_text: str,
+    content_hash: str,
+    original_filename: str | None = None,
+    file_size_bytes: int | None = None,
+    title: str | None = None,
+    db_path: Path | None = None,
+) -> Result[int]:
+    """Save-or-update one uploaded file's record, deciding by content fingerprint.
+
+    Decision inside one ``get_connection(db_path)`` transaction:
+
+    * No existing row for *vault_path* → INSERT, return new ``id``.
+    * Same ``content_hash``            → no write, return existing ``id``.
+    * Different ``content_hash``       → UPDATE in place, return same ``id``.
+
+    Args:
+        vault_path:        POSIX-relative path for the documents row.
+        extracted_text:    Full extracted text to store in ``full_body``.
+        content_hash:      Content fingerprint for dedup / change detection.
+        original_filename: Original upload filename (optional).
+        file_size_bytes:   File size in bytes (optional).
+        title:             Optional override; defaults to ``Path(vault_path).stem``
+                           on INSERT, keeps existing title on UPDATE unless provided.
+        db_path:           Override DB path.
+
+    Returns:
+        ``Success(row_id)`` or ``Failure(recoverable=False)`` on ``sqlite3.Error``.
+    """
+    try:
+        with get_connection(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT id, content_hash, title FROM documents WHERE vault_path = ?",
+                (vault_path,),
+            ).fetchone()
+
+            if row is None:
+                # ── INSERT ──────────────────────────────────────────────
+                resolved_title = title or Path(vault_path).stem
+                cur = conn.execute(
+                    """
+                    INSERT INTO documents
+                        (vault_path, title, full_body, original_filename,
+                         file_size_bytes, content_hash, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+                    """,
+                    (
+                        vault_path,
+                        resolved_title,
+                        extracted_text,
+                        original_filename,
+                        file_size_bytes,
+                        content_hash,
+                    ),
+                )
+                return Success(cur.lastrowid)
+
+            existing_id: int = row["id"]
+            existing_hash: str | None = row["content_hash"]
+
+            if existing_hash == content_hash:
+                # ── SKIP — identical content ────────────────────────────
+                return Success(existing_id)
+
+            # ── UPDATE — content changed ────────────────────────────────
+            resolved_title = title if title is not None else row["title"]
+            conn.execute(
+                """
+                UPDATE documents
+                SET full_body = ?,
+                    original_filename = ?,
+                    file_size_bytes = ?,
+                    content_hash = ?,
+                    title = ?,
+                    updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (
+                    extracted_text,
+                    original_filename,
+                    file_size_bytes,
+                    content_hash,
+                    resolved_title,
+                    existing_id,
+                ),
+            )
+            return Success(existing_id)
+    except sqlite3.Error as exc:
+        return Failure(
+            error=str(exc),
+            recoverable=False,
+            context={"vault_path": vault_path, "op": "upsert_from_upload"},
+        )
+
+
 def get_by_path(
     vault_path: str, db_path: Path | None = None
 ) -> Result[DocumentRow | None]:
