@@ -3,6 +3,8 @@ created: 2026-04-26
 updated: 2026-06-07
 ---
 
+> **REARCHITECTURE IN PROGRESS (2026-06-12).** Old phases 5-9 scrapped — replaced by cloud-native rearchitecture phases 5-10 below. Read `docs/0_draft/cloud_native_rearchitecture.md` as the single source of truth for system direction. Completed phases (0-4) remain accurate as reference for existing code.
+
 # PROJECT CONTEXT
 
 ## Problem Statement and Project Overview
@@ -65,26 +67,27 @@ This roadmap supports multiple contributors working in parallel. Each task is la
 ## Dependency Graph
 
 ```
-COMPLETED                          REMAINING
-─────────                          ─────────
+COMPLETED (existing)                    REARCHITECTURE PHASES
+────────────────────                    ─────────────────────
 
-Phase 0 (Foundations) ─┐
-Phase 1 (Capture)      ├─ DONE ──→ Phase 2 (Classify) ──┐
-Phase 1.5 (Pay Debt)   │                                 │
-Phase Pre-2 (DB Prep)  ├─ DONE ──→ Phase 3 (Search) ────┤
-Vault-Restructure      │                                 │
-                       │                                 ▼
-                       │                        Phase 4 (MCP Server)
-                       │
-                       ├─ DONE ──→ Phase 5 (Promotion)       INDEPENDENT
-                       ├─ DONE ──→ Phase 6 (Documentation)   INDEPENDENT
-                       ├─ DONE ──→ Phase 8 (Briefing)        INDEPENDENT
-                       └─ DONE ──→ Phase 9 (Synthesis)       INDEPENDENT
-
-                                   Phase 7 (Self-Learning) ──→ depends on Phase 2
+Phase 0 (Foundations)  ─┐
+Phase 1 (Capture)       │
+Phase 1.5 (Pay Debt)    ├─ DONE ──→ Phase 5 (Infrastructure) ──→ Phase 6 (Daemon)
+Phase Pre-2 (DB Prep)   │                    │
+Vault-Restructure       │                    ▼
+Phase 2 (Classify)      │           Phase 7 (Capture Refactor)
+Phase 3 (Search)        │                    │
+Phase 4 (MCP Server)  ──┘                    ▼
+                                    Phase 8 (Classify Redesign)
+                                             │
+                                             ▼
+                                    Phase 9 (MCP Adaptation)
+                                             │
+                                             ▼
+                                    Phase 10 (Web UI + Self-Learning)
 ```
 
-**Key insight:** Phase 2 and Phase 3 are independent of each other — both depend on Phase 0+1 only. Phase 4 (MCP) depends on both 2 and 3. This means Phase 2 and Phase 3 can run in parallel.
+**Key insight:** Phase 6 (Daemon) and Phase 7 (Capture Refactor) can run in parallel — both depend on Phase 5 only. Daemon is local code, Capture is cloud code. Different test strategies, no conflicts.
 
 ---
 
@@ -118,6 +121,8 @@ Hybrid search end-to-end: descriptive title at capture (`title` typed field on `
 ---
 
 ## Stable Interfaces (Phase 0+1+2+3+4 — all independent tasks build against these)
+
+> **⚠️ STABLE FOR EXISTING CODE ONLY — several entries are being RETIRED by the rearchitecture (flagged 2026-06-12).** Accurate for Phases 0–4 code as-is. But for **rearchitecture phases (5–10), do NOT build new code against these dead-or-dying modules:** `vault/reader.py`, `vault/writer.py` (incl. `write_note`/`move_note`/`WriteOutcome`), `vault/paths.py` placement helpers (`resolve_placement`/`project_attachment`/`domain_attachment`), `mcp_server/_move.py`. They are retired per ADR-0012 (deletion rides with each module's last-consumer refactor). `storage/documents.upsert()` signature changes in Phase 7. See `docs/0_draft/cloud_native_rearchitecture.md` §11.
 
 These have been stable across ~1258 tests and multiple phases. Independent tasks import from these modules only:
 
@@ -181,728 +186,863 @@ These have been stable across ~1258 tests and multiple phases. Independent tasks
 
 ---
 
-## Phase 5 — Note Promotion
+## Phase 5 — Infrastructure Foundation
 
-**`INDEPENDENT (depends on Phase 0+1 only) · WEIGHT: medium`**
+**`DEPENDS ON: Phase 0-4 · WEIGHT: medium · TYPE: infrastructure (no behavior change)`**
+
+> **Rearchitecture phase.** Read `docs/0_draft/cloud_native_rearchitecture.md` for full architectural context. This phase lays the foundation — DB schema, repo structure, container scaffolding, API contract. No user-visible behavior changes.
+
+> **🔪 SPLIT INTO TWO SLICES (decided 2026-06-12, build-pipeline grill). The original single-phase scope was unbuildable as written — see ADR-0012.** Phase 5 now runs as two independent, parallelizable slices:
+>
+> **SLICE 1 — Data/Config Foundation** *(pure local code, NO AgentBase, additive-only — zero existing-test breakage):*
+> - DB MIGRATIONS (new `knowledge_entries` table + 3 **nullable** `documents` columns)
+> - `storage/knowledge_entries.py` CRUD
+> - DIMENSION/TAG CONFIG (`config/dimensions.yaml` + `validate_dimension_tag()`)
+> - **Does NOT** touch `documents.upsert()`, **does NOT** split config, **does NOT** retire modules (all deferred — see per-component warnings + ADR-0012).
+>
+> **SLICE 2 — Deployment Foundation** *(AgentBase — see `docs/0_draft/agentbase_research.md`):*
+> - CONTAINER SCAFFOLDING (Dockerfile, `/health`, port 8080, **Litestream + VNG Object Storage** for SQLite persistence per agentbase_research §11.2, `--max-replicas 1` per §11.4)
+> - REST API SKELETON (`/api/upload`, `/api/event`)
+>
+> **Parallelism:** the two slices touch disjoint files and can run in parallel worktrees. **One integration seam:** Slice 2's `/api/upload` writes `full_body`, which needs Slice 1's migration landed first (Slice 1's first build step). Everything else is independent. `CONTAINER SCAFFOLDING`'s old "depends on CONFIG SPLIT" dependency is **stale** (config split deferred) — it now depends on nothing in Slice 1.
 
 ### Goal
 
-After Phase 1, raw captured notes accumulate in the vault. A meeting note might contain a reusable workflow that the user follows every sprint. A research note might contain a lesson the user wants to refer back to in a year. These insights are buried in raw captures — hard to find, never reused.
+Everything in the rearchitecture depends on three things existing first: (1) the new DB schema (`knowledge_entries` table, `full_body` column on documents), (2) the repo split into cloud code vs daemon code, and (3) a deployable container on AgentBase with REST endpoints for the daemon to upload to.
 
-Phase 5 extracts the valuable knowledge. When a note contains something reusable — a workflow template, a lesson learned, a research finding — the system detects it, extracts a structured version, and saves it to the appropriate domain folder. The original note is never touched. Only high-confidence promotions happen automatically; borderline cases become proposals for the user to approve.
+Phase 5 builds this foundation. After this phase: the DB can store everything the new pipeline needs, the repo has clear cloud/daemon boundaries, the container runs on AgentBase with a health endpoint, and REST endpoints exist (stubbed) for daemon uploads. No pipelines change yet — this is pure infrastructure.
 
-### How the pieces fit together
+### Repo structure after this phase
 
 ```
-# Phase 5 — Note Promotion: What Happens Inside
-Scope: Reads a captured note and, if valuable, creates a structured knowledge artifact.
-       Does NOT cover: how notes were captured (Phase 1), classification (Phase 2),
-       or documentation pages (Phase 6).
+AI-kms/
+├── src/              ← cloud code (Docker image)
+│   ├── pipelines/    ← capture, classify (refactored in Phase 7-8)
+│   ├── storage/      ← documents.py, audit_log.py, NEW knowledge_entries.py
+│   ├── retrieval/    ← search, ranker, reranker, embeddings, keyword
+│   ├── mcp_server/   ← server.py, tools.py, context.py
+│   ├── handlers/     ← SHARED: text extraction, bundled in both cloud and daemon
+│   ├── core/         ← result, audit, tags, confidence, config
+│   ├── llm/          ← provider, prompt_loader
+│   ├── config/       ← config.yaml (cloud), tags.yaml, thresholds.yaml
+│   └── api/          ← NEW: REST endpoints for daemon uploads
+├── daemon/           ← NEW: local daemon package
+│   ├── __main__.py   ← entry point
+│   └── (built in Phase 6)
+├── Dockerfile        ← NEW: builds cloud image from src/
+├── installer/        ← NEW: PyInstaller spec (built in Phase 6)
+└── tests/
 
-How to read this:
-  Boxes      = steps the system takes, in order
-  BOLD NAME  = component name — maps to the Components section below
-  Arrows     = what flows to the next step
-  Fork       = a decision with different outcomes
-
-┌──────────────────────────────────────┐
-│ Captured note (anywhere in vault)    │
-└──────────────────┬───────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────┐
-│ PROMOTABILITY DETECTOR               │
-│ AI reads note, decides if it         │
-│ contains reusable knowledge          │
-└──────┬───────────────────────────────┘
-       │                    │
-  promotable           not promotable
-       │                    │
-       ▼                    ▼
-┌────────────────┐    [Return Success(skipped)
-│ STRUCTURE      │     — no output written]
-│ EXTRACTOR      │
-│ AI pulls out   │
-│ structured     │
-│ knowledge form │
-└───────┬────────┘
-        │
-        ▼
-┌──────────────────────────────────────┐
-│ PROMOTION GATE                       │
-│ Routes by confidence: auto / propose │
-└──────┬───────────────────────────────┘
-       │                    │
-    high                   mid/low
-       │                    │
-       ▼                    ▼
-┌────────────────┐    [Write proposal
-│ PROMOTION      │     to inbox as a
-│ WRITER         │     draft — do not
-│ writes to      │     auto-promote]
-│ Domain/ folder │
-└────────────────┘
-
-Note: [Return Success(skipped)] and [Write proposal] are outcomes — not separate components.
 ```
 
 ### Components
 
 ---
 
-**PROMOTABILITY DETECTOR** *(new — build first; STRUCTURE EXTRACTOR depends on its signal)*
+**DB MIGRATIONS** *(build first — everything else depends on schema)*
 
-Call the AI to decide whether a note contains knowledge worth promoting: a reusable workflow, a lesson learned, or a research finding worth keeping long-term.
+New migration files in `storage/migrations/`. Expand the DB to support the full cloud-native model.
 
-- **Input:** A note's vault path + full text content
-- **Output:** `Success(PromotabilityResult(is_promotable=True, type="workflow-template", confidence=0.88))` or `Success(PromotabilityResult(is_promotable=False))` or `Failure`
+- **New table: `knowledge_entries`** — see rearchitecture doc §7 for schema. Columns: `id`, `dimension`, `entity`, `tag`, `fact`, `status`, `confidence`, `sources` (JSON array), `reasoning`, `created_at`, `updated_at`.
+- **New columns on `documents`:** `full_body` (TEXT — complete extracted text), `original_filename` (TEXT), `file_size_bytes` (INTEGER).
+- **New CRUD module: `storage/knowledge_entries.py`** — `upsert()`, `query_by_dimension()`, `query_by_entity()`, `retire()`, `get_confident_and_pending()`. All return `Result` types (C-12).
+- **`documents.py` changes:** `upsert()` must accept structured summary + full_body directly (not `WriteOutcome`). `replace_path()` simplified to just path update (daemon reports moves).
+
+> **⚠️ ADDITIVE-ONLY IN SLICE 1 (added 2026-06-12, build-pipeline grill).** Slice 1 ships the schema + `knowledge_entries` CRUD + config/dimensions ONLY. It does **NOT** touch `documents.upsert()` / `replace_path()` — those have one live caller (`capture.py`) not rewritten until Phase 7, and no new caller exists yet (C-15: don't build an interface before its consumer). **DEFERRED to Phase 7:** (a) redesign `documents.upsert()` to take structured summary + `full_body` directly and drop the `WriteOutcome` path; (b) populate the three new columns on capture. **NULL-column resolution — DEFERRED, must be solved:** the three new columns ship **nullable** and stay NULL on every existing row (nothing populates them in Slice 1). No backfill needed (nothing shipped to users — clean slate, rearch doc §32/§61), but downstream readers MUST handle NULL: Phase 9 `_resolve.py` tier-2 reads `full_body` — when NULL (row not yet captured by the new Phase 7 path), it must degrade gracefully to tier-3 (vault path) rather than return empty. Flag this when building Phase 7 and Phase 9.
+
 - **Rules:**
-  - Load prompt from `prompts/promote_detect.yaml` via `PROMPTS["promote_detect"].render(...)` — never inline a prompt string (C-07)
-  - Call via `get_provider("promote", CONFIG.main)` (C-08)
-  - Valid `type` values: `"workflow-template"`, `"lesson-learned"`, `"research-finding"` — check against this list; reject unknown types
-  - Return `Success` or `Failure` — never raise (C-12)
-  - Write a `PROMOTION_EVALUATED` audit entry via `core.audit.write(...)` for every call — including not-promotable decisions (C-13)
-- **Reuse:** `llm/provider.py::get_provider`, `llm/prompt_loader.py::PROMPTS`, `core/audit.py::write`, `vault/reader.py::read_note`
+  - Migration-only schema changes (C-05)
+  - FK pragma enforced (C-04)
+  - Every new CRUD function returns `Success` or `Failure` (C-12)
+  - **Slice 1 is additive — new columns nullable, no existing path altered, repo stays green.**
+- **Acceptance:** `uv run pytest` passes with new schema (no existing tests rewritten). `knowledge_entries` table exists. `documents.full_body`/`original_filename`/`file_size_bytes` columns exist (nullable). `knowledge_entries` CRUD operations work. `documents.upsert()` unchanged — still accepts `WriteOutcome`.
 
 ---
 
-**STRUCTURE EXTRACTOR** *(new — depends on PROMOTABILITY DETECTOR)*
+**CONFIG SPLIT** *(depends on DB MIGRATIONS)*
 
-Call the AI to extract the reusable knowledge from the note into a structured format appropriate for its promotion type.
+> **⚠️ DEFERRED OUT OF SLICE 1 (added 2026-06-12, build-pipeline grill).** This component does NOT run in Slice 1. Vault-root config has **49 live usages across 7 files** (`core/config.py`, `pipelines/capture.py`, `pipelines/reconcile.py`, `cli/main.py`, `mcp_server/_resolve.py`, `mcp_server/server.py`, `mcp_server/context.py`) — all owned by Phases 6/7/9. The acceptance "cloud config loads **without** vault root" breaks all 7 in Slice 1 for zero benefit, and the daemon (consumer of daemon-config) doesn't exist until Phase 6, so a `DaemonConfig` model now would be unused scaffolding (C-15).
+> **RESOLUTION (decided):** Defer the whole split. **Vault-root removal from cloud config rides with Phases 6/7/9** as each consumer sheds its vault dependency (cloud config is vault-root-free only once the LAST vault consumer is gone). **Daemon config is built in Phase 6** alongside the daemon. Slice 1 leaves `core/config.py` / `VaultConfig` fully intact and adds ONLY the dimension/tag config below.
 
-- **Input:** Note full text + `PromotabilityResult` (type and confidence from detector)
-- **Output:** `Success(StructuredNote(title, type, body_markdown, tags, source_path))` or `Failure`
+Split `core/config.py` into cloud config and daemon config. Both validated by Pydantic.
+
+- **Cloud config (`config/config.yaml`):** DB path, LLM providers, MCP settings, thresholds, dimension/tag definitions, AgentBase endpoint. No vault root.
+- **Daemon config (`daemon/config.yaml`):** vault root path, AgentBase upload endpoint, auth credentials (client_id/client_secret), watch settings (debounce, ignored patterns).
+- **Shared:** Result types, handler interfaces, tag taxonomy.
 - **Rules:**
-  - Load prompt from `prompts/promote_extract.yaml` and pass `note_type` as a template variable — the prompt instructs the AI to produce the right structure per type (C-07)
-  - Validate extracted tags via `core.tags.validate_tags(...)` before returning — invalid tags must produce a `Failure`, not be silently included (TD-019)
-  - The extracted `StructuredNote` is self-contained: reading it should not require the original note
-  - Return `Success` or `Failure` — never raise (C-12)
-- **Reuse:** `llm/provider.py::get_provider`, `llm/prompt_loader.py::PROMPTS`, `core/tags.py::validate_tags`
+  - Thresholds in config, never in code (C-06)
+  - `Field` for user-configurable, `@property` for computed
+- **Acceptance:** Cloud code starts without vault root. Daemon config validates vault root exists on disk.
 
 ---
 
-**PROMOTION GATE** *(new — depends on STRUCTURE EXTRACTOR)*
+**DIMENSION/TAG CONFIG** *(Slice 1 deliverable — NO LONGER depends on CONFIG SPLIT, which is deferred)*
 
-Read the confidence score and decide: auto-promote (write directly to Domain folder) or write a proposal draft for human approval.
+> **✅ SHIPS IN SLICE 1 (added 2026-06-12).** This is additive (new `config/dimensions.yaml` + new `validate_dimension_tag()` in `core/tags.py`), breaks nothing, and is the foundation Phase 8 classify needs. It does NOT require the config split — load `dimensions.yaml` independently. Starter taxonomy = the doc's example (`people`, `projects`, `domains` with their tag sets, each including mandatory `other`); treat the taxonomy as **provisional**, refinable in Phase 8.
 
-- **Input:** `StructuredNote` with a confidence score
-- **Output:** One of two `PromotionDecision` values: `AUTO_PROMOTE(target_folder)` or `PROPOSE(draft_path)`
+Define allowed dimensions and their tag sets in config. Extend `core/tags.py` to validate dimension/tag pairs.
+
+- **Config file:** `config/dimensions.yaml` — dimensions with their allowed tag sets. Every tag set must have mandatory `other` catch-all.
+- **Validation:** `validate_dimension_tag(dimension, tag, config) → Result` — rejects unknown dimensions or tags.
 - **Rules:**
-  - Read thresholds from `config/thresholds.yaml` via `ConfidenceGate.from_config(config)` — never hardcode float comparisons (C-06)
-  - `PROPOSE` path: write the draft to `inbox/` with a `promotion_proposal: true` frontmatter flag; the user reviews and approves manually — do not auto-write to `Domain/`
-  - Return a typed `PromotionDecision`; the PROMOTION WRITER only runs on `AUTO_PROMOTE`
-- **Reuse:** `core/confidence.py::ConfidenceGate`, `config/thresholds.yaml`
+  - Dimensions and tags are config-enforced. AI cannot invent them.
+  - Adding a dimension = config + prompt change, zero schema change.
+- **Acceptance:** `validate_dimension_tag("people", "role", config)` → `Success`. `validate_dimension_tag("people", "invented_tag", config)` → `Failure`.
 
 ---
 
-**PROMOTION WRITER** *(new — depends on PROMOTION GATE; runs only on AUTO_PROMOTE)*
+**CONTAINER SCAFFOLDING** *(SLICE 2 · ~~depends on CONFIG SPLIT~~ — that dep is STALE, config split is deferred)*
 
-Write the structured note to the appropriate `Domain/<D>/` subfolder and log the promotion.
+> **⚠️ DEPENDENCY CORRECTED + AGENTBASE DECISIONS FOLDED IN (2026-06-12).** Config split was deferred (ADR-0012), so this no longer depends on it — it depends on **nothing in Slice 1** and runs in parallel. Caveat: the entry point's goal "cloud config starts **without** vault root" is blocked by the deferred config split (the current `mcp_server/server.py` still imports `move_guard`/vault), so the container boots the **existing vault-requiring config** for now — fine for this slice's own acceptance (`docker build` + `/health` 200 + tool-list). The no-vault-root cleanup rides with Phases 6/7/9.
+> **AgentBase decisions now settled** (`docs/0_draft/agentbase_research.md`): **(a)** SQLite persistence = **Litestream + VNG Object Storage** (§11.2) — Dockerfile needs the Litestream binary + a startup script that restores the DB from object storage → starts replication → starts the app; shutdown flushes Litestream. Supersedes the vague "S3 or mounted volume" rule below. **(b)** `--max-replicas 1` for MVP (§11.4). **(c)** Build `--platform linux/amd64` (§5.2). **(d)** Container Registry push to `vcr.vngcloud.vn/{repo}/{name}:{tag}` (§5.1). **(e)** LLM can point at MaaS OpenAI-compatible endpoint via config only — no code change (§8).
 
-- **Input:** `PromotionDecision(AUTO_PROMOTE, target_folder)` + `StructuredNote`
-- **Output:** `Success(promoted_path)` or `Failure`
+Dockerfile, health endpoint, container entry point. Make the cloud side deployable on AgentBase.
+
+- **Dockerfile:** builds from `src/`, installs dependencies, runs MCP server on port 8080.
+- **Health endpoint:** `GET /health` returns 200. AgentBase runtime contract.
+- **Entry point:** replaces CLI-like bootstrap. Loads cloud config, initializes DB, starts MCP server.
+- **Auto-injected env vars:** `GREENNODE_CLIENT_ID`, `GREENNODE_CLIENT_SECRET`, `GREENNODE_AGENT_IDENTITY`, `GREENNODE_ENDPOINT_URL`.
 - **Rules:**
-  - The destination folder is under `Domain/<D>/` — use `vault/paths.py::domain_attachment(...)` to resolve the path; never hardcode vault folder names
-  - Call `vault/writer.py::write_note(path, content, metadata, actor="ai")` — never write directly to the filesystem (C-01)
-  - The original source note must NOT be modified or moved — promotion creates a new artifact, it does not consume the source
-  - Call `storage/documents.py::upsert(...)` to index the new promoted note
-  - Write a `PROMOTED` audit entry via `core.audit.write(...)` with `source_ids=[source_path]`, confidence, and the target folder (C-13)
-- **Reuse:** `vault/writer.py::write_note`, `vault/paths.py::domain_attachment`, `storage/documents.py::upsert`, `core/audit.py::write`
+  - Container is stateless — DB must be backed up externally (S3 or Litestream). For MVP: SQLite file in a mounted volume or S3 restore on start.
+- **Acceptance:** `docker build` succeeds. Container starts, `/health` returns 200. MCP server responds to tool list request.
 
 ---
 
-**PROMOTE CLI** *(new — build last, after pipeline has passing tests)*
+**REST API SKELETON** *(SLICE 2 · depends on CONTAINER SCAFFOLDING + Slice 1 migration)*
 
-Expose `kms promote <file>` and `kms promote --scan` that call the promotion pipeline.
+> **⚠️ DEPENDENCY + CROSS-DOC CONFLICT FLAGGED (2026-06-12).** `/api/upload`'s stub "store with `full_body`" needs **Slice 1's migration landed first** (the `full_body` column). That is the single integration seam between the two slices — sequence it, nothing else.
+> **CONFLICT to resolve before Phase 6:** `agentbase_research.md` §11.1 designs daemon command-push endpoints (`GET /pending-commands` + `POST /command-ack`) so the cloud can tell the daemon to **move files**. But `cloud_native_rearchitecture.md` Session 2 (the declared single source of truth) **dropped file-moving and ALL cloud→daemon commands** (§4, §6). Under the current architecture those polling endpoints are **moot** — do NOT build them. If a future need for cloud→daemon push appears, reopen as a design question. (Rearchitecture doc wins per its own precedence rule.)
 
-- **Input:** A single file path, or `--scan` to scan all notes in the vault for promotion candidates
-- **Output:** Console summary of what was promoted, proposed, or skipped
+Endpoints for daemon → cloud communication. Stubbed — real pipeline wiring happens in Phase 7.
+
+- **`POST /api/upload`** — accepts extracted text + file metadata (vault_path, content_hash, filename, size). Returns document ID. Stub: stores to documents table with `full_body`.
+- **`POST /api/event`** — accepts file events (moved, renamed, deleted) with old/new paths. Stub: updates `vault_path` in documents.
+- **Auth:** IAM service account bearer token (from daemon config).
 - **Rules:**
-  - Wrap async calls with `asyncio.run(...)` — no async Click adapters (C-10)
-  - Zero logic in the CLI layer
-  - Do not add `kms_promote` as an MCP tool until this CLI is verified (C-15, C-16)
-- **Reuse:** `cli/main.py` Click group, `core/pipeline.py::run_pipeline`
+  - API contract is the interface between daemon and cloud. Changing it requires updating both sides.
+  - Every endpoint returns JSON with `status` and `error` fields.
+- **Acceptance:** `curl POST /api/upload` with test payload → document appears in DB. `curl POST /api/event` with move event → `vault_path` updated.
+
+---
+
+**RETIRE DEAD MODULES** *(can run parallel with other components)*
+
+> **⚠️ SEQUENCING WARNING (added 2026-06-12, build-pipeline Slice 1 grill).** This component CANNOT run in Phase 5 as written. Every "dead" module still has a **live consumer owned by a later phase**, so deleting it now either breaks the repo or drags later-phase work forward:
+> - `vault/writer.py`, `frontmatter.py`, `reader.py`, `indexer.py`, `move_guard.py` → imported by `pipelines/capture.py` (**Phase 7** rewrites it), `vault/watcher.py` (**Phase 6** moves it to daemon), `pipelines/reconcile.py` (**unassigned** — see below), `cli/main.py`, `handlers/markdown_handler.py`, `vault/registry.py`.
+> - `mcp_server/_move.py` + `kms_move` shim → imported by `mcp_server/tools.py`, `server.py` (**Phase 9** adapts MCP).
+> - `WriteOutcome` (`vault/writer.py`) → imported by `storage/documents.py`, which Phase 5 itself redesigns — handle **additively** (keep old `upsert(WriteOutcome)` path alive, add new path) so the repo stays green until Phase 7 swaps `capture.py` over.
+> - `vault/paths.py` placement helpers (`resolve_placement`, `project_attachment`, `domain_attachment`, `_is_in_managed_attachment`) → also live-consumed by capture/watcher/reconcile; gutting breaks them too.
+>
+> **RESOLUTION (decided):** Each module's deletion **rides with the phase that rewrites its last consumer**, not Phase 5. Mapping: `writer`/`frontmatter`/`indexer` die across **Phase 6** (watcher→daemon) + **Phase 7** (capture rewrite); `reader` + `move_guard` die once their last consumer across Phases 6/7/9 is gone; `_move.py` + `kms_move` die in **Phase 9**. `paths.py` gutting waits until capture/watcher/reconcile no longer call placement helpers. **`pipelines/reconcile.py` is UNASSIGNED** — rearchitecture doc §11 says the 7-stage reconcile is replaced by daemon scan and "DB-only reconcile may survive in simplified form," but no phase owns this transition. Resolve before Phase 6. Phase 5 Slice 1 ships only the additive DB/config foundation; it deletes nothing.
+
+Remove or gut modules that the rearchitecture kills. Clean up imports.
+
+- **Remove entirely:** `vault/writer.py`, `vault/move_guard.py`, `vault/frontmatter.py`, `vault/reader.py`, `vault/indexer.py`, `mcp_server/_move.py`.
+- **Gut:** `vault/paths.py` — keep only vault-relative path computation. Remove `resolve_placement()`, `project_attachment()`, `domain_attachment()`, `_is_in_managed_attachment()`.
+- **Remove from tools.py:** `kms_move` tool shim.
+- **Update imports:** grep all files that import from retired modules, fix or remove.
+- **Rules:**
+  - Tests that depend on retired modules: delete or rewrite. Don't keep broken tests.
+  - Hook enforcement in `.claude/settings.json`: audit and remove hooks that reference dead modules.
+- **Acceptance:** `uv run ruff check .` passes. No imports reference deleted modules. Remaining tests pass.
 
 ---
 
 ### Acceptance criteria (behavior test)
-- [ ] Capture a meeting-notes `.md` that contains a reusable workflow ("every sprint we do X, then Y, then Z")
-- [ ] Run `kms promote <file>`
-- [ ] A new structured note appears in the correct `Domain/` folder with type `workflow-template` (or similar)
-- [ ] Original note unchanged (no overwrite)
-- [ ] `audit_log` has a PROMOTED entry with confidence and reasoning
-- [ ] Low-confidence promotion stays as a suggestion, not auto-executed
+
+> **Regrouped 2026-06-12 to match the two-slice split + deferrals (ADR-0012).** The original flat list mixed Slice 1, Slice 2, and deferred-to-later-phase items.
+
+**Slice 1 — Data/Config Foundation (additive, no existing-test breakage):**
+- [ ] `knowledge_entries` table exists with correct schema
+- [ ] `documents.full_body`, `original_filename`, `file_size_bytes` columns exist (**nullable**)
+- [ ] `storage/knowledge_entries.py` CRUD operations work (upsert, query_by_dimension, query_by_entity, retire, get_confident_and_pending)
+- [ ] `config/dimensions.yaml` defines dimensions with tag sets (each has `other`)
+- [ ] `validate_dimension_tag()` accepts valid pairs, rejects invalid
+- [ ] `documents.upsert()` **unchanged** — still accepts `WriteOutcome` (redesign deferred to Phase 7)
+- [ ] `uv run pytest` passes with **no existing tests rewritten or deleted** (additive-only)
+
+**Slice 2 — Deployment Foundation (AgentBase):**
+- [ ] `docker build --platform linux/amd64` succeeds, container starts on port 8080
+- [ ] `/health` returns 200; MCP server responds to tool-list request
+- [ ] Litestream restores DB from VNG Object Storage on start, replicates on write (§11.2)
+- [ ] `POST /api/upload` stores document with `full_body` in DB *(needs Slice 1 migration landed — the integration seam)*
+- [ ] `POST /api/event` updates vault_path on move
+
+**DEFERRED out of Phase 5 (do NOT attempt here — see warnings + ADR-0012):**
+- [ ] ~~Cloud config loads without vault root~~ → rides with Phases 6/7/9 (config split deferred)
+- [ ] ~~Daemon config validates vault root path~~ → built in Phase 6 (daemon doesn't exist yet)
+- [ ] ~~No imports reference retired modules~~ → each module dies with its last consumer's refactor phase
+- [ ] ~~`uv run pytest` passes with deleted/rewritten tests for retired modules~~ → no modules retired in Phase 5
 
 ---
 
-## Phase 6 — Documentation Auto-Update
+## Phase 6 — Daemon
 
-**`INDEPENDENT (depends on Phase 0+1 only) · WEIGHT: medium`**
+**`DEPENDS ON: Phase 5 · WEIGHT: medium · TYPE: new local package`**
+
+> **Rearchitecture phase.** Read `docs/0_draft/cloud_native_rearchitecture.md` §4 for full daemon spec. The daemon is a thin bridge — no AI, no DB, no classification. Watch + extract + upload + report events.
 
 ### Goal
 
-After Phase 1, the vault captures everything that happens on a project. But there is no single place to look to understand where a project stands right now — no living summary page, no progress tracker. Getting a current picture means reading through all the individual notes manually.
+The daemon runs on the user's laptop. It watches the entire vault directory, detects file changes, extracts text content using handlers (PDF, DOCX, etc.), and uploads the extracted text to AgentBase via HTTPS. When the user moves, renames, or deletes files, the daemon reports those events so the cloud DB stays in sync.
 
-Phase 6 creates and maintains one living documentation page per active project. When new notes are captured for a project, the AI proposes an update to the project's doc page. The human reviews and decides what to keep. If the human has edited a section, the AI never touches it again. The documentation page becomes a reliable current-state view of the project, maintained automatically with human oversight on every edit.
-
-**Open design question (resolve during `/grill`):** Documentation pages live in `Documentation/` which is a capture-excluded folder — the watcher does not set `updated_by_human` for edits there. Before building, decide how to detect human edits to these pages: option A is a lightweight second watcher path just for `Documentation/`, option B is requiring humans to manually set `updated_by_human: true` in frontmatter, option C is a hash-comparison approach at update time. Record the decision as an ADR before implementing.
+After this phase: the user installs a single app on their Mac. It watches their vault folder and keeps the cloud knowledge base fed with content. No configuration beyond "point at your vault folder" and "paste your auth token."
 
 ### How the pieces fit together
 
 ```
-# Phase 6 — Documentation Auto-Update: What Happens Inside
-Scope: Reads a project's notes and proposes or writes an update to its doc page.
-       Does NOT cover: how notes were captured (Phase 1), per-section AI/human merge
-       (deferred post-deadline), or scheduling (built last, after CLI works).
+# Phase 6 — Daemon: What Happens Inside
 
-How to read this:
-  Boxes      = steps the system takes, in order
-  BOLD NAME  = component name — maps to the Components section below
-  Arrows     = what flows to the next step
-  Fork       = a decision with different outcomes
+User's laptop                              AgentBase (cloud)
+─────────────                              ──────────────────
 
-┌──────────────────────────────────────┐
-│ Project name (from CLI or trigger)   │
-└──────────────────┬───────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────┐
-│ PROJECT READER                       │
-│ Loads all notes for the project      │
-│ and the current doc page (if any)    │
-└──────────────────┬───────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────┐
-│ UPDATE PROPOSER                      │
-│ AI diffs new note content against    │
-│ the current doc, drafts an update    │
-└──────────────────┬───────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────┐
-│ HUMAN GATE                           │
-│ Checks updated_by_human before       │
-│ writing anything                     │
-└──────┬───────────────────────────────┘
-       │                    │
-   not locked            locked
-       │                    │
-       ▼                    ▼
-┌────────────────┐    [Skip write,
-│ DOC WRITER     │     surface conflict
-│ writes update  │     — do not
-│ to             │     overwrite]
-│ Documentation/ │
-└────────────────┘
+┌──────────────────────────────┐
+│ VAULT WATCHER                │
+│ Watches entire vault tree    │
+│ Detects: create, modify,    │
+│ move, rename, delete         │
+└──────────┬───────────────────┘
+           │ file event
+           ▼
+┌──────────────────────────────┐
+│ TEXT EXTRACTOR               │
+│ Uses handlers/ to extract    │
+│ text from file               │
+│ (PDF→text, DOCX→text, etc.) │
+│ Falls back to raw bytes if   │
+│ extraction fails             │
+└──────────┬───────────────────┘
+           │ extracted text + metadata
+           ▼
+┌──────────────────────────────┐        ┌──────────────────────┐
+│ UPLOADER                     │──POST──│ /api/upload          │
+│ HTTPS to AgentBase           │        │ (from Phase 5)       │
+│ Auth via service account     │        └──────────────────────┘
+└──────────────────────────────┘
 
-Note: [Skip write] is an outcome, not a component.
+File move/rename/delete:
+┌──────────────────────────────┐        ┌──────────────────────┐
+│ EVENT REPORTER               │──POST──│ /api/event           │
+│ Reports path changes         │        │ (from Phase 5)       │
+└──────────────────────────────┘        └──────────────────────┘
+
+Startup:
+┌──────────────────────────────┐
+│ STARTUP SCANNER              │
+│ Full vault walk              │
+│ Diff against cloud DB state  │
+│ Upload new/changed files     │
+│ Report deleted files         │
+└──────────────────────────────┘
 ```
 
 ### Components
 
 ---
 
-**PROJECT READER** *(new — build first; UPDATE PROPOSER depends on it)*
+**VAULT WATCHER** *(adapt from `vault/watcher.py` — dramatically simplified)*
 
-Load all captured notes for a given project and the current documentation page for that project (if it exists).
+> **⚠️ MODULE DELETION RIDES HERE (added 2026-06-12).** Phase 5's "retire dead modules" was deferred (see Phase 5 sequencing warning). The current `vault/watcher.py` imports `vault/writer.py`, `frontmatter.py`, `reader.py`, `indexer.py`, `move_guard.py`. When watcher is rewritten/moved to the daemon here, drop those imports. A shared module dies only when its LAST live consumer is gone — coordinate with Phase 7 (capture) and the unassigned `reconcile.py` before deleting any shared file.
 
-- **Input:** Project name (string, e.g. `"Alpha"`)
-- **Output:** `Success(ProjectBundle(notes=[Note, ...], current_doc=Note|None))` or `Failure`
+Watch the entire vault directory tree for file changes. No binary sync callbacks, no sibling management, no `_should_skip` for `.summaries/`. Just detect events and dispatch.
+
+- **Input:** Vault root path from daemon config
+- **Output:** File events: `created(path)`, `modified(path)`, `moved(old_path, new_path)`, `deleted(path)`
+- **Reuse from current `vault/watcher.py`:** debounce logic, `watchdog` integration, NFC normalization. Strip: binary sync, sibling management, `_should_skip` for managed dirs, `move_guard` checks.
 - **Rules:**
-  - Query `storage/documents.py` to find all notes where `project == project_name` — never walk the vault filesystem directly
-  - Load each note's full content via `vault/reader.py::read_note` — do not use the cached summary from the documents table as source material for documentation; use the full note
-  - The current doc page lives at `Vault/Documentation/<project_name>.md`; if it does not exist, `current_doc=None`
-  - Return `Success` or `Failure` — never raise (C-12)
-- **Reuse:** `storage/documents.py::get_by_path`, `vault/reader.py::read_note`
+  - Watch entire vault — no drop zone, no excluded folders (except maybe `.git`, `.obsidian`)
+  - Debounce rapid changes (reuse existing debounce pattern)
+  - On `modified`: check content hash against last known hash → skip if unchanged
+- **Acceptance:** Drop a file in any vault subfolder → watcher fires `created` event. Edit file → `modified`. Move file → `moved(old, new)`. Delete → `deleted`.
 
 ---
 
-**UPDATE PROPOSER** *(new — depends on PROJECT READER)*
+**TEXT EXTRACTOR** *(reuse `handlers/*.py`)*
 
-Call the AI with the project's notes and current doc page, and get back a proposed update to the doc page.
+Extract text content from files using existing handler registry.
 
-- **Input:** `ProjectBundle(notes, current_doc)` from PROJECT READER
-- **Output:** `Success(DocUpdate(proposed_content, confidence, reasoning, source_note_paths))` or `Failure`
+- **Input:** File path from watcher event
+- **Output:** `Success(ExtractedContent(text, content_hash, filename, size_bytes))` or raw bytes fallback
 - **Rules:**
-  - Load prompt from `prompts/documentation_update.yaml` via `PROMPTS["documentation_update"].render(...)` — never inline a prompt (C-07)
-  - Call via `get_provider("documentation", CONFIG.main)` (C-08)
-  - The proposed content must reference source notes as Obsidian wikilinks (`[[note-title]]`) — traceability is non-negotiable
-  - Return `Success` or `Failure` — never raise (C-12)
-- **Reuse:** `llm/provider.py::get_provider`, `llm/prompt_loader.py::PROMPTS`
+  - Try handler extraction first (fast, produces clean text)
+  - If handler fails (unsupported format, corrupted file): read raw bytes as fallback, upload those
+  - Content hash (SHA-256) computed on extracted text for dedup
+- **Reuse:** `handlers/base.py::HandlerRegistry`, all existing handlers (PDF, DOCX, XLSX, CSV, markdown, etc.)
+- **Acceptance:** PDF → text extracted. Unknown format → raw bytes uploaded. Content hash matches for identical files.
 
 ---
 
-**HUMAN GATE** *(new — depends on UPDATE PROPOSER)*
+**UPLOADER** *(new)*
 
-Before writing anything, check whether the doc page has been edited by a human. If it has, do not write — surface a conflict message instead.
+Upload extracted content to AgentBase via HTTPS.
 
-- **Input:** `DocUpdate` + the current doc's `Note` (or None if it does not exist yet)
-- **Output:** `Success(WRITE_APPROVED)` or `Success(CONFLICT_FLAGGED(reason))`
+- **Input:** `ExtractedContent` + vault-relative path
+- **Output:** `Success(document_id)` or `Failure` (with retry logic)
 - **Rules:**
-  - If the current doc has `updated_by_human=True` in frontmatter: return `CONFLICT_FLAGGED` — do not pass to DOC WRITER. This is a hard rule: human wins, AI stops (C-02)
-  - If the current doc does not exist: return `WRITE_APPROVED` — first write is always allowed
-  - Never return `Failure` for the conflict case — a conflict is an expected outcome, not an error. The caller should log it and exit cleanly
-  - Per-section merge (AI updates only some sections while respecting human-edited ones) is explicitly out of scope until post-deadline; the whole-note gate is the contract for now
-- **Reuse:** `vault/reader.py::read_note` (to check frontmatter), `core/result.py`
+  - POST to `/api/upload` endpoint (from Phase 5)
+  - Auth: bearer token from IAM service account (daemon config)
+  - Retry on network failure (exponential backoff, max 3 retries)
+  - Parallel uploads capped at N concurrent (configurable)
+  - If upload fails after retries: log locally, retry on next startup scan
+- **Acceptance:** Upload succeeds → document appears in cloud DB. Network down → retries → logs failure. Daemon restart → scanner catches missed uploads.
 
 ---
 
-**DOC WRITER** *(new — depends on HUMAN GATE; runs only on WRITE_APPROVED)*
+**EVENT REPORTER** *(new)*
 
-Write the proposed doc update to `Documentation/<project_name>.md` and update the document index.
+Report file move/rename/delete events to AgentBase.
 
-- **Input:** `DocUpdate(proposed_content)` + target path `Documentation/<project_name>.md`
-- **Output:** `Success(written_path)` or `Failure`
+- **Input:** File event (moved, renamed, deleted) with old/new paths
+- **Output:** `Success` or `Failure` (with retry)
 - **Rules:**
-  - Call `vault/writer.py::write_note(path, content, metadata, actor="ai")` — never write directly to the filesystem (C-01)
-  - `Documentation/` is a capture-excluded folder — the watcher skips it. This means DOC WRITER must explicitly call `storage/documents.py::upsert(...)` to keep the doc page indexed
-  - Write a `DOC_UPDATED` audit entry via `core.audit.write(...)` with `source_ids=[source_note_paths]` and the confidence score (C-13)
-  - Return `Success` or `Failure` — never raise (C-12)
-- **Reuse:** `vault/writer.py::write_note`, `storage/documents.py::upsert`, `core/audit.py::write`
+  - POST to `/api/event` endpoint (from Phase 5)
+  - Same auth and retry logic as UPLOADER
+  - Move = old_path + new_path. Delete = path only.
+- **Acceptance:** Move file → cloud DB `vault_path` updated. Delete file → cloud DB marks document accordingly.
 
 ---
 
-**UPDATE-DOCS CLI** *(new — build last, after pipeline has passing tests)*
+**STARTUP SCANNER** *(new)*
 
-Expose `kms update-docs <project>` and `kms update-docs --all` that call the documentation pipeline.
+On daemon start, walk entire vault and diff against cloud DB state to catch changes that happened while daemon was offline.
 
-- **Input:** Project name, or `--all` to update docs for every active project
-- **Output:** Console summary of what was updated, conflicted, or skipped
+- **Input:** Vault root path
+- **Output:** List of actions: upload new, re-upload changed, report deleted
 - **Rules:**
-  - Wrap async calls with `asyncio.run(...)` — no async Click adapters (C-10)
-  - Zero logic in the CLI layer
-  - Do not add `kms_documentation_update` as an MCP tool until this CLI is verified (C-15, C-16)
-- **Reuse:** `cli/main.py` Click group, `core/pipeline.py::run_pipeline`
+  - GET current state from cloud (list of vault_path + content_hash pairs)
+  - Walk vault: for each file, compute content_hash → compare against cloud state
+  - New files → upload. Changed hash → re-upload. Missing from vault → report deleted.
+  - Batch uploads for efficiency
+- **Acceptance:** Stop daemon → add/edit/delete files → restart daemon → cloud DB matches vault state.
+
+---
+
+**DAEMON INSTALLER** *(build last)*
+
+Package daemon as a single installable app for Mac.
+
+- **Input:** Daemon source code + handlers + dependencies
+- **Output:** `.app` bundle (PyInstaller) or Homebrew formula
+- **Rules:**
+  - Single binary — no Python install required for user
+  - First-run setup: prompt for vault path + AgentBase auth token → write daemon config
+  - Launches on system startup (optional, launchd plist)
+  - Tray icon showing sync status (optional, nice-to-have)
+- **Acceptance:** Non-technical user can install and configure in under 2 minutes. Daemon starts watching vault after setup.
 
 ---
 
 ### Acceptance criteria (behavior test)
-- [ ] Create project folder `Projects/Alpha/` with 3+ captured notes
-- [ ] Run `kms update-docs Alpha`
-- [ ] `Documentation/Alpha.md` appears with a synthesized project summary
-- [ ] Capture a new note to `Projects/Alpha/`
-- [ ] Run `kms update-docs Alpha` again — doc updates to include new content
-- [ ] Manually edit `Documentation/Alpha.md` (set `updated_by_human: true`)
-- [ ] Run `kms update-docs Alpha` — AI does NOT overwrite human sections
+- [ ] Install daemon on a Mac
+- [ ] Point at vault folder, paste auth token
+- [ ] Drop a PDF into any vault subfolder → text appears in cloud DB within 10 seconds
+- [ ] Move a file → cloud DB `vault_path` updates
+- [ ] Delete a file → cloud DB reflects deletion
+- [ ] Close laptop → reopen → daemon scanner catches any missed changes
+- [ ] Network disconnection → daemon retries → eventually syncs
+- [ ] Unsupported file format → raw bytes uploaded as fallback → capture still works
 
 ---
 
-## Phase 7 — Self-Learning
+## Phase 7 — Capture Refactor
 
-**`BLOCKED BY: Phase 2 (Classify) · WEIGHT: light`**
+**`DEPENDS ON: Phase 5 (DB schema + API) · WEIGHT: heavy · TYPE: rewrite`**
+
+> **Rearchitecture phase.** Read `docs/0_draft/cloud_native_rearchitecture.md` §3 and §15.1 for full context. This is the biggest code change — `capture.py` goes from 2241 lines of vault-writing logic to a clean extract→summarize→store-to-DB pipeline.
 
 ### Goal
 
-After Phase 2, the system classifies notes automatically. But classification accuracy starts at "good enough" and never improves — the AI keeps making the same kinds of mistakes because it has no memory of what the user corrected.
+Rewrite the capture pipeline to work in the cloud model. Input changes from a local `Path` to extracted text arriving via daemon HTTPS upload. Output changes from vault file writes (`write_note`, frontmatter, sibling `.md`) to structured summary stored in DB. No vault writes. No classify inline (that's Phase 8, separate async process).
 
-Phase 7 closes the learning loop. Every time the user manually moves a classified note to a different folder, the system records that as a correction: "AI said Projects/Alpha, human said Projects/Beta." The next time classify runs, those corrections are fed back as examples at the start of the prompt. Over time, the system learns the user's preferences and the corrections become rarer. No model fine-tuning required — just a growing library of examples.
+After this phase: when daemon uploads extracted text, the cloud generates a structured summary (overview, key points, decisions, action items, people mentioned) and stores everything in the `documents` table. The file is searchable immediately.
 
 ### How the pieces fit together
 
 ```
-# Phase 7 — Self-Learning: What Happens Inside
-Scope: Detects human corrections to AI classifications and feeds them back
-       into future classify runs as few-shot examples.
-       Does NOT cover: the classify pipeline itself (Phase 2), or model fine-tuning
-       (out of scope — few-shot prompt augmentation only).
+# Phase 7 — Capture Refactor: What Happens Inside
 
-How to read this:
-  Boxes      = steps the system takes, in order
-  BOLD NAME  = component name — maps to the Components section below
-  Arrows     = what flows to the next step
-  (No forks — this is a linear learning loop)
-
-┌──────────────────────────────────────┐
-│ Human moves a classified note to     │
-│ a different folder than AI chose     │
-└──────────────────┬───────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────┐
-│ CORRECTION DETECTOR                  │
-│ Watcher sees the move, checks if     │
-│ the original classification disagrees│
-└──────────────────┬───────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────┐
-│ CORRECTION LOGGER                    │
-│ Records: original folder, human      │
-│ folder, note summary, confidence     │
-└──────────────────┬───────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────┐
-│ FEW-SHOT INJECTOR                    │
-│ At next classify run, loads recent   │
-│ corrections and prepends them to     │
-│ prompts/classify.yaml as examples    │
-└──────────────────────────────────────┘
+  Daemon uploads via /api/upload
+           │
+           │ extracted_text + vault_path + content_hash + filename + size
+           ▼
+  ┌──────────────────────────────────┐
+  │ CAPTURE RECEIVER                 │
+  │ Validates upload, checks         │
+  │ idempotency (content_hash)       │
+  └──────────┬───────────────────────┘
+             │
+             ▼
+  ┌──────────────────────────────────┐
+  │ SUMMARIZER                       │
+  │ LLM generates structured summary│
+  │ (overview, key points, decisions,│
+  │ action items, people mentioned)  │
+  └──────────┬───────────────────────┘
+             │
+             ▼
+  ┌──────────────────────────────────┐
+  │ DB WRITER                        │
+  │ Stores summary + full_body +     │
+  │ metadata to documents table      │
+  │ Indexes embeddings + keywords    │
+  └──────────┬───────────────────────┘
+             │
+             ▼
+  ┌──────────────────────────────────┐
+  │ CLASSIFY TRIGGER                 │
+  │ Queues document for async        │
+  │ classify (Phase 8)               │
+  └──────────────────────────────────┘
 ```
 
 ### Components
 
 ---
 
-**CORRECTION DETECTOR** *(new — build first; depends on Phase 2 classify pipeline being complete)*
+**CAPTURE RECEIVER** *(rewrite of top of `capture_file()`)*
 
-Hook into the vault watcher to detect when a user manually moves a note that was previously classified by the AI.
+Accept extracted text from daemon upload API. Validate input. Check idempotency.
 
-- **Input:** Watcher `on_moved` event for a note inside `Projects/` or `Domain/`
-- **Output:** `Success(CorrectionCandidate(note_path, ai_folder, human_folder, note_summary))` if a disagreement is detected, or `Success(None)` if the move was a pipeline move (not a human correction)
+- **Input:** Extracted text, vault_path, content_hash, original_filename, file_size_bytes
+- **Output:** `Success(CaptureInput)` or `Success(ALREADY_PROCESSED)` if content_hash matches existing record
 - **Rules:**
-  - Look up the note in `storage/documents.py` to get the AI's original classification from its `project` field; compare with the destination folder of the move event
-  - If destination matches original AI classification: this is not a correction — return `Success(None)`
-  - Check `vault/move_guard.py::get_active()` registry before treating any move as a correction; if the move was registered by the pipeline, skip it (it is a system move, not a human override)
+  - Content hash is the dedup key. Same hash = already processed = skip (idempotent).
+  - If hash differs from existing record for same vault_path: re-capture (content changed).
+  - If vault_path is new: fresh capture.
+  - Return `Success` or `Failure` — never raise (C-12).
+- **Acceptance:** Upload same file twice → second is skipped. Upload changed file → re-captured. New file → captured.
+
+---
+
+**SUMMARIZER** *(rewrite of summarize stage in capture.py)*
+
+Generate structured summary from extracted text using LLM.
+
+- **Input:** Extracted text + filename
+- **Output:** `Success(StructuredSummary(overview, key_points, decisions, action_items, people_mentioned, tags))` or `Failure`
+- **Rules:**
+  - Load prompt from `prompts/summarize.yaml` — never inline (C-07)
+  - Call via `get_provider("capture", CONFIG.main)` (C-08)
+  - Summary is structured with named sections — richer than old 2-4 sentence frontmatter blurb
+  - Validate tags via `core.tags.validate_tags()` (TD-019)
   - Return `Success` or `Failure` — never raise (C-12)
-- **Reuse:** `storage/documents.py::get_by_path`, `vault/move_guard.py::get_active`, `vault/watcher.py` (hook into existing `on_moved`)
+- **Reuse:** `llm/provider.py`, `llm/prompt_loader.py`, `core/tags.py`
+- **Acceptance:** Upload meeting notes → structured summary has all named sections. Tags validated.
 
 ---
 
-**CORRECTION LOGGER** *(new — depends on CORRECTION DETECTOR)*
+**DB WRITER** *(rewrite of `_store_md()` and `_store_nonmd()`)*
 
-Write the correction to the `corrections` table with classifier-specific fields, and write an audit entry.
+Store structured summary + full body + metadata to documents table. Index for search.
 
-- **Input:** `CorrectionCandidate(note_path, ai_folder, human_folder, note_summary, confidence)`
-- **Output:** `Success(correction_id)` or `Failure`
+- **Input:** `StructuredSummary` + `CaptureInput` (vault_path, full_body, content_hash, filename, size)
+- **Output:** `Success(document_id)` or `Failure`
 - **Rules:**
-  - Add three new columns to the `corrections` table via a new migration file `storage/migrations/007_enrich_corrections.sql`: `ai_folder`, `human_folder`, and `original_confidence` (resolves TD-005)
-  - Insert via the updated `corrections` table CRUD — never raw SQL INSERT in pipeline code (C-05)
-  - Write a `CORRECTION_LOGGED` audit entry via `core.audit.write(...)` with `source_ids=[note_path]` (C-13)
+  - Call `documents.upsert()` with new signature (no `WriteOutcome` — direct fields)
+  - Store `full_body` in documents table (always available from DB)
+  - Index embeddings via `retrieval/embeddings.py::index_embedding()` (best-effort)
+  - Index keywords via `retrieval/keyword.py::index_keywords()` (best-effort)
+  - Write `CAPTURED` audit entry via `core.audit.write()` (C-13)
   - Return `Success` or `Failure` — never raise (C-12)
-- **Reuse:** `storage/db.py::_connect`, `core/audit.py::write`
+- **Reuse:** `storage/documents.py`, `retrieval/embeddings.py`, `retrieval/keyword.py`, `core/audit.py`
+- **Acceptance:** After capture, document has `full_body`, `summary`, `title`, `tags`, `content_hash` in DB. Search finds it by keyword and meaning.
 
 ---
 
-**FEW-SHOT INJECTOR** *(new — depends on CORRECTION LOGGER; wired into the classify pipeline)*
+**CLASSIFY TRIGGER** *(new — lightweight)*
 
-At the start of each classify run, load the most recent N corrections from the `corrections` table and inject them as few-shot examples into the classify prompt.
+After capture, queue the document for async classification (Phase 8).
 
-- **Input:** The existing classify prompt template from `prompts/classify.yaml`
-- **Output:** An augmented prompt string with up to N correction examples prepended as "AI said X, human corrected to Y — use this as a guide"
+- **Input:** `document_id` from DB WRITER
+- **Output:** Queued for classify. If Phase 8 not yet built, this is a no-op stub.
 - **Rules:**
-  - Load at most `CONFIG.main.classify.max_correction_examples` recent corrections — never hardcode the count (C-06)
-  - Format corrections as concrete examples in the prompt, not as rules or instructions; the examples show the AI what the user prefers
-  - This runs inside the CLASSIFIER component from Phase 2 — it augments the prompt before the LLM call, not as a separate pipeline stage
-  - The classify pipeline must still work correctly when `corrections` table is empty (zero examples → no change to prompt behavior)
-- **Reuse:** `storage/db.py::_connect` (to query corrections), `llm/prompt_loader.py::PROMPTS`
+  - Classify is a separate async process — capture does NOT wait for it
+  - For MVP: direct function call. Later: message queue.
+  - Stub is acceptable — Phase 8 fills in the real classify.
+- **Acceptance:** Capture completes without waiting for classify. Document is searchable before classify runs.
 
 ---
 
-**CORRECTIONS CLI** *(new — build last, after pipeline has passing tests)*
+### What retires in this phase
+- `_store_md()` — replaced by DB WRITER
+- `_store_nonmd()` — replaced by DB WRITER (no sibling files)
+- `_classify_auto_md_move()` — dead (no inline classify, no file moves)
+- `capture_folder()` — replaced by daemon batch upload
+- All `write_note()` calls in capture — dead
+- All `WriteOutcome` usage — dead
+- All frontmatter writes — dead
+- All sibling `.md` creation — dead
 
-Expose `kms corrections` (view correction history) and `kms accuracy` (show confidence improvement over time).
-
-- **Input:** No arguments for `kms corrections`; optional `--days N` filter; no arguments for `kms accuracy`
-- **Output:** Console table of corrections and confidence trend over time
-- **Rules:**
-  - Wrap async calls with `asyncio.run(...)` — no async Click adapters (C-10)
-  - Zero logic in the CLI layer; read from corrections table and format output
-- **Reuse:** `cli/main.py` Click group, `storage/db.py::_connect`
-
----
+> **⚠️ MODULE DELETION RIDES HERE (added 2026-06-12).** Phase 5's "retire dead modules" was deferred (see Phase 5 sequencing warning). Once `capture.py` no longer imports them, this phase deletes capture's share of the dead modules: `vault/writer.py`, `vault/frontmatter.py`, `vault/indexer.py`, and the `vault/paths.py` placement helpers — **but only if no other live consumer remains** (watcher → Phase 6, reconcile → unassigned). Coordinate with Phase 6: a module dies only when its LAST consumer is gone. Also: swap `documents.upsert()` from the additive old-path (kept alive in Phase 5) to the new structured-summary signature here, then drop the dead `WriteOutcome` path.
 
 ### Acceptance criteria (behavior test)
-- [ ] Classify a note (auto-moves to `Projects/Alpha/`)
-- [ ] Manually move it to `Projects/Beta/` (human correction)
-- [ ] Run `kms corrections` — shows the correction entry
-- [ ] Classify a similar note — the correction influences the new classification
-- [ ] `audit_log` shows confidence improvement signal
+- [ ] Daemon uploads extracted text for a markdown note → cloud produces structured summary in DB
+- [ ] Daemon uploads extracted text for a PDF → same pipeline, same result
+- [ ] Search finds the captured document by keyword and meaning
+- [ ] `documents.full_body` contains complete extracted text
+- [ ] Summary has named sections (overview, key points, decisions, action items, people mentioned)
+- [ ] Audit log has `CAPTURED` entry with confidence and reasoning
+- [ ] Upload same content twice → second upload is idempotent (skipped)
+- [ ] Upload changed content for same path → re-captured with new summary
+- [ ] No vault files written by capture (no `.summaries/`, no frontmatter, no moves)
 
 ---
 
-## Phase 8 — Daily Briefing
+## Phase 8 — Classify Redesign
 
-**`INDEPENDENT (depends on Phase 0+1 only — reads audit_log) · WEIGHT: medium`**
+**`DEPENDS ON: Phase 7 (Capture must populate documents.full_body) · WEIGHT: heavy · TYPE: complete rewrite`**
+
+> **Rearchitecture phase.** Read `docs/0_draft/cloud_native_rearchitecture.md` §7 for the full knowledge_entries design. This is a clean rewrite — old classify (pick a folder) is completely replaced by entity extraction into dimension tables.
 
 ### Goal
 
-After Phase 1, everything that happens in the vault is logged in the audit log. But no one reads the audit log — it is a machine record, not a human report. The user starts each day not knowing what was captured yesterday, what still needs review, or what patterns emerged across the week.
+Build the new classify pipeline: read document content from DB, extract structured knowledge across dimensions (people, projects, domains), store entries in `knowledge_entries` table with lifecycle management (confident/pending/retired). This replaces CLAUDE.md files as the system's living context.
 
-Phase 8 turns the audit log into a daily report. Each morning, the system reads everything that happened yesterday, synthesizes it into a structured briefing — what was captured, what moved where, what still needs human review, what themes emerged — and saves it as a readable note. The user opens one file and gets caught up instantly.
+After this phase: when a document is captured, classify runs async and extracts facts like "Anthony is Product Lead for Movie Q2" → stored as a `knowledge_entry` with dimension=`people`, entity=`Anthony`, tag=`role`, fact=`Product Lead for Movie Q2`, status=`confident`. All structured, queryable, source-traced.
 
 ### How the pieces fit together
 
 ```
-# Phase 8 — Daily Briefing: What Happens Inside
-Scope: Reads today's audit_log entries and writes a human-readable briefing note.
-       Does NOT cover: how entries got into audit_log (Phases 1–7), scheduling
-       (built last, after CLI works), or MCP integration (added after CLI is verified).
+# Phase 8 — Classify Redesign: What Happens Inside
 
-How to read this:
-  Boxes      = steps the system takes, in order
-  BOLD NAME  = component name — maps to the Components section below
-  Arrows     = what flows to the next step
-  (No forks — this is a linear read → synthesize → write flow)
-
-┌──────────────────────────────────────┐
-│ Today's date (from CLI call)         │
-└──────────────────┬───────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────┐
-│ AUDIT READER                         │
-│ Queries audit_log for today's        │
-│ entries, groups by decision type     │
-└──────────────────┬───────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────┐
-│ BRIEFING COMPOSER                    │
-│ AI synthesizes entries into a        │
-│ structured daily report              │
-└──────────────────┬───────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────┐
-│ BRIEFING WRITER                      │
-│ Saves report to                      │
-│ Briefings/YYYY/MM_DD.md              │
-└──────────────────────────────────────┘
+  Document captured (from Phase 7)
+           │
+           │ document_id
+           ▼
+  ┌──────────────────────────────────┐
+  │ CONTENT READER                   │
+  │ Reads full_body from documents   │
+  │ table in DB                      │
+  └──────────┬───────────────────────┘
+             │
+             ▼
+  ┌──────────────────────────────────┐
+  │ CONTEXT LOADER                   │
+  │ For each dimension, loads        │
+  │ existing confident + pending     │
+  │ entries for entities mentioned   │
+  └──────────┬───────────────────────┘
+             │
+             ▼
+  ┌──────────────────────────────────┐
+  │ ENTITY EXTRACTOR                 │
+  │ LLM reads document + existing    │
+  │ entries → extracts new facts,    │
+  │ updates existing, retires stale  │
+  └──────────┬───────────────────────┘
+             │
+             ▼
+  ┌──────────────────────────────────┐
+  │ ENTRY WRITER                     │
+  │ Writes new/updated entries to    │
+  │ knowledge_entries table          │
+  │ Retires superseded entries       │
+  │ Audit logs every extraction      │
+  └──────────────────────────────────┘
 ```
 
 ### Components
 
 ---
 
-**AUDIT READER** *(new — build first; BRIEFING COMPOSER depends on it)*
+**CONTENT READER** *(new — simple)*
 
-Query `storage/audit_log.py` for all entries within a given date range, and group them by decision type.
+Read document content from DB for classify processing.
 
-- **Input:** A date range (default: today's entries, from midnight to now)
-- **Output:** `Success(AuditBundle(captured=[...], classified=[...], flagged=[...], errors=[...]))` or `Failure`
+- **Input:** `document_id`
+- **Output:** `Success(DocumentContent(vault_path, title, summary, full_body, tags))` or `Failure`
 - **Rules:**
-  - Call `storage/audit_log.py::query(start_time=..., end_time=...)` — never query SQLite directly in the pipeline (C-04)
-  - Group entries by their `decision` field: `CAPTURED`, `CLASSIFIED`, `TAG_VIOLATION`, `PROMOTED`, `DOC_UPDATED`, etc.
-  - Include flagged notes (those with `review=True` in frontmatter) as a separate bucket — the user needs to know what still needs their attention
+  - Read from `documents` table — never from vault filesystem
+  - Return `Failure` if document not found or `full_body` is empty
+- **Reuse:** `storage/documents.py::get_by_id()` or similar
+- **Acceptance:** Document captured in Phase 7 → CONTENT READER retrieves full text from DB.
+
+---
+
+**CONTEXT LOADER** *(new)*
+
+Load existing knowledge entries for entities that appear in the document. Gives the LLM context to update rather than re-extract.
+
+- **Input:** `DocumentContent` + dimension config
+- **Output:** `Success(ExistingContext(entries_by_dimension={...}))` — map of dimension → list of existing entries
+- **Rules:**
+  - Query `knowledge_entries` for `confident` + `pending` entries only. Do NOT load `retired` entries (reduces noise and tokens).
+  - Initial version: load ALL confident + pending entries (vault is small). Optimize later if token budget is a problem.
   - Return `Success` or `Failure` — never raise (C-12)
-- **Reuse:** `storage/audit_log.py::query`
+- **Reuse:** `storage/knowledge_entries.py::get_confident_and_pending()`
+- **Acceptance:** Existing entries for relevant entities loaded. Retired entries excluded.
 
 ---
 
-**BRIEFING COMPOSER** *(new — depends on AUDIT READER)*
+**ENTITY EXTRACTOR** *(new — core of the new classify)*
 
-Call the AI with the day's grouped audit entries and produce a structured briefing document.
+Call LLM with document content + existing entries → extract new facts, update existing facts, retire superseded facts.
 
-- **Input:** `AuditBundle` from AUDIT READER
-- **Output:** `Success(BriefingContent(body_markdown, source_note_paths))` or `Failure`
+- **Input:** `DocumentContent` + `ExistingContext`
+- **Output:** `Success(ExtractionResult(new_entries=[...], updated_entries=[...], retired_entries=[...]))` or `Failure`
 - **Rules:**
-  - Load prompt from `prompts/briefing.yaml` via `PROMPTS["briefing"].render(...)` — never inline a prompt (C-07)
-  - Call via `get_provider("synthesis", CONFIG.main)` — briefing is synthesis-class work, so use `synthesis_model` routing (C-08)
-  - The briefing must reference source notes as Obsidian wikilinks (`[[note-title]]`) — traceability is non-negotiable
-  - The briefing must contain four named sections: "What was captured", "What was classified and where", "Items needing your review", "Patterns and themes"
+  - Load prompt from `prompts/entity_extract.yaml` — never inline (C-07)
+  - Call via `get_provider("classify", CONFIG.main)` (C-08)
+  - Every extracted entry must have: `dimension`, `entity`, `tag`, `fact`, `confidence`, `sources` (document IDs/paths)
+  - Validate dimension and tag against config: `validate_dimension_tag(dim, tag, config)`. Reject unknown values.
+  - Confidence drives initial status via config thresholds (C-06): high → `confident`, medium → `pending`, low → `pending`
+  - Concise facts — same discipline as old CLAUDE.md. Not a dumping ground.
   - Return `Success` or `Failure` — never raise (C-12)
-- **Reuse:** `llm/provider.py::get_provider`, `llm/prompt_loader.py::PROMPTS`
+- **Reuse:** `llm/provider.py`, `llm/prompt_loader.py`, `core/confidence.py`, `core/tags.py`
+- **Acceptance:** Meeting notes about "Anthony, Product Lead for Movie Q2" → extracts entity `Anthony`, dimension `people`, tag `role`, fact `Product Lead for Movie Q2`.
 
 ---
 
-**BRIEFING WRITER** *(new — depends on BRIEFING COMPOSER)*
+**ENTRY WRITER** *(new)*
 
-Save the composed briefing to `Briefings/YYYY/MM_DD.md` and index it.
+Write extracted entries to `knowledge_entries` table. Handle updates and retirements.
 
-- **Input:** `BriefingContent(body_markdown)` + the target date
-- **Output:** `Success(briefing_path)` or `Failure`
+- **Input:** `ExtractionResult` from ENTITY EXTRACTOR
+- **Output:** `Success(write_count)` or `Failure`
 - **Rules:**
-  - Target path is `Vault/Briefings/<YYYY>/<MM_DD>.md` — use `CONFIG.main.vault.root` to resolve the full path; never hardcode it
-  - Call `vault/writer.py::write_note(path, content, metadata, actor="ai")` — never write directly to the filesystem (C-01)
-  - `Briefings/` is a capture-excluded folder — the watcher skips it. BRIEFING WRITER must explicitly call `storage/documents.py::upsert(...)` to keep the briefing indexed
-  - Write a `BRIEFING_WRITTEN` audit entry via `core.audit.write(...)` (C-13)
+  - New entries: `upsert()` to knowledge_entries
+  - Updated entries: update fact, confidence, sources, reasoning, updated_at
+  - Retired entries: set `status='retired'`, add retirement reasoning
+  - Every entry must have `sources` — no entry without traceability (new constraint)
+  - Audit log entry for every extraction run via `core.audit.write()` (C-13)
   - Return `Success` or `Failure` — never raise (C-12)
-- **Reuse:** `vault/writer.py::write_note`, `storage/documents.py::upsert`, `core/audit.py::write`
+- **Reuse:** `storage/knowledge_entries.py`, `core/audit.py`
+- **Acceptance:** After classify: new entries in DB with correct dimension/entity/tag/fact/status. Superseded entries retired. Audit log has `CLASSIFIED` entry.
 
 ---
 
-**BRIEFING CLI** *(new — build last, after pipeline has passing tests)*
-
-Expose `kms briefing` that generates today's briefing on demand.
-
-- **Input:** No arguments; optional `--date YYYY-MM-DD` to generate a briefing for a past date
-- **Output:** Console confirmation of where the briefing was written
-- **Rules:**
-  - Wrap async calls with `asyncio.run(...)` — no async Click adapters (C-10)
-  - Zero logic in the CLI layer
-  - Build and verify this CLI before adding any scheduler automation (C-16)
-  - Do not add `kms_briefing` as an MCP tool until this CLI is verified (C-15)
-- **Reuse:** `cli/main.py` Click group, `core/pipeline.py::run_pipeline`
-
----
+### What retires in this phase
+- `pipelines/classify.py` old code — complete rewrite. `classify(subject, valid_destinations)` → replaced by entity extraction.
+- `ClassifyResult(project, domain, confidence, reasoning)` — dead. Replaced by `ExtractionResult`.
+- `build_subject()` — dead. Content comes from DB, not frontmatter.
+- Project registry → replaced by `SELECT DISTINCT entity FROM knowledge_entries WHERE dimension='projects'`
 
 ### Acceptance criteria (behavior test)
-- [ ] Capture + classify several notes throughout a session
-- [ ] Run `kms briefing`
-- [ ] `Briefings/2026/06_DD.md` appears with:
-  - Summary of what was captured today
-  - Classification decisions with confidence
-  - Items flagged for human review
-  - Patterns across today's notes (recurring themes, contradictions)
-- [ ] Briefing references source notes via wikilinks
+- [ ] Capture a meeting note about "Q2 progress meeting with Anthony from Finance"
+- [ ] Classify runs async after capture
+- [ ] `knowledge_entries` table has entries:
+  - dimension=`people`, entity=`Anthony`, tag=`role`, fact contains role info
+  - dimension=`projects`, entity=`Q2`, tag=`status` or `other`, fact contains progress info
+  - dimension=`domains`, entity=`Finance`, tag=`other`, fact contains relevant info
+- [ ] Every entry has `sources` pointing to the captured document
+- [ ] Every entry has `status` (`confident` or `pending`) based on confidence thresholds
+- [ ] Capture a second note mentioning Anthony with new info → existing entries updated, old info retired
+- [ ] Audit log has `CLASSIFIED` entry for each extraction run
+- [ ] Invalid dimension or tag in LLM output → rejected by validation
 
 ---
 
-## Phase 9 — Weekly Synthesis
+## Phase 9 — MCP Adaptation
 
-**`INDEPENDENT (depends on Phase 0+1 only — reads audit_log) · WEIGHT: light`**
+**`DEPENDS ON: Phase 8 (knowledge_entries must be populated) · WEIGHT: medium · TYPE: adaptation`**
+
+> **Rearchitecture phase.** Read `docs/0_draft/cloud_native_rearchitecture.md` §13 for Phase 4 impact analysis. Adapt the existing MCP server to the cloud-native model — remove dead tools, rewire context injection to use knowledge_entries, deploy on AgentBase.
 
 ### Goal
 
-After Phase 8, the user gets a daily briefing that summarizes yesterday. But a single day rarely tells the full story. The interesting signals emerge across a week: a theme that appeared in Monday's meeting that connected to Thursday's research note, a contradiction between two project assumptions that only shows up when you look at everything together, an action item buried in a Wednesday capture that is still unresolved by Friday.
+Adapt the Phase 4 MCP server to the cloud-native architecture. Remove `kms_move`. Rewrite context injection to pull from `knowledge_entries` instead of CLAUDE.md files. Make `kms_inspect` use the three-tier model (summary → full_body from DB → vault path). Deploy as AgentBase Resource Gateway.
 
-Phase 9 surfaces those weekly patterns. Once a week, the system reads all the notes and audit entries from the past seven days, connects the dots across projects and domains, and writes a synthesis journal. Where the daily briefing says "here is what happened today," the weekly synthesis says "here is what this week meant."
-
-### How the pieces fit together
-
-```
-# Phase 9 — Weekly Synthesis: What Happens Inside
-Scope: Reads the week's audit_log entries and notes, writes a synthesis report.
-       Does NOT cover: individual daily briefings (Phase 8), scheduling (built last
-       after CLI works), or MCP integration (added after CLI is verified).
-
-How to read this:
-  Boxes      = steps the system takes, in order
-  BOLD NAME  = component name — maps to the Components section below
-  Arrows     = what flows to the next step
-  (No forks — this is a linear read → synthesize → write flow)
-
-┌──────────────────────────────────────┐
-│ Week number (from CLI call)          │
-└──────────────────┬───────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────┐
-│ WEEK READER                          │
-│ Loads this week's audit entries      │
-│ and a sample of the week's notes     │
-└──────────────────┬───────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────┐
-│ SYNTHESIS COMPOSER                   │
-│ AI connects dots across projects,    │
-│ surfaces themes and contradictions   │
-└──────────────────┬───────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────┐
-│ SYNTHESIS WRITER                     │
-│ Saves report to                      │
-│ Synthesis/YYYY/week_WW.md            │
-└──────────────────────────────────────┘
-```
+After this phase: user-facing AI (Claude Desktop, web, mobile) connects to the MCP server on AgentBase. `kms_search` finds documents, `kms_vault_info` shows knowledge entries summary, `kms_read` reads from DB, `kms_inspect` shows three tiers. All work 24/7 — no laptop needed for read/search operations.
 
 ### Components
 
 ---
 
-**WEEK READER** *(new — build first; SYNTHESIS COMPOSER depends on it)*
+**REMOVE `kms_move`** *(simple — delete)*
 
-Load the past seven days' audit entries and a representative sample of the week's notes.
+> **⚠️ MODULE DELETION RIDES HERE (added 2026-06-12).** Phase 5's "retire dead modules" was deferred (see Phase 5 sequencing warning). `mcp_server/_move.py` (+ `kms_move` shim) and the `move_guard`/`reader` imports inside `mcp_server/` are alive until this phase. Their deletion belongs here, not Phase 5.
 
-- **Input:** ISO week number (e.g. `2026-W24`) or a date range
-- **Output:** `Success(WeekBundle(audit_entries=[...], notes=[Note, ...]))` or `Failure`
-- **Rules:**
-  - Query `storage/audit_log.py::query(start_time=..., end_time=...)` for the week's entries (C-04)
-  - Load notes via `vault/reader.py::read_note` — do not use document index summaries as source material; use full note content
-  - Cap the note sample at `CONFIG.main.synthesis.max_notes_per_week` to stay within LLM context limits — never hardcode the cap (C-06); if more notes exist than the cap, prefer notes from more recent days and notes with higher audit activity (more decisions logged)
-  - Return `Success` or `Failure` — never raise (C-12)
-- **Reuse:** `storage/audit_log.py::query`, `vault/reader.py::read_note`, `storage/documents.py`
+- Delete `mcp_server/_move.py` entirely
+- Remove `kms_move` tool from `tools.py`
+- Remove move-related instructions from `AI_INSTRUCTIONS.md`
+- **Acceptance:** `kms_move` no longer appears in tool list.
 
 ---
 
-**SYNTHESIS COMPOSER** *(new — depends on WEEK READER)*
+**REWRITE `context.py`** *(major change)*
 
-Call the AI with the week's bundle and produce a cross-project synthesis that surfaces themes, contradictions, and action items.
+Context injection engine currently reads CLAUDE.md from disk + builds context from search. Rewrite to pull from `knowledge_entries` table.
 
-- **Input:** `WeekBundle(audit_entries, notes)` from WEEK READER
-- **Output:** `Success(SynthesisContent(body_markdown, source_note_paths))` or `Failure`
+- **Context source:** `knowledge_entries` (distilled facts, primary) + search results (supporting evidence)
+- **Project→domain lookup:** `SELECT DISTINCT entity FROM knowledge_entries WHERE dimension='projects'` replaces filesystem registry
+- **Knowledge block:** For matched entities, include relevant `confident` entries grouped by dimension
 - **Rules:**
-  - Load prompt from `prompts/synthesize_weekly.yaml` via `PROMPTS["synthesize_weekly"].render(...)` — never inline a prompt (C-07)
-  - Call via `get_provider("synthesis", CONFIG.main)` — weekly synthesis is the highest-value synthesis task; use `synthesis_model` routing (C-08)
-  - The synthesis must contain four named sections: "Recurring themes", "Contradictions or tensions", "Action items", "Cross-project connections"
-  - Source notes must be referenced as Obsidian wikilinks (`[[note-title]]`) — traceability is non-negotiable
-  - Return `Success` or `Failure` — never raise (C-12)
-- **Reuse:** `llm/provider.py::get_provider`, `llm/prompt_loader.py::PROMPTS`
+  - Knowledge entries first, search results second (see rearchitecture doc §8)
+  - `kms_vault_info` returns knowledge entries summary instead of CLAUDE.md content
+  - Frequency-threshold gating pattern survives (reuse)
+  - Content-hash dedup survives (reuse)
+- **Reuse:** `storage/knowledge_entries.py`, `retrieval/search.py`
+- **Acceptance:** `kms_vault_info` returns knowledge entries grouped by dimension. Context injection includes relevant entries for query entities.
 
 ---
 
-**SYNTHESIS WRITER** *(new — depends on SYNTHESIS COMPOSER)*
+**REWRITE `_resolve.py`** *(medium change)*
 
-Save the composed synthesis to `Synthesis/YYYY/week_WW.md` and index it.
+Three-tier retrieval:
+- Tier 1: structured summary from `documents.summary` + relevant `knowledge_entries`
+- Tier 2: `documents.full_body` from DB (always available)
+- Tier 3: vault path for raw file access (laptop-dependent)
 
-- **Input:** `SynthesisContent(body_markdown)` + week identifier
-- **Output:** `Success(synthesis_path)` or `Failure`
 - **Rules:**
-  - Target path is `Vault/Synthesis/<YYYY>/week_<WW>.md` — use `CONFIG.main.vault.root` to resolve; never hardcode the path
-  - Call `vault/writer.py::write_note(path, content, metadata, actor="ai")` — never write directly to the filesystem (C-01)
-  - `Synthesis/` is a capture-excluded folder — explicitly call `storage/documents.py::upsert(...)` after writing (watcher skips this folder)
-  - Write a `SYNTHESIS_WRITTEN` audit entry via `core.audit.write(...)` (C-13)
-  - Return `Success` or `Failure` — never raise (C-12)
-- **Reuse:** `vault/writer.py::write_note`, `storage/documents.py::upsert`, `core/audit.py::write`
+  - Tier 1-2 always work (DB). Tier 3 only when daemon is connected.
+  - No handler registry calls — text already in DB.
+- **Acceptance:** `kms_inspect` returns summary (tier 1), full text (tier 2), or vault path (tier 3).
 
 ---
 
-**SYNTHESIZE CLI** *(new — build last, after pipeline has passing tests)*
+**AGENTBASE DEPLOYMENT** *(depends on container from Phase 5)*
 
-Expose `kms synthesize` that generates this week's synthesis on demand.
+Deploy MCP server on AgentBase via Resource Gateway.
 
-- **Input:** No arguments; optional `--week YYYY-WXX` to generate synthesis for a past week
-- **Output:** Console confirmation of where the synthesis was written
-- **Rules:**
-  - Wrap async calls with `asyncio.run(...)` — no async Click adapters (C-10)
-  - Zero logic in the CLI layer
-  - Build and verify this CLI before adding any scheduler automation (C-16)
-  - Do not add `kms_synthesize` as an MCP tool until this CLI is verified (C-15)
-- **Reuse:** `cli/main.py` Click group, `core/pipeline.py::run_pipeline`
+- **Resource Gateway config:** proxy MCP JSON-RPC to container port 8080. Inbound auth (IAM or JWT).
+- **Gateway endpoint:** the URL user-facing Claude connects to as MCP server.
+- **Update `AI_INSTRUCTIONS.md`:** remove move instructions, add knowledge entry context, explain three-tier retrieval.
+- **Acceptance:** Claude Desktop connects to AgentBase MCP gateway. `kms_search`, `kms_read`, `kms_vault_info`, `kms_inspect` all work remotely.
 
 ---
 
 ### Acceptance criteria (behavior test)
-- [ ] Accumulate 10+ notes across multiple projects/domains over several sessions
-- [ ] Run `kms synthesize`
-- [ ] `Synthesis/2026/week_WW.md` appears with:
-  - Recurring themes across projects
-  - Contradictions or tensions surfaced
-  - Action items extracted
-  - Cross-project connections the user might not have noticed
-- [ ] Synthesis references source notes via wikilinks
+- [ ] `kms_move` removed — not in tool list
+- [ ] `kms_vault_info` returns knowledge entries grouped by dimension (not CLAUDE.md content)
+- [ ] `kms_search` works from cloud DB (no vault needed)
+- [ ] `kms_read` reads from DB (no vault needed)
+- [ ] `kms_inspect` tier 1: summary + knowledge entries. Tier 2: full body from DB. Tier 3: vault path (laptop-dependent)
+- [ ] Context injection includes relevant knowledge entries for query entities
+- [ ] Claude Desktop connects to AgentBase MCP gateway
+- [ ] All MCP tools work with laptop closed (tiers 1-2 only)
 
 ---
 
-## Rules of the Road
+## Phase 10 — Web UI + Self-Learning
+
+**`DEPENDS ON: Phase 9 (MCP tools and knowledge_entries must be live) · WEIGHT: heavy · TYPE: new feature`**
+
+> **Rearchitecture phase.** Read `docs/0_draft/cloud_native_rearchitecture.md` §10 for web UI requirements and §7 for self-learning loop design. Tech stack, hosting, exact UI — all decided during design phase for this phase.
+
+### Goal
+
+Build a web interface that replaces CLAUDE.md and Obsidian as the user's window into their knowledge base. Users browse knowledge entries, view document summaries, correct AI mistakes, and add comments. Corrections feed a self-learning loop that improves future extractions.
+
+After this phase: the user opens a web page and sees all their structured knowledge — people, projects, domains — grouped and filterable. They can promote pending entries, retire wrong ones, edit facts, and comment. The house AI learns from every correction.
+
+### Components
+
+---
+
+**BROWSE** *(new)*
+
+View knowledge entries grouped by dimension/entity. View document summaries. Filter by dimension, entity, tag, status.
+
+- **Requirements:**
+  - Group entries by dimension, then by entity within each dimension
+  - Show entry status (confident/pending/retired) with visual indicator
+  - Filter by: dimension, entity name, tag, status
+  - Click entity → see all entries for that entity across dimensions
+  - Click source → see the document summary
+  - Paginate if entries are many
+
+---
+
+**CORRECT** *(new)*
+
+Change entry status and edit facts. Corrections are system-readable — they feed self-learning.
+
+- **Requirements:**
+  - Promote: pending → confident (one click)
+  - Retire: confident → retired (with required reason)
+  - Edit: change fact text, tag, or entity name
+  - Every correction records: who corrected, when, what changed, what it was before
+  - Corrections stored in DB (new `corrections` table or audit log extension)
+  - Intuitive — non-technical user must be able to correct without instructions
+
+---
+
+**COMMENT** *(new)*
+
+Add notes/context to entries that house AI should consider in future extractions.
+
+- **Requirements:**
+  - Free-text comment on any entry
+  - Comments visible to house AI during next classify run
+  - Timestamp + author on each comment
+  - Comments are additive — no overwrite
+
+---
+
+**SELF-LEARNING LOOP** *(new)*
+
+User corrections feed back as learning signal to improve future extractions.
+
+- **Requirements:**
+  - User promotes pending → confident: validates AI extraction
+  - User retires confident: corrects AI mistake
+  - User edits fact: provides ground truth
+  - Corrections recorded and available as few-shot examples for future `entity_extract.yaml` prompts
+  - FEW-SHOT INJECTOR: at next classify run, loads recent corrections and prepends as examples to extraction prompt
+  - Max corrections in prompt controlled by config (C-06)
+
+---
+
+### Design decisions deferred to this phase's `/grill`
+- Web UI tech stack (SPA vs server-rendered)
+- Hosting (same container as MCP server, or separate)
+- Auth for web UI (same IAM as MCP, or separate)
+- Exact UI layout and interaction patterns
+
+### Acceptance criteria (behavior test)
+- [ ] Open web UI → see knowledge entries grouped by dimension
+- [ ] Filter by dimension "people" → see only people entries
+- [ ] Click entity "Anthony" → see all entries about Anthony
+- [ ] Promote a pending entry → status changes to confident
+- [ ] Retire a confident entry → status changes to retired with reason
+- [ ] Edit a fact → fact text updated, old value recorded
+- [ ] Add comment to entry → comment visible, timestamped
+- [ ] After corrections: next classify run produces better extractions for similar content
+- [ ] Non-technical user completes browse + correct flow without instructions
+
+---
+
+## Rearchitecture Dependency Graph
+
+```
+COMPLETED (existing)                    REARCHITECTURE PHASES
+────────────────────                    ─────────────────────
+
+Phase 0 (Foundations)  ─┐
+Phase 1 (Capture)       │
+Phase 1.5 (Pay Debt)    ├─ DONE ──→ Phase 5 (Infrastructure) ──→ Phase 6 (Daemon)
+Phase Pre-2 (DB Prep)   │                    │
+Vault-Restructure       │                    ▼
+Phase 2 (Classify)      │           Phase 7 (Capture Refactor)
+Phase 3 (Search)        │                    │
+Phase 4 (MCP Server)  ──┘                    ▼
+                                    Phase 8 (Classify Redesign)
+                                             │
+                                             ▼
+                                    Phase 9 (MCP Adaptation)
+                                             │
+                                             ▼
+                                    Phase 10 (Web UI + Self-Learning)
+```
+
+**Phase 6 (Daemon) and Phase 7 (Capture Refactor) can run in parallel** — both depend on Phase 5 only. Daemon is local code, Capture is cloud code. Different test strategies, no conflicts.
+
+---
+
+## Rules of the Road (updated for rearchitecture)
 
 - **Never skip the pipeline.** Every task goes through `/grill` → `/tdd-implement`. No shortcuts.
-- **One handler, one pipeline, end-to-end before adding breadth.** Don't write 7 handlers before classify works.
-- **Audit log is non-negotiable.** Phase 8 (briefing) reads from it. No audit log = no briefing.
-- **Schedulers come last in each phase.** Manual CLI first, then automate (C-16).
-- **MCP tools are thin wrappers.** Zero logic in `mcp_server/tools.py` (C-14). Logic belongs in a pipeline.
-- **Never add an MCP tool before its pipeline exists and is tested** (C-15). A stub tool is a lie.
-- **Every tag-generating pipeline MUST call `validate_tags`** from `core/tags.py` (TD-019). Violations are logged as `TAG_VIOLATION` audit entries — never silently accepted.
-- **Result types everywhere.** Every public function in `handlers/` and `pipelines/` returns `Success` or `Failure` (C-12).
-- **Prompts are YAML.** Never hardcode prompts in code (C-07). Use `PROMPTS["name"].render(**vars)`.
+- **Read the rearchitecture doc first.** `docs/0_draft/cloud_native_rearchitecture.md` is the single source of truth for system direction.
+- **System never writes to vault.** All AI output goes to DB. Vault is read-only input.
+- **Daemon is stateless.** No DB, no cache, no AI state. Pure bridge.
+- **Dimensions and tags are config-enforced.** AI cannot invent dimensions or tags. Validation rejects unknown values.
+- **Every knowledge entry has sources.** No entry without traceability.
+- **Audit log is non-negotiable.** Every AI decision is logged. (C-13)
+- **MCP tools are thin wrappers.** Zero logic in `mcp_server/tools.py` (C-14).
+- **Never add an MCP tool before its pipeline exists and is tested** (C-15).
+- **Result types everywhere.** Every public function returns `Success` or `Failure` (C-12).
+- **Prompts are YAML.** Never hardcode prompts in code (C-07).
 - **Thresholds are config.** Never hardcode confidence thresholds in pipeline code (C-06).
 - **Work in worktrees.** Each contributor works in their own git worktree to avoid conflicts.
 - **Behavior test is the review gate.** No code review. Run the acceptance criteria. If it works, it ships.
-
----
-
-## Tech Debt Not Assigned to Any Phase
-
-These items are tracked but not blocking any phase. Pay them opportunistically or in a dedicated cleanup pass post-deadline:
-
-| TD | What | When to pay |
-|----|------|-------------|
-| TD-009 | `updated_by_human` sync between frontmatter and SQLite | Post-Phase 7 audit |
-| TD-011 | Per-prompt model/temperature overrides | When a caller needs it |
-| TD-015 | CLAUDE.md section-merge for AI co-authoring | Post-deadline |
-| TD-016 | User explicit URL flagging in `enrich_urls` | Wishlist — no demand |
-| TD-017 | AI URL triage replacing structural heuristic | Adds latency — Phase 2+ |
-| TD-018 | Domain list refresh in `kms watch` | Post-deadline |
-| TD-020 | Research doc describes OLD attachment layout | Documentation debt |
-| TD-021 | Roadmap describes OLD attachment layout | Fixing now |
-| TD-029 | Rename gate logic mis-calibrated | Consider during Phase 2 `/grill` |
-| TD-031 | `move_attachment` TOCTOU window | Watcher hardening pass |
-| TD-032 | No `kms migrate-attachments` for legacy layout | Only if needed |
-| TD-033 | Watcher monkeypatch target documentation | Documentation-only |
-| TD-035 | Reconcile: location-tag mismatch on human override | Post-Phase 2 |
-| TD-036 | Reconcile: stale `batch_id` after file moves | Low risk, post-MVP |
-| TD-039 | Windows support for binary content-change detection | Post-deadline, Mac-first |
+- **Update docs when you ship.** Don't batch — update CLAUDE.md, CONSTRAINTS.md, STATE.md as each phase completes.
