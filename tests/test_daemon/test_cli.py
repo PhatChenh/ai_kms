@@ -9,18 +9,24 @@ interactions.  The test suite covers:
   - status  command: reachability reporting (success + failure paths)
   - scan    command: one-shot reconciliation summary printing
   - start   command: basic invocation, config loading, Ctrl+C handling
+  - cache   behaviour: bail-early, cache-on-ack, move bookkeeping
   - CLI     group:  --help, --config option propagation
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
+import daemon.cli
 from click.testing import CliRunner
 
+from core.result import Failure, Success
 from daemon.cli import cli
+from daemon.extractor import TextContent
 from daemon.scanner import ScanResult
 
 
@@ -283,6 +289,432 @@ class TestStartCommand:
             mock_watcher.start.assert_called_once()
             mock_watcher.stop.assert_called_once()
             mock_watcher.join.assert_called_once()
+
+    # ── helpers for callback-capture tests ───────────────────────────────
+
+    @staticmethod
+    def _run_start_and_capture_callbacks(
+        tmp_path: Path,
+        monkeypatch,
+        vault: Path,
+        config_path: Path,
+        *,
+        cache_json: dict | None = None,
+    ) -> dict:
+        """Run ``daemon start`` with a mock watcher that captures callbacks.
+
+        Returns a dict with keys: ``on_create``, ``on_modify``, ``on_move``,
+        ``on_delete`` — each a callable captured from the watcher constructor.
+        Also returns ``cfg`` (the loaded config).
+
+        If *cache_json* is provided, writes it to the cache path before the
+        daemon loads it so the ``LocalCache`` is pre-populated.
+        """
+        monkeypatch.setenv("KMS_DAEMON_API_KEY", "test-key")
+
+        if cache_json is not None:
+            # Write cache file before the daemon loads it
+            cache_path = tmp_path / "cache.json"
+            cache_path.write_text(json.dumps(cache_json))
+            config_content = f"""vault_root: {vault}
+cloud_endpoint: http://fake:8080
+cache_path: {cache_path}
+"""
+            config_path2 = _tmp_yaml(tmp_path, config_content)
+        else:
+            config_path2 = config_path
+
+        captured: dict = {}
+
+        class _MockWatcher:
+            def __init__(self, config, on_create, on_modify, on_move, on_delete):
+                captured["on_create"] = on_create
+                captured["on_modify"] = on_modify
+                captured["on_move"] = on_move
+                captured["on_delete"] = on_delete
+
+            def start(self) -> None:
+                pass
+
+            def stop(self) -> None:
+                pass
+
+            def join(self) -> None:
+                pass
+
+        fake_result = ScanResult(uploaded=0, re_uploaded=0, deleted=0, skipped=0)
+
+        async def _fake_scan(cfg, client):
+            return fake_result
+
+        sleep_count = [0]
+
+        async def _fake_sleep(seconds):
+            sleep_count[0] += 1
+            if sleep_count[0] == 1:
+                raise KeyboardInterrupt()
+            await asyncio.sleep(0)
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("daemon.cli.httpx.AsyncClient", return_value=mock_client),
+            patch("daemon.cli.scan", side_effect=_fake_scan),
+            patch("daemon.cli.DaemonWatcher", side_effect=_MockWatcher),
+            patch("daemon.cli.asyncio.sleep", side_effect=_fake_sleep),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["start", "--config", str(config_path2)])
+            assert result.exit_code == 0
+
+        return captured
+
+    # ── bail-early cache tests ───────────────────────────────────────────
+
+    def test_stat_unchanged_skips_extract(self, tmp_path: Path, monkeypatch):
+        """When size+mtime match cache, log skipped and do NOT call extract."""
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config_path = _tmp_yaml(tmp_path, _minimal_config_yaml(vault, "http://fake:8080"))
+
+        # Create a real file
+        test_file = vault / "notes.txt"
+        test_file.write_text("hello world", encoding="utf-8")
+        st = test_file.stat()
+        content_hash = hashlib.sha256(test_file.read_bytes()).hexdigest()
+
+        # Pre-populate cache with matching fingerprint
+        cache_json = {
+            "notes.txt": {
+                "hash": content_hash,
+                "size": st.st_size,
+                "mtime": st.st_mtime,
+            }
+        }
+
+        captured = self._run_start_and_capture_callbacks(
+            tmp_path, monkeypatch, vault, config_path, cache_json=cache_json
+        )
+
+        # Patch asyncio.run_coroutine_threadsafe to run synchronously
+        def _sync_rct(coro, loop):
+            asyncio.run(coro)
+
+        with (
+            patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
+            patch("daemon.cli.extract") as mock_extract,
+            patch.object(daemon.cli, "_log") as mock_log,
+        ):
+            captured["on_create"]("notes.txt")
+
+        # extract must NOT be called
+        mock_extract.assert_not_called()
+        # debug log must contain skipped (unchanged)
+        mock_log.debug.assert_any_call("skipped (unchanged)", vault_path="notes.txt")
+
+    def test_genuinely_modified_extracts_and_uploads(self, tmp_path: Path, monkeypatch):
+        """When content hash differs from cache, extract + upload + cache update."""
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config_path = _tmp_yaml(tmp_path, _minimal_config_yaml(vault, "http://fake:8080"))
+
+        test_file = vault / "notes.txt"
+        test_file.write_text("new content", encoding="utf-8")
+        st = test_file.stat()
+
+        # Cache has a different hash AND different mtime → stat check won't bail early,
+        # hash check will detect genuine change
+        cache_json = {
+            "notes.txt": {
+                "hash": "0000000000000000000000000000000000000000000000000000000000000000",
+                "size": st.st_size,
+                "mtime": st.st_mtime - 100.0,  # stale mtime forces hash check
+            }
+        }
+
+        captured = self._run_start_and_capture_callbacks(
+            tmp_path, monkeypatch, vault, config_path, cache_json=cache_json
+        )
+
+        def _sync_rct(coro, loop):
+            asyncio.run(coro)
+
+        fake_text_content = TextContent(
+            text="new content",
+            content_hash=hashlib.sha256(b"new content").hexdigest(),
+            vault_path="notes.txt",
+            original_filename="notes.txt",
+            file_size_bytes=st.st_size,
+        )
+
+        async def _fake_upload_text(client, cfg, tc):
+            return Success(value="doc-1")
+
+        with (
+            patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
+            patch("daemon.cli.extract", return_value=Success(value=fake_text_content)) as mock_extract,
+            patch("daemon.cli.upload_text", side_effect=_fake_upload_text) as mock_upload,
+            patch.object(daemon.cli, "_log") as mock_log,
+        ):
+            captured["on_create"]("notes.txt")
+
+        # extract must have been called
+        mock_extract.assert_called_once()
+        # upload_text must have been called
+        mock_upload.assert_called_once()
+        # info log must mention uploaded
+        mock_log.info.assert_any_call("uploaded text", vault_path="notes.txt", doc_id="doc-1")
+
+    def test_stat_prefilter_avoids_hashing(self, tmp_path: Path, monkeypatch):
+        """When size+mtime are unchanged, read_bytes is never called (no hashing)."""
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config_path = _tmp_yaml(tmp_path, _minimal_config_yaml(vault, "http://fake:8080"))
+
+        test_file = vault / "data.bin"
+        test_file.write_bytes(b"binary data here")
+        st = test_file.stat()
+        content_hash = hashlib.sha256(test_file.read_bytes()).hexdigest()
+
+        cache_json = {
+            "data.bin": {
+                "hash": content_hash,
+                "size": st.st_size,
+                "mtime": st.st_mtime,
+            }
+        }
+
+        captured = self._run_start_and_capture_callbacks(
+            tmp_path, monkeypatch, vault, config_path, cache_json=cache_json
+        )
+
+        def _sync_rct(coro, loop):
+            asyncio.run(coro)
+
+        with (
+            patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
+            patch("daemon.cli.extract") as mock_extract,
+            patch("pathlib.Path.read_bytes") as mock_read_bytes,
+            patch.object(daemon.cli, "_log") as mock_log,
+        ):
+            captured["on_create"]("data.bin")
+
+        # Neither read_bytes nor extract should be called
+        mock_read_bytes.assert_not_called()
+        mock_extract.assert_not_called()
+        mock_log.debug.assert_any_call("skipped (unchanged)", vault_path="data.bin")
+
+    def test_stat_changed_hash_unchanged_updates_stat_in_cache(self, tmp_path: Path, monkeypatch):
+        """When stat differs but content hash matches, skip upload but update stat."""
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config_path = _tmp_yaml(tmp_path, _minimal_config_yaml(vault, "http://fake:8080"))
+
+        test_file = vault / "notes.txt"
+        test_file.write_text("same content", encoding="utf-8")
+        real_st = test_file.stat()
+        content_hash = hashlib.sha256(test_file.read_bytes()).hexdigest()
+
+        # Cache has same hash but stale stat (mtime is different)
+        cache_json = {
+            "notes.txt": {
+                "hash": content_hash,
+                "size": real_st.st_size,
+                "mtime": real_st.st_mtime - 100.0,  # stale mtime
+            }
+        }
+
+        captured = self._run_start_and_capture_callbacks(
+            tmp_path, monkeypatch, vault, config_path, cache_json=cache_json
+        )
+
+        def _sync_rct(coro, loop):
+            asyncio.run(coro)
+
+        with (
+            patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
+            patch("daemon.cli.extract") as mock_extract,
+            patch.object(daemon.cli, "_log") as mock_log,
+            # We need to inspect the real cache, so don't mock LocalCache
+            # But we can mock cache.set_after_ack to verify it was called
+            patch.object(daemon.cli.LocalCache, "set_after_ack") as mock_set,
+        ):
+            captured["on_create"]("notes.txt")
+
+        # extract must NOT be called
+        mock_extract.assert_not_called()
+        # debug log must mention stat changed, content same
+        mock_log.debug.assert_any_call(
+            "skipped (stat changed, content same)", vault_path="notes.txt"
+        )
+        # cache.set_after_ack must have been called with updated stat
+        mock_set.assert_called_once_with(
+            "notes.txt", content_hash, real_st.st_size, real_st.st_mtime
+        )
+
+    def test_successful_upload_updates_cache(self, tmp_path: Path, monkeypatch):
+        """After a successful upload, the file's fingerprint is stored in cache."""
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config_path = _tmp_yaml(tmp_path, _minimal_config_yaml(vault, "http://fake:8080"))
+
+        test_file = vault / "notes.txt"
+        test_file.write_text("brand new file", encoding="utf-8")
+        st = test_file.stat()
+
+        # No cache entry → must extract + upload
+        captured = self._run_start_and_capture_callbacks(
+            tmp_path, monkeypatch, vault, config_path, cache_json={}
+        )
+
+        def _sync_rct(coro, loop):
+            asyncio.run(coro)
+
+        content_hash = hashlib.sha256(b"brand new file").hexdigest()
+        fake_text_content = TextContent(
+            text="brand new file",
+            content_hash=content_hash,
+            vault_path="notes.txt",
+            original_filename="notes.txt",
+            file_size_bytes=st.st_size,
+        )
+
+        async def _fake_upload_text(client, cfg, tc):
+            return Success(value="doc-99")
+
+        with (
+            patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
+            patch("daemon.cli.extract", return_value=Success(value=fake_text_content)),
+            patch("daemon.cli.upload_text", side_effect=_fake_upload_text),
+            patch.object(daemon.cli.LocalCache, "set_after_ack") as mock_set,
+        ):
+            captured["on_create"]("notes.txt")
+
+        # set_after_ack must have been called with the correct fingerprint
+        mock_set.assert_called_once_with(
+            "notes.txt", content_hash, st.st_size, st.st_mtime
+        )
+
+    def test_failed_upload_does_not_update_cache(self, tmp_path: Path, monkeypatch):
+        """After a failed upload, the file's fingerprint does NOT appear in cache."""
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config_path = _tmp_yaml(tmp_path, _minimal_config_yaml(vault, "http://fake:8080"))
+
+        test_file = vault / "notes.txt"
+        test_file.write_text("will fail upload", encoding="utf-8")
+        st = test_file.stat()
+
+        captured = self._run_start_and_capture_callbacks(
+            tmp_path, monkeypatch, vault, config_path, cache_json={}
+        )
+
+        def _sync_rct(coro, loop):
+            asyncio.run(coro)
+
+        fake_text_content = TextContent(
+            text="will fail upload",
+            content_hash=hashlib.sha256(b"will fail upload").hexdigest(),
+            vault_path="notes.txt",
+            original_filename="notes.txt",
+            file_size_bytes=st.st_size,
+        )
+
+        async def _fake_upload_text_fails(client, cfg, tc):
+            return Failure(error="simulated 500", recoverable=False, context={})
+
+        with (
+            patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
+            patch("daemon.cli.extract", return_value=Success(value=fake_text_content)),
+            patch("daemon.cli.upload_text", side_effect=_fake_upload_text_fails),
+            patch.object(daemon.cli.LocalCache, "set_after_ack") as mock_set,
+            patch.object(daemon.cli, "_log") as mock_log,
+        ):
+            captured["on_create"]("notes.txt")
+
+        # set_after_ack must NOT be called
+        mock_set.assert_not_called()
+        # warning log must mention upload_text failed
+        mock_log.warning.assert_any_call(
+            "upload_text failed", vault_path="notes.txt", error="simulated 500"
+        )
+
+    # ── move cache bookkeeping tests ─────────────────────────────────────
+
+    def test_move_updates_cache_success(self, tmp_path: Path, monkeypatch):
+        """After a successful move report, old cache entry is removed and new one added."""
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config_path = _tmp_yaml(tmp_path, _minimal_config_yaml(vault, "http://fake:8080"))
+
+        # Create the destination file (the moved-to file)
+        new_file = vault / "new-location.txt"
+        new_file.write_text("moved content", encoding="utf-8")
+        st = new_file.stat()
+        content_hash = hashlib.sha256(new_file.read_bytes()).hexdigest()
+
+        captured = self._run_start_and_capture_callbacks(
+            tmp_path, monkeypatch, vault, config_path, cache_json={}
+        )
+
+        def _sync_rct(coro, loop):
+            asyncio.run(coro)
+
+        async def _fake_report_moved(client, cfg, old_vp, new_vp):
+            return Success(value=None)
+
+        with (
+            patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
+            patch("daemon.cli.report_moved", side_effect=_fake_report_moved),
+            patch.object(daemon.cli.LocalCache, "forget") as mock_forget,
+            patch.object(daemon.cli.LocalCache, "set_after_ack") as mock_set,
+        ):
+            captured["on_move"]("old-location.txt", "new-location.txt")
+
+        # forget must be called for old path
+        mock_forget.assert_called_once_with("old-location.txt")
+        # set_after_ack must be called for new path with correct fingerprint
+        mock_set.assert_called_once_with(
+            "new-location.txt", content_hash, st.st_size, st.st_mtime
+        )
+
+    def test_move_failed_does_not_update_cache(self, tmp_path: Path, monkeypatch):
+        """When report_moved fails, cache bookkeeping is skipped."""
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config_path = _tmp_yaml(tmp_path, _minimal_config_yaml(vault, "http://fake:8080"))
+
+        captured = self._run_start_and_capture_callbacks(
+            tmp_path, monkeypatch, vault, config_path, cache_json={}
+        )
+
+        def _sync_rct(coro, loop):
+            asyncio.run(coro)
+
+        async def _fake_report_moved_fails(client, cfg, old_vp, new_vp):
+            return Failure(error="moved failed", recoverable=False, context={})
+
+        with (
+            patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
+            patch("daemon.cli.report_moved", side_effect=_fake_report_moved_fails),
+            patch.object(daemon.cli.LocalCache, "forget") as mock_forget,
+            patch.object(daemon.cli.LocalCache, "set_after_ack") as mock_set,
+            patch.object(daemon.cli, "_log") as mock_log,
+        ):
+            captured["on_move"]("old.txt", "new.txt")
+
+        # Neither forget nor set_after_ack should be called
+        mock_forget.assert_not_called()
+        mock_set.assert_not_called()
+        # Warning should be logged
+        mock_log.warning.assert_any_call(
+            "report_moved failed",
+            old_path="old.txt",
+            new_path="new.txt",
+            error="moved failed",
+        )
 
 
 # ── CLI group tests ─────────────────────────────────────────────────────────

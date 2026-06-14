@@ -14,6 +14,7 @@ Structlog is configured independently — this module never imports from
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from pathlib import Path
 
 import click
@@ -21,6 +22,7 @@ import httpx
 import structlog
 
 from core.result import Failure, Success
+from daemon.cache import DaemonSyncState, LocalCache
 from daemon.config import DaemonConfig, load_daemon_config
 from daemon.event_reporter import report_deleted, report_moved
 from daemon.extractor import BinaryContent, TextContent, extract
@@ -157,6 +159,11 @@ def start(config_path: str) -> None:
 
     cfg = _load_config(config_path)
 
+    # ── Cache wiring ─────────────────────────────────────────────────────
+    sync_state = DaemonSyncState()
+    cache = LocalCache(sync_state)
+    cache.load(Path(cfg.cache_path).expanduser())
+
     async def _run() -> None:
         async with httpx.AsyncClient(timeout=30) as client:
             # ── 1. Startup scan ──────────────────────────────────────────
@@ -175,6 +182,9 @@ def start(config_path: str) -> None:
                 f"{result.skipped} skipped"
             )
 
+            # ── Persist cache after startup scan ─────────────────────────
+            cache.save(Path(cfg.cache_path).expanduser())
+
             loop = asyncio.get_running_loop()
 
             # ── 2. Watcher callbacks ─────────────────────────────────────
@@ -183,17 +193,50 @@ def start(config_path: str) -> None:
                 """Schedule an extract + upload for a vault-relative path."""
                 async def _handle() -> None:
                     disk_path = cfg.vault_root / vp
+                    st = None
+
+                    # ── Bail-early: stat-then-hash pre-filter ──
+                    try:
+                        st = disk_path.stat()
+                    except OSError:
+                        pass  # can't stat, proceed with extract
+                    else:
+                        cached = cache.get(vp) if cache is not None else None
+                        if cached is not None:
+                            if st.st_size == cached["size"] and st.st_mtime == cached["mtime"]:
+                                _log.debug("skipped (unchanged)", vault_path=vp)
+                                return  # bail-early — stat matches
+                            # Stat differs → hash the file
+                            try:
+                                raw = disk_path.read_bytes()
+                            except OSError:
+                                pass  # can't read, fall through to extract
+                            else:
+                                content_hash = hashlib.sha256(raw).hexdigest()
+                                if content_hash == cached["hash"]:
+                                    # Content same, just update stat in cache
+                                    if cache is not None:
+                                        cache.set_after_ack(vp, content_hash, st.st_size, st.st_mtime)
+                                    _log.debug("skipped (stat changed, content same)", vault_path=vp)
+                                    return
+
+                    # ── Extract + upload ─────────────────────────────
                     match extract(disk_path, cfg.vault_root, cfg.max_file_size_bytes):
                         case Success(value=TextContent() as tc):
                             match await upload_text(client, cfg, tc):
                                 case Success(value=doc_id):
                                     _log.info("uploaded text", vault_path=vp, doc_id=doc_id)
+                                    # Cache-on-ack
+                                    if cache is not None and st is not None:
+                                        cache.set_after_ack(vp, tc.content_hash, st.st_size, st.st_mtime)
                                 case Failure() as f:
                                     _log.warning("upload_text failed", vault_path=vp, error=f.error)
                         case Success(value=BinaryContent() as bc):
                             match await upload_binary(client, cfg, bc):
                                 case Success(value=doc_id):
                                     _log.info("uploaded binary", vault_path=vp, doc_id=doc_id)
+                                    if cache is not None and st is not None:
+                                        cache.set_after_ack(vp, bc.content_hash, st.st_size, st.st_mtime)
                                 case Failure() as f:
                                     _log.warning("upload_binary failed", vault_path=vp, error=f.error)
                         case Failure() as f:
@@ -207,6 +250,17 @@ def start(config_path: str) -> None:
                     match await report_moved(client, cfg, old_vp, new_vp):
                         case Success():
                             _log.info("reported moved", old_path=old_vp, new_path=new_vp)
+                            # Update cache
+                            if cache is not None:
+                                new_disk_path = cfg.vault_root / new_vp
+                                try:
+                                    st = new_disk_path.stat()
+                                    raw = new_disk_path.read_bytes()
+                                    content_hash = hashlib.sha256(raw).hexdigest()
+                                    cache.forget(old_vp)
+                                    cache.set_after_ack(new_vp, content_hash, st.st_size, st.st_mtime)
+                                except OSError:
+                                    _log.warning("cannot fingerprint moved file for cache", new_path=new_vp)
                         case Failure() as f:
                             _log.warning("report_moved failed", old_path=old_vp, new_path=new_vp, error=f.error)
 
