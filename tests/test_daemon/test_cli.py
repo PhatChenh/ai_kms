@@ -716,6 +716,368 @@ cache_path: {cache_path}
             error="moved failed",
         )
 
+    # ── move detection (MoveBuffer) tests ────────────────────────────────
+
+    def test_delete_then_create_same_hash_reports_move(self, tmp_path: Path, monkeypatch):
+        """A delete followed by a create with the same content hash reports one move."""
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config_path = _tmp_yaml(tmp_path, _minimal_config_yaml(vault, "http://fake:8080"))
+
+        content_hash = hashlib.sha256(b"moved content").hexdigest()
+
+        # Pre-populate cache so delete can fingerprint via cache
+        cache_json = {
+            "old-folder/doc.txt": {
+                "hash": content_hash,
+                "size": len(b"moved content"),
+                "mtime": 1234567890.0,
+            }
+        }
+
+        # Create the destination file on disk so stat() succeeds
+        new_folder = vault / "new-folder"
+        new_folder.mkdir()
+        new_file = new_folder / "doc.txt"
+        new_file.write_text("moved content", encoding="utf-8")
+        new_st = new_file.stat()
+
+        captured = self._run_start_and_capture_callbacks(
+            tmp_path, monkeypatch, vault, config_path, cache_json=cache_json
+        )
+
+        def _sync_rct(coro, loop):
+            asyncio.run(coro)
+
+        # Mock threading.Timer so the move window doesn't fire during the test
+        mock_timers: list = []
+
+        class _MockTimer:
+            def __init__(self, interval, function):
+                self.interval = interval
+                self.function = function
+                self.daemon = False
+                mock_timers.append(self)
+
+            def start(self):
+                pass
+
+            def cancel(self):
+                pass
+
+        async def _fake_report_moved(client, cfg, old_vp, new_vp):
+            return Success(value=None)
+
+        fake_text_content = TextContent(
+            text="moved content",
+            content_hash=content_hash,
+            vault_path="new-folder/doc.txt",
+            original_filename="doc.txt",
+            file_size_bytes=new_st.st_size,
+        )
+
+        with (
+            patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
+            patch("daemon.cli.threading.Timer", side_effect=_MockTimer),
+            patch("daemon.cli.extract", return_value=Success(value=fake_text_content)),
+            patch("daemon.cli.upload_text") as mock_upload_text,
+            patch("daemon.cli.report_moved", side_effect=_fake_report_moved) as mock_report_moved,
+            patch("daemon.cli.report_deleted") as mock_report_deleted,
+            patch.object(daemon.cli.LocalCache, "forget") as mock_forget,
+            patch.object(daemon.cli.LocalCache, "set_after_ack") as mock_set,
+        ):
+            # Step 1: Delete the old file
+            captured["on_delete"]("old-folder/doc.txt")
+
+            # Step 2: Create the new file (same content hash)
+            captured["on_create"]("new-folder/doc.txt")
+
+        # report_moved must have been called exactly once
+        mock_report_moved.assert_called_once()
+        call_args = mock_report_moved.call_args[0]
+        assert call_args[2] == "old-folder/doc.txt"
+        assert call_args[3] == "new-folder/doc.txt"
+
+        # report_deleted must NOT have been called
+        mock_report_deleted.assert_not_called()
+
+        # upload_text must NOT have been called
+        mock_upload_text.assert_not_called()
+
+        # Cache: old path removed, new path added
+        mock_forget.assert_called_once_with("old-folder/doc.txt")
+        mock_set.assert_called_once_with(
+            "new-folder/doc.txt", content_hash, new_st.st_size, new_st.st_mtime
+        )
+
+    def test_delete_no_cache_entry_reports_immediately(self, tmp_path: Path, monkeypatch):
+        """A delete of a file not in cache is reported immediately (no buffering)."""
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config_path = _tmp_yaml(tmp_path, _minimal_config_yaml(vault, "http://fake:8080"))
+
+        # Empty cache — no entry for the deleted file
+        captured = self._run_start_and_capture_callbacks(
+            tmp_path, monkeypatch, vault, config_path, cache_json={}
+        )
+
+        def _sync_rct(coro, loop):
+            asyncio.run(coro)
+
+        async def _fake_report_deleted(client, cfg, vp):
+            return Success(value=None)
+
+        with (
+            patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
+            patch("daemon.cli.report_deleted", side_effect=_fake_report_deleted) as mock_report_deleted,
+            patch.object(daemon.cli, "_log") as mock_log,
+        ):
+            captured["on_delete"]("unknown-file.txt")
+
+        # report_deleted must have been called immediately
+        mock_report_deleted.assert_called_once()
+        call_args = mock_report_deleted.call_args[0]
+        assert call_args[2] == "unknown-file.txt"
+
+        # Info log must mention "no cache entry"
+        mock_log.info.assert_any_call(
+            "reported deleted (no cache entry)", vault_path="unknown-file.txt"
+        )
+
+    def test_create_without_matching_delete_uploads_normally(self, tmp_path: Path, monkeypatch):
+        """A create with no matching parked delete proceeds with normal upload."""
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config_path = _tmp_yaml(tmp_path, _minimal_config_yaml(vault, "http://fake:8080"))
+
+        test_file = vault / "new-file.txt"
+        test_file.write_text("brand new content", encoding="utf-8")
+        st = test_file.stat()
+
+        # No cache entry, no parked delete
+        captured = self._run_start_and_capture_callbacks(
+            tmp_path, monkeypatch, vault, config_path, cache_json={}
+        )
+
+        def _sync_rct(coro, loop):
+            asyncio.run(coro)
+
+        content_hash = hashlib.sha256(b"brand new content").hexdigest()
+        fake_text_content = TextContent(
+            text="brand new content",
+            content_hash=content_hash,
+            vault_path="new-file.txt",
+            original_filename="new-file.txt",
+            file_size_bytes=st.st_size,
+        )
+
+        async def _fake_upload_text(client, cfg, tc):
+            return Success(value="doc-new")
+
+        with (
+            patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
+            patch("daemon.cli.extract", return_value=Success(value=fake_text_content)),
+            patch("daemon.cli.upload_text", side_effect=_fake_upload_text) as mock_upload_text,
+            patch("daemon.cli.report_moved") as mock_report_moved,
+            patch.object(daemon.cli.LocalCache, "set_after_ack") as mock_set,
+        ):
+            captured["on_create"]("new-file.txt")
+
+        # upload_text must have been called (normal path)
+        mock_upload_text.assert_called_once()
+        # report_moved must NOT have been called
+        mock_report_moved.assert_not_called()
+        # Cache must have been updated
+        mock_set.assert_called_once_with(
+            "new-file.txt", content_hash, st.st_size, st.st_mtime
+        )
+
+    def test_move_window_expired_reports_deleted(self, tmp_path: Path, monkeypatch):
+        """When the move window expires, pending deletes are reported."""
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config_path = _tmp_yaml(tmp_path, _minimal_config_yaml(vault, "http://fake:8080"))
+
+        content_hash = hashlib.sha256(b"deleted content").hexdigest()
+
+        # Pre-populate cache so delete can fingerprint via cache
+        cache_json = {
+            "deleted-file.txt": {
+                "hash": content_hash,
+                "size": len(b"deleted content"),
+                "mtime": 1000000000.0,
+            }
+        }
+
+        captured = self._run_start_and_capture_callbacks(
+            tmp_path, monkeypatch, vault, config_path, cache_json=cache_json
+        )
+
+        def _sync_rct(coro, loop):
+            asyncio.run(coro)
+
+        # Mock threading.Timer to capture the expiry callback
+        mock_timers: list = []
+
+        class _MockTimer:
+            def __init__(self, interval, function):
+                self.interval = interval
+                self.function = function
+                self.daemon = False
+                mock_timers.append(self)
+
+            def start(self):
+                pass
+
+            def cancel(self):
+                pass
+
+        async def _fake_report_deleted(client, cfg, vp):
+            return Success(value=None)
+
+        # We need entries to appear expired.  Mock move_buffer.expire to
+        # return the parked entries regardless of wall-clock time.
+        def _fake_expire(move_window_seconds):
+            # Return the fingerprint + old_vp for our parked entry
+            return [(content_hash, "deleted-file.txt")]
+
+        with (
+            patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
+            patch("daemon.cli.threading.Timer", side_effect=_MockTimer),
+            patch("daemon.cli.report_deleted", side_effect=_fake_report_deleted) as mock_report_deleted,
+            patch.object(daemon.cli.LocalCache, "forget") as mock_forget,
+            patch.object(daemon.cli, "_log") as mock_log,
+            patch.object(daemon.cli.MoveBuffer, "expire", side_effect=_fake_expire),
+        ):
+            # Step 1: Delete the file — parks in buffer
+            captured["on_delete"]("deleted-file.txt")
+
+            # report_deleted must NOT have been called yet
+            mock_report_deleted.assert_not_called()
+
+            # Step 2: Simulate move window expiry by calling the timer function
+            assert len(mock_timers) == 1
+            expiry_callback = mock_timers[0].function
+            expiry_callback()  # calls _on_move_window_expired
+
+        # Now report_deleted must have been called
+        mock_report_deleted.assert_called_once()
+        call_args = mock_report_deleted.call_args[0]
+        assert call_args[2] == "deleted-file.txt"
+
+        # Cache must have been cleared
+        mock_forget.assert_called_once_with("deleted-file.txt")
+
+        # Info log must mention "move window expired"
+        mock_log.info.assert_any_call(
+            "reported deleted (move window expired)", vault_path="deleted-file.txt"
+        )
+
+    def test_move_window_timer_refreshed_on_subsequent_deletes(self, tmp_path: Path, monkeypatch):
+        """Each delete restarts the move window timer (previous timer is cancelled)."""
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config_path = _tmp_yaml(tmp_path, _minimal_config_yaml(vault, "http://fake:8080"))
+
+        content_hash_a = hashlib.sha256(b"file A").hexdigest()
+        content_hash_b = hashlib.sha256(b"file B").hexdigest()
+
+        cache_json = {
+            "file-a.txt": {
+                "hash": content_hash_a,
+                "size": len(b"file A"),
+                "mtime": 1000000000.0,
+            },
+            "file-b.txt": {
+                "hash": content_hash_b,
+                "size": len(b"file B"),
+                "mtime": 1000000001.0,
+            },
+        }
+
+        captured = self._run_start_and_capture_callbacks(
+            tmp_path, monkeypatch, vault, config_path, cache_json=cache_json
+        )
+
+        def _sync_rct(coro, loop):
+            asyncio.run(coro)
+
+        mock_timers: list = []
+
+        class _MockTimer:
+            def __init__(self, interval, function):
+                self.interval = interval
+                self.function = function
+                self.daemon = False
+                self._cancelled = False
+                mock_timers.append(self)
+
+            def start(self):
+                pass
+
+            def cancel(self):
+                self._cancelled = True
+
+        with (
+            patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
+            patch("daemon.cli.threading.Timer", side_effect=_MockTimer),
+            patch("daemon.cli.report_deleted") as mock_report_deleted,
+        ):
+            # Delete first file — a timer should be created
+            captured["on_delete"]("file-a.txt")
+            assert len(mock_timers) == 1
+            first_timer = mock_timers[0]
+
+            # Delete second file — the first timer should be cancelled and a new one created
+            captured["on_delete"]("file-b.txt")
+            assert len(mock_timers) == 2
+            assert first_timer._cancelled is True
+
+            # No immediate reports
+            mock_report_deleted.assert_not_called()
+
+    def test_native_os_move_still_works_with_buffer(self, tmp_path: Path, monkeypatch):
+        """Native FileMovedEvent still reports move and updates cache (buffer not involved)."""
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config_path = _tmp_yaml(tmp_path, _minimal_config_yaml(vault, "http://fake:8080"))
+
+        # Create the destination file
+        new_file = vault / "renamed.txt"
+        new_file.write_text("moved via OS", encoding="utf-8")
+        st = new_file.stat()
+        content_hash = hashlib.sha256(new_file.read_bytes()).hexdigest()
+
+        captured = self._run_start_and_capture_callbacks(
+            tmp_path, monkeypatch, vault, config_path, cache_json={}
+        )
+
+        def _sync_rct(coro, loop):
+            asyncio.run(coro)
+
+        async def _fake_report_moved(client, cfg, old_vp, new_vp):
+            return Success(value=None)
+
+        with (
+            patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
+            patch("daemon.cli.report_moved", side_effect=_fake_report_moved) as mock_report_moved,
+            patch.object(daemon.cli.LocalCache, "forget") as mock_forget,
+            patch.object(daemon.cli.LocalCache, "set_after_ack") as mock_set,
+        ):
+            captured["on_move"]("original.txt", "renamed.txt")
+
+        # report_moved must have been called
+        mock_report_moved.assert_called_once()
+        call_args = mock_report_moved.call_args[0]
+        assert call_args[2] == "original.txt"
+        assert call_args[3] == "renamed.txt"
+
+        # Cache updated
+        mock_forget.assert_called_once_with("original.txt")
+        mock_set.assert_called_once_with(
+            "renamed.txt", content_hash, st.st_size, st.st_mtime
+        )
+
 
 # ── CLI group tests ─────────────────────────────────────────────────────────
 
