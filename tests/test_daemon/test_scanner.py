@@ -6,7 +6,7 @@ reconcile, ignore patterns, and concurrency control.
 
 Test map:
   Section 1 — ScanResult dataclass
-  Section 2 — _build_disk_state helper
+  Section 2 — _build_disk_entries helper
   Section 3 — _fetch_cloud_state helper
   Section 4 — scan(): file on disk, not in cloud → uploaded
   Section 5 — scan(): file on disk, different hash → re-uploaded
@@ -31,11 +31,12 @@ from daemon.cache import DaemonSyncState, LocalCache
 from daemon.config import DaemonConfig
 from daemon.scanner import (
     ScanResult,
-    _build_disk_state,
+    _build_disk_entries,
     _fetch_cloud_state,
     _OUTCOME_DELETED,
     _OUTCOME_UPLOADED,
     _delete_one,
+    _skip_dirs_from_patterns,
     _upload_one,
     scan,
 )
@@ -54,6 +55,7 @@ def _make_config(
     api_key: str = "test-api-key",
     ignore_patterns: list[str] | None = None,
     upload_concurrency: int = 4,
+    retry_max: int = 3,
 ) -> DaemonConfig:
     """Build a DaemonConfig for testing."""
     root = vault_root or tmp_path
@@ -64,6 +66,7 @@ def _make_config(
         api_key=api_key,
         ignore_patterns=ignore_patterns or [".git", ".DS_Store"],
         upload_concurrency=upload_concurrency,
+        retry_max=retry_max,
     )
 
 
@@ -147,16 +150,16 @@ class TestScanResult:
 
 
 # ===========================================================================
-# Section 2 — _build_disk_state helper
+# Section 2 — _build_disk_entries helper
 # ===========================================================================
 
 
-class TestBuildDiskState:
-    """Tests for _build_disk_state."""
+class TestBuildDiskEntries:
+    """Tests for _build_disk_entries."""
 
     def test_empty_vault(self, tmp_path: Path):
         config = _make_config(tmp_path=tmp_path, vault_root=tmp_path)
-        state, _unreadable = _build_disk_state(config)
+        _entries, state, _unreadable = _build_disk_entries(config)
         assert state == {}
 
     def test_single_file(self, tmp_path: Path):
@@ -164,7 +167,7 @@ class TestBuildDiskState:
         f = tmp_path / "notes" / "hello.md"
         h = _make_file(f, b"hello world")
 
-        state, _unreadable = _build_disk_state(config)
+        _entries, state, _unreadable = _build_disk_entries(config)
         assert state == {"notes/hello.md": h}
 
     def test_multiple_files(self, tmp_path: Path):
@@ -172,7 +175,7 @@ class TestBuildDiskState:
         h1 = _make_file(tmp_path / "a.txt", b"aaa")
         h2 = _make_file(tmp_path / "sub" / "b.txt", b"bbb")
 
-        state, _unreadable = _build_disk_state(config)
+        _entries, state, _unreadable = _build_disk_entries(config)
         assert state == {
             "a.txt": h1,
             "sub/b.txt": h2,
@@ -188,7 +191,7 @@ class TestBuildDiskState:
         _make_file(tmp_path / "notes.tmp", b"tmp data")
         _make_file(tmp_path / ".git" / "config", b"git config")
 
-        state, _unreadable = _build_disk_state(config)
+        _entries, state, _unreadable = _build_disk_entries(config)
         # Only a.txt should be present
         assert list(state.keys()) == ["a.txt"]
 
@@ -203,7 +206,7 @@ class TestBuildDiskState:
         _make_file(tmp_path / ".git" / "HEAD", b"ref: master")
         _make_file(tmp_path / ".git" / "objects" / "ab" / "cd123", b"blob")
 
-        state, _unreadable = _build_disk_state(config)
+        _entries, state, _unreadable = _build_disk_entries(config)
         assert list(state.keys()) == ["readme.md"]
 
     def test_nfc_normalization(self, tmp_path: Path):
@@ -213,7 +216,7 @@ class TestBuildDiskState:
         f = tmp_path / "café.md"
         h = _make_file(f, b"cafe content")
 
-        state, _unreadable = _build_disk_state(config)
+        _entries, state, _unreadable = _build_disk_entries(config)
         # The path should be NFC-normalised (café is already NFC on most systems)
         assert "café.md" in state
         assert state["café.md"] == h
@@ -260,8 +263,9 @@ class TestFetchCloudState:
         result = await _fetch_cloud_state(config, client)
         assert result == {}
 
-    async def test_http_error_returns_empty(self, tmp_path: Path):
-        config = _make_config(tmp_path=tmp_path)
+    async def test_http_error_returns_none_after_retries(self, tmp_path: Path):
+        """Server errors (500) exhaust retries → return None."""
+        config = _make_config(tmp_path=tmp_path, retry_max=2)
 
         async def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(500, json={"status": "error"})
@@ -270,7 +274,24 @@ class TestFetchCloudState:
         client = httpx.AsyncClient(transport=transport)
 
         result = await _fetch_cloud_state(config, client)
-        assert result == {}
+        assert result is None
+
+    async def test_fetch_cloud_state_returns_none_after_retry_exhaustion(self, tmp_path: Path):
+        """Every attempt raises TimeoutException → retries exhausted → None."""
+        config = _make_config(tmp_path=tmp_path, retry_max=2)
+        call_count = 0
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            raise httpx.TimeoutException("timed out")
+
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=transport)
+
+        result = await _fetch_cloud_state(config, client)
+        assert result is None
+        assert call_count == 2  # retry_max attempts
 
     async def test_invalid_json_returns_empty(self, tmp_path: Path):
         config = _make_config(tmp_path=tmp_path)
@@ -311,6 +332,26 @@ class TestFetchCloudState:
         result = await _fetch_cloud_state(config, client)
         # Only the valid entry should be included
         assert result == {"notes/a.md": "abc"}
+
+    async def test_scan_aborts_on_none_cloud_state(self, tmp_path: Path):
+        """When _fetch_cloud_state returns None, scan() returns zero-count ScanResult."""
+        config = _make_config(tmp_path=tmp_path, vault_root=tmp_path)
+        _make_file(tmp_path / "notes" / "some_file.md", b"content")
+
+        async def _fake_fetch(*args, **kwargs):
+            return None
+
+        # Mock _fetch_cloud_state to return None (cloud unreachable)
+        with patch("daemon.scanner._fetch_cloud_state", side_effect=_fake_fetch):
+            transport = _mock_transport_dispatcher(state_docs=[])
+            client = httpx.AsyncClient(transport=transport)
+            result = await scan(config, client)
+
+        assert result.uploaded == 0
+        assert result.re_uploaded == 0
+        assert result.deleted == 0
+        assert result.skipped == 0
+        assert result.moved == 0
 
 
 # ===========================================================================
@@ -572,8 +613,9 @@ class TestScanConcurrency:
 class TestScanCloudFetchFailure:
     """When cloud state fetch fails, treat everything as disk-only."""
 
-    async def test_fetch_failure_uploads_all(self, tmp_path: Path):
-        config = _make_config(tmp_path=tmp_path, vault_root=tmp_path)
+    async def test_fetch_failure_aborts_scan(self, tmp_path: Path):
+        """When cloud state fetch fails (retries exhausted), scan aborts with zeros."""
+        config = _make_config(tmp_path=tmp_path, vault_root=tmp_path, retry_max=1)
         _make_file(tmp_path / "a.md", b"content A")
         _make_file(tmp_path / "b.md", b"content B")
 
@@ -590,8 +632,8 @@ class TestScanCloudFetchFailure:
         client = httpx.AsyncClient(transport=transport)
 
         result = await scan(config, client)
-        # All files should be uploaded since cloud state fetch failed
-        assert result.uploaded == 2
+        # Cloud unreachable → scan aborted with zero counts
+        assert result.uploaded == 0
         assert result.deleted == 0
         assert result.skipped == 0
 
@@ -1070,12 +1112,12 @@ class Test3WayUnreadableExclusion:
         # then removing read permission — but that's tricky in test).
         # Instead, we test Row 8 exclusion: the unreadable set passed to _scan_3way
         # excludes paths from candidate-delete when cache is also missing.
-        # Since _build_disk_state produces unreadable for files that can't be read,
+        # Since _build_disk_entries produces unreadable for files that can't be read,
         # we test the logic directly via a unit approach:
         # If a file is in cloud but not on disk AND was in unreadable set,
         # it should NOT be deleted.
 
-        # We'll test by patching _build_disk_state to return an unreadable path
+        # We'll test by patching _build_disk_entries to return an unreadable path
         transport = _mock_transport_dispatcher(
             state_docs=[
                 {"vault_path": "notes/broken.md", "content_hash": "abc123"},
@@ -1292,3 +1334,77 @@ class Test3WayNullCloudHashNoCache:
         # Should be re-uploaded (null hash always triggers re-upload)
         assert result.re_uploaded == 1
         assert result.skipped == 0
+
+
+# ===========================================================================
+# Section 29 — Directory pruning (_skip_dirs_from_patterns)
+# ===========================================================================
+
+
+class TestSkipDirsFromPatterns:
+    """Tests for _skip_dirs_from_patterns helper."""
+
+    def test_extracts_non_glob_patterns(self):
+        result = _skip_dirs_from_patterns([
+            ".git", ".obsidian", ".trash", ".stversions",
+            ".DS_Store", "Thumbs.db", "~$*", "*.tmp", "*.swp", ".~lock*",
+        ])
+        assert result == {".git", ".obsidian", ".trash", ".stversions", ".DS_Store", "Thumbs.db"}
+
+    def test_all_glob_patterns_returns_empty(self):
+        result = _skip_dirs_from_patterns(["*.tmp", "~$*", "?.md", "[abc]*"])
+        assert result == set()
+
+    def test_empty_patterns(self):
+        result = _skip_dirs_from_patterns([])
+        assert result == set()
+
+
+# ===========================================================================
+# Section 30 — Directory pruning in _build_disk_entries
+# ===========================================================================
+
+
+class TestDirectoryPruning:
+    """Tests that os.walk in _build_disk_entries prunes ignored directories."""
+
+    def test_git_directory_pruned(self, tmp_path: Path):
+        """Files under .git are not listed."""
+        config = _make_config(
+            tmp_path=tmp_path,
+            vault_root=tmp_path,
+            ignore_patterns=[".git", ".obsidian"],
+        )
+        _make_file(tmp_path / "readme.md", b"readme")
+        _make_file(tmp_path / ".git" / "objects" / "pack" / "abc123", b"blob")
+        _make_file(tmp_path / ".git" / "HEAD", b"ref: master")
+
+        _entries, state, _unreadable = _build_disk_entries(config)
+        assert list(state.keys()) == ["readme.md"]
+
+    def test_non_ignored_dirs_still_listed(self, tmp_path: Path):
+        """Files under non-ignored directories are still listed."""
+        config = _make_config(
+            tmp_path=tmp_path,
+            vault_root=tmp_path,
+            ignore_patterns=[".git"],
+        )
+        _make_file(tmp_path / "Projects" / "file.md", b"project file")
+        _make_file(tmp_path / "notes" / "note.md", b"note")
+
+        _entries, state, _unreadable = _build_disk_entries(config)
+        assert set(state.keys()) == {"Projects/file.md", "notes/note.md"}
+
+    def test_obsidian_directory_pruned(self, tmp_path: Path):
+        """Files under .obsidian are not listed."""
+        config = _make_config(
+            tmp_path=tmp_path,
+            vault_root=tmp_path,
+            ignore_patterns=[".obsidian", ".git"],
+        )
+        _make_file(tmp_path / "note.md", b"note")
+        _make_file(tmp_path / ".obsidian" / "workspace.json", b"{}")
+        _make_file(tmp_path / ".obsidian" / "plugins" / "plugin.js", b"code")
+
+        _entries, state, _unreadable = _build_disk_entries(config)
+        assert list(state.keys()) == ["note.md"]

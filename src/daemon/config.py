@@ -57,13 +57,12 @@ class DaemonConfig(BaseModel):
     )
     upload_concurrency: int = Field(default=4, ge=1)
     retry_max: int = Field(default=3, ge=1)
-    scan_batch_size: int = Field(default=50, ge=1)
     max_file_size_bytes: int = Field(default=50_000_000, ge=0)  # 50 MB
 
     # ── Phase 2 (cache & reconcile) ─────────────────────────────────────
     cache_path: str = Field(default="~/.kms-daemon/cache.json", validate_default=True)
     move_window_seconds: float = Field(default=2.0)
-    periodic_interval_seconds: int = Field(default=21600, ge=0)
+    periodic_interval_seconds: float = Field(default=21600, ge=0)
     sweep_delete_confirmations: int = Field(default=2, ge=1)
 
     # ── validators ──────────────────────────────────────────────────────

@@ -269,7 +269,7 @@ class TestRetryWithBackoff:
 
 class TestUploadText:
     async def test_sends_correct_json_and_auth(self, tmp_path: Path):
-        """Verify the JSON body and Bearer auth header sent to the cloud."""
+        """Verify the JSON body sent to the cloud; auth is on the client."""
         config = _make_config(tmp_path=tmp_path, cloud_endpoint="https://cloud.example.com")
         content = _text_content(
             text="sample text",
@@ -281,17 +281,18 @@ class TestUploadText:
 
         sent_json: dict = {}
         sent_url: str = ""
-        sent_headers: dict = {}
 
         async def handler(request: httpx.Request) -> httpx.Response:
-            nonlocal sent_json, sent_url, sent_headers
+            nonlocal sent_json, sent_url
             sent_url = str(request.url)
-            sent_headers = dict(request.headers)
             sent_json = json.loads(request.content)
             return httpx.Response(200, json={"status": "ok", "document_id": 42})
 
         transport = httpx.MockTransport(handler)
-        client = httpx.AsyncClient(transport=transport)
+        client = httpx.AsyncClient(
+            transport=transport,
+            headers={"Authorization": "Bearer test-api-key"},
+        )
 
         result = await upload_text(client, config, content)
 
@@ -303,9 +304,6 @@ class TestUploadText:
 
         # Check URL
         assert sent_url == "https://cloud.example.com/api/upload"
-
-        # Check auth header
-        assert sent_headers.get("authorization") == "Bearer test-api-key"
 
         # Check JSON body
         assert sent_json["vault_path"] == "notes/readme.md"
@@ -363,7 +361,7 @@ class TestUploadText:
 
 class TestUploadBinary:
     async def test_sends_multipart_with_correct_fields(self, tmp_path: Path):
-        """Verify multipart body, metadata fields, and auth header."""
+        """Verify multipart body and metadata fields; auth is on the client."""
         config = _make_config(tmp_path=tmp_path, cloud_endpoint="https://cloud.example.com")
         content = _binary_content(
             raw_bytes=b"binary-data",
@@ -386,7 +384,10 @@ class TestUploadBinary:
             return httpx.Response(200, json={"status": "ok", "document_id": 10})
 
         transport = httpx.MockTransport(handler)
-        client = httpx.AsyncClient(transport=transport)
+        client = httpx.AsyncClient(
+            transport=transport,
+            headers={"Authorization": "Bearer test-api-key"},
+        )
 
         result = await upload_binary(client, config, content)
 
@@ -397,7 +398,6 @@ class TestUploadBinary:
                 pytest.fail("expected Success")
 
         assert sent_url == "https://cloud.example.com/api/upload"
-        assert sent_headers.get("authorization") == "Bearer test-api-key"
 
         # The content-type should be multipart/form-data
         content_type = sent_headers.get("content-type", "")

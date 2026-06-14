@@ -57,7 +57,6 @@ async def report_moved(
                 "old_path": old_path,
                 "new_path": new_path,
             },
-            headers={"Authorization": f"Bearer {config.api_key}"},
         )
 
     match await retry_with_backoff(client, config, _request):
@@ -94,7 +93,6 @@ async def report_deleted(
                 "type": "deleted",
                 "path": vault_path,
             },
-            headers={"Authorization": f"Bearer {config.api_key}"},
         )
 
     match await retry_with_backoff(client, config, _request):

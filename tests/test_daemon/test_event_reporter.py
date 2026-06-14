@@ -83,21 +83,22 @@ def _mock_transport_sequence(
 
 class TestReportMoved:
     async def test_sends_correct_json_and_auth(self, tmp_path: Path):
-        """Verify JSON body with 'type': 'moved' and Bearer auth."""
+        """Verify JSON body with 'type': 'moved'; auth is on the client."""
         config = _make_config(tmp_path=tmp_path, cloud_endpoint="https://cloud.example.com")
         sent_json: dict = {}
         sent_url: str = ""
-        sent_headers: dict = {}
 
         async def handler(request: httpx.Request) -> httpx.Response:
-            nonlocal sent_json, sent_url, sent_headers
+            nonlocal sent_json, sent_url
             sent_url = str(request.url)
-            sent_headers = dict(request.headers)
             sent_json = json.loads(request.content)
             return httpx.Response(200, json={"status": "ok"})
 
         transport = httpx.MockTransport(handler)
-        client = httpx.AsyncClient(transport=transport)
+        client = httpx.AsyncClient(
+            transport=transport,
+            headers={"Authorization": "Bearer test-api-key"},
+        )
 
         result = await report_moved(client, config, "notes/old.md", "notes/new.md")
 
@@ -108,7 +109,6 @@ class TestReportMoved:
                 pytest.fail("expected Success")
 
         assert sent_url == "https://cloud.example.com/api/event"
-        assert sent_headers.get("authorization") == "Bearer test-api-key"
 
         # Check JSON uses "type" NOT "event_type"
         assert sent_json["type"] == "moved"
@@ -163,21 +163,22 @@ class TestReportMoved:
 
 class TestReportDeleted:
     async def test_sends_correct_json_and_auth(self, tmp_path: Path):
-        """Verify JSON body with 'type': 'deleted' and Bearer auth."""
+        """Verify JSON body with 'type': 'deleted'; auth is on the client."""
         config = _make_config(tmp_path=tmp_path, cloud_endpoint="https://cloud.example.com")
         sent_json: dict = {}
         sent_url: str = ""
-        sent_headers: dict = {}
 
         async def handler(request: httpx.Request) -> httpx.Response:
-            nonlocal sent_json, sent_url, sent_headers
+            nonlocal sent_json, sent_url
             sent_url = str(request.url)
-            sent_headers = dict(request.headers)
             sent_json = json.loads(request.content)
             return httpx.Response(200, json={"status": "ok"})
 
         transport = httpx.MockTransport(handler)
-        client = httpx.AsyncClient(transport=transport)
+        client = httpx.AsyncClient(
+            transport=transport,
+            headers={"Authorization": "Bearer test-api-key"},
+        )
 
         result = await report_deleted(client, config, "notes/removed.md")
 
@@ -188,7 +189,6 @@ class TestReportDeleted:
                 pytest.fail("expected Success")
 
         assert sent_url == "https://cloud.example.com/api/event"
-        assert sent_headers.get("authorization") == "Bearer test-api-key"
 
         # Check JSON uses "type" NOT "event_type"
         assert sent_json["type"] == "deleted"

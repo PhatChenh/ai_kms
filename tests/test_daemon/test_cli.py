@@ -403,6 +403,7 @@ cache_path: {cache_path}
         # Patch asyncio.run_coroutine_threadsafe to run synchronously
         def _sync_rct(coro, loop):
             asyncio.run(coro)
+            return MagicMock()
 
         with (
             patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
@@ -442,6 +443,7 @@ cache_path: {cache_path}
 
         def _sync_rct(coro, loop):
             asyncio.run(coro)
+            return MagicMock()
 
         fake_text_content = TextContent(
             text="new content",
@@ -494,6 +496,7 @@ cache_path: {cache_path}
 
         def _sync_rct(coro, loop):
             asyncio.run(coro)
+            return MagicMock()
 
         with (
             patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
@@ -534,6 +537,7 @@ cache_path: {cache_path}
 
         def _sync_rct(coro, loop):
             asyncio.run(coro)
+            return MagicMock()
 
         with (
             patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
@@ -573,6 +577,7 @@ cache_path: {cache_path}
 
         def _sync_rct(coro, loop):
             asyncio.run(coro)
+            return MagicMock()
 
         content_hash = hashlib.sha256(b"brand new file").hexdigest()
         fake_text_content = TextContent(
@@ -615,6 +620,7 @@ cache_path: {cache_path}
 
         def _sync_rct(coro, loop):
             asyncio.run(coro)
+            return MagicMock()
 
         fake_text_content = TextContent(
             text="will fail upload",
@@ -663,6 +669,7 @@ cache_path: {cache_path}
 
         def _sync_rct(coro, loop):
             asyncio.run(coro)
+            return MagicMock()
 
         async def _fake_report_moved(client, cfg, old_vp, new_vp):
             return Success(value=None)
@@ -694,6 +701,7 @@ cache_path: {cache_path}
 
         def _sync_rct(coro, loop):
             asyncio.run(coro)
+            return MagicMock()
 
         async def _fake_report_moved_fails(client, cfg, old_vp, new_vp):
             return Failure(error="moved failed", recoverable=False, context={})
@@ -750,6 +758,7 @@ cache_path: {cache_path}
 
         def _sync_rct(coro, loop):
             asyncio.run(coro)
+            return MagicMock()
 
         # Mock threading.Timer so the move window doesn't fire during the test
         mock_timers: list = []
@@ -825,6 +834,7 @@ cache_path: {cache_path}
 
         def _sync_rct(coro, loop):
             asyncio.run(coro)
+            return MagicMock()
 
         async def _fake_report_deleted(client, cfg, vp):
             return Success(value=None)
@@ -863,6 +873,7 @@ cache_path: {cache_path}
 
         def _sync_rct(coro, loop):
             asyncio.run(coro)
+            return MagicMock()
 
         content_hash = hashlib.sha256(b"brand new content").hexdigest()
         fake_text_content = TextContent(
@@ -917,6 +928,7 @@ cache_path: {cache_path}
 
         def _sync_rct(coro, loop):
             asyncio.run(coro)
+            return MagicMock()
 
         # Mock threading.Timer to capture the expiry callback
         mock_timers: list = []
@@ -1003,6 +1015,7 @@ cache_path: {cache_path}
 
         def _sync_rct(coro, loop):
             asyncio.run(coro)
+            return MagicMock()
 
         mock_timers: list = []
 
@@ -1056,6 +1069,7 @@ cache_path: {cache_path}
 
         def _sync_rct(coro, loop):
             asyncio.run(coro)
+            return MagicMock()
 
         async def _fake_report_moved(client, cfg, old_vp, new_vp):
             return Success(value=None)
@@ -1275,6 +1289,7 @@ move_window_seconds: 2.0
         # Patch asyncio.run_coroutine_threadsafe to run synchronously
         def _sync_rct(coro, loop):
             asyncio.run(coro)
+            return MagicMock()
 
         with (
             patch("daemon.cli.httpx.AsyncClient", return_value=mock_client),
@@ -1321,6 +1336,7 @@ cache_path: {cache_path}
 
         def _sync_rct(coro, loop):
             asyncio.run(coro)
+            return MagicMock()
 
         fake_text_content = TextContent(
             text="end-to-end upload test",
@@ -1370,6 +1386,7 @@ cache_path: {cache_path}
 
         def _sync_rct(coro, loop):
             asyncio.run(coro)
+            return MagicMock()
 
         fake_text_content = TextContent(
             text="this will fail",
@@ -1434,6 +1451,7 @@ cache_path: {cache_path}
 
         def _sync_rct(coro, loop):
             asyncio.run(coro)
+            return MagicMock()
 
         async def _fake_report_moved(client, cfg, old_vp, new_vp):
             return Success(value=None)
@@ -1482,6 +1500,7 @@ move_window_seconds: 0.01
 
         def _sync_rct(coro, loop):
             asyncio.run(coro)
+            return MagicMock()
 
         # Mock Timer to capture the expiry callback
         mock_timers: list = []
@@ -2094,3 +2113,76 @@ cloud_endpoint: http://fake:8080
         mock_watcher.start.assert_called_once()
         mock_watcher.stop.assert_called_once()
         mock_watcher.join.assert_called_once()
+
+
+# ── Future exception logging tests ──────────────────────────────────────────
+
+
+class TestFutureExceptionLogging:
+    """Tests for DaemonLoop._log_future_exception."""
+
+    def test_logs_error_when_future_has_exception(self, tmp_path):
+        """A Future with an exception → error-level log is emitted."""
+        from daemon.config import DaemonConfig
+
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        cfg = DaemonConfig(
+            vault_root=vault,
+            cloud_endpoint="http://example.com",
+            api_key="fake-key",
+        )
+        loop = daemon.cli.DaemonLoop(cfg, tmp_path / "config.yaml")
+
+        # Create a mock Future with an exception
+        fut = MagicMock()
+        fut.exception.return_value = TypeError("test error")
+
+        with patch("daemon.cli._log") as mock_log:
+            loop._log_future_exception(fut)
+            # Should have logged at error level
+            mock_log.error.assert_called_once()
+            call_args = mock_log.error.call_args
+            assert call_args[0][0] == "Async callback failed"
+            assert "exc_info" in call_args[1]
+
+    def test_no_log_when_future_has_no_exception(self, tmp_path):
+        """A Future with no exception → no error log."""
+        from daemon.config import DaemonConfig
+
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        cfg = DaemonConfig(
+            vault_root=vault,
+            cloud_endpoint="http://example.com",
+            api_key="fake-key",
+        )
+        loop = daemon.cli.DaemonLoop(cfg, tmp_path / "config.yaml")
+
+        fut = MagicMock()
+        fut.exception.return_value = None
+
+        with patch("daemon.cli._log") as mock_log:
+            loop._log_future_exception(fut)
+            mock_log.error.assert_not_called()
+
+    def test_no_log_when_cancelled_error(self, tmp_path):
+        """A CancelledError → no error log."""
+        import asyncio
+        from daemon.config import DaemonConfig
+
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        cfg = DaemonConfig(
+            vault_root=vault,
+            cloud_endpoint="http://example.com",
+            api_key="fake-key",
+        )
+        loop = daemon.cli.DaemonLoop(cfg, tmp_path / "config.yaml")
+
+        fut = MagicMock()
+        fut.exception.side_effect = asyncio.CancelledError()
+
+        with patch("daemon.cli._log") as mock_log:
+            loop._log_future_exception(fut)
+            mock_log.error.assert_not_called()

@@ -196,9 +196,6 @@ class TestDefaults:
     def test_retry_max_default(self, minimal_cfg: DaemonConfig):
         assert minimal_cfg.retry_max == 3
 
-    def test_scan_batch_size_default(self, minimal_cfg: DaemonConfig):
-        assert minimal_cfg.scan_batch_size == 50
-
     def test_max_file_size_bytes_default(self, minimal_cfg: DaemonConfig):
         assert minimal_cfg.max_file_size_bytes == 50_000_000
 
@@ -385,7 +382,6 @@ class TestLoadDaemonConfig:
                 "  - node_modules\n"
                 "upload_concurrency: 8\n"
                 "retry_max: 5\n"
-                "scan_batch_size: 100\n"
                 "max_file_size_bytes: 10000000\n"
             ),
         )
@@ -397,7 +393,6 @@ class TestLoadDaemonConfig:
         assert cfg.ignore_patterns == [".git", ".obsidian", "node_modules"]
         assert cfg.upload_concurrency == 8
         assert cfg.retry_max == 5
-        assert cfg.scan_batch_size == 100
         assert cfg.max_file_size_bytes == 10_000_000
 
     def test_phase2_fields_can_be_set_in_yaml(self, tmp_path: Path, monkeypatch):
@@ -613,3 +608,13 @@ class TestPeriodicIntervalSecondsValidator:
             periodic_interval_seconds=86400,
         )
         assert cfg.periodic_interval_seconds == 86400
+
+    def test_periodic_interval_seconds_accepts_float(self, tmp_path: Path):
+        """periodic_interval_seconds must accept float values."""
+        cfg = DaemonConfig(
+            vault_root=tmp_path,
+            cloud_endpoint="http://localhost:8080",
+            api_key="sk-test",
+            periodic_interval_seconds=3600.5,
+        )
+        assert cfg.periodic_interval_seconds == 3600.5

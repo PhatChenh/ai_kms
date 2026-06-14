@@ -99,7 +99,6 @@ async def upload_text(
                 "file_size_bytes": content.file_size_bytes,
                 "title": title,
             },
-            headers={"Authorization": f"Bearer {config.api_key}"},
         )
 
     match await retry_with_backoff(client, config, _request):
@@ -146,7 +145,6 @@ async def upload_binary(
                 "file_size_bytes": str(content.file_size_bytes),
                 "mime_type": content.mime_type,
             },
-            headers={"Authorization": f"Bearer {config.api_key}"},
         )
 
     match await retry_with_backoff(client, config, _request):
