@@ -204,7 +204,27 @@ class S3BlobStore(BlobStore):
     # sync interface
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _validate_key(key: str) -> Result[None]:
+        """Validate a blob key is a hex content hash (≥32 hex chars).
+
+        The daemon *should* always send valid SHA-256 hex digests; this is
+        defense-in-depth.
+        """
+        import re
+
+        if not re.match(r"^[a-f0-9]{32,}$", key):
+            return Failure(
+                error="invalid blob key",
+                recoverable=False,
+                context={"key": key},
+            )
+        return Success(None)
+
     def put(self, key: str, data: bytes, mime_type: str) -> Result[None]:
+        match self._validate_key(key):
+            case Failure() as f:
+                return f
         try:
             self._client.put_object(
                 Bucket=self._bucket,
@@ -221,6 +241,9 @@ class S3BlobStore(BlobStore):
             )
 
     def get(self, key: str) -> Result[bytes]:
+        match self._validate_key(key):
+            case Failure() as f:
+                return f
         try:
             response = self._client.get_object(
                 Bucket=self._bucket,
@@ -242,6 +265,9 @@ class S3BlobStore(BlobStore):
             )
 
     def delete(self, key: str) -> Result[None]:
+        match self._validate_key(key):
+            case Failure() as f:
+                return f
         try:
             self._client.delete_object(
                 Bucket=self._bucket,
@@ -256,6 +282,9 @@ class S3BlobStore(BlobStore):
             )
 
     def exists(self, key: str) -> Result[bool]:
+        match self._validate_key(key):
+            case Failure() as f:
+                return f
         try:
             self._client.head_object(
                 Bucket=self._bucket,
