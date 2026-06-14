@@ -1086,13 +1086,12 @@ class Test3WayUnreadableExclusion:
         sync_state = DaemonSyncState()
         cache = LocalCache(sync_state)
 
-        # Patch _build_disk_state to return the path as unreadable
-        with patch("daemon.scanner._build_disk_state",
-                   return_value=({}, {"notes/broken.md"})):
-            with patch("daemon.scanner._build_disk_entries",
-                       return_value=({}, set())):
-                result = await scan(config, client, cache=cache,
-                                    sweep_delete_confirmations=1)
+        # Patch _build_disk_entries to return the path as unreadable.
+        # (3-way path now calls _build_disk_entries instead of _build_disk_state.)
+        with patch("daemon.scanner._build_disk_entries",
+                   return_value=({}, {}, {"notes/broken.md"})):
+            result = await scan(config, client, cache=cache,
+                                sweep_delete_confirmations=1)
 
         # Should NOT be deleted (excluded via unreadable check)
         assert result.deleted == 0
