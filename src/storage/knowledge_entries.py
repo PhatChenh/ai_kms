@@ -28,6 +28,8 @@ class KnowledgeEntry:
     reasoning: str = ""
     created_at: str = ""
     updated_at: str = ""
+    trust_score: float = 0.5
+    retrieval_count: int = 0
 
 
 def _row_to_entry(row: sqlite3.Row) -> KnowledgeEntry:
@@ -44,6 +46,8 @@ def _row_to_entry(row: sqlite3.Row) -> KnowledgeEntry:
         reasoning=row["reasoning"] or "",
         created_at=row["created_at"] or "",
         updated_at=row["updated_at"] or "",
+        trust_score=row["trust_score"] if "trust_score" in row.keys() else 0.5,
+        retrieval_count=row["retrieval_count"] if "retrieval_count" in row.keys() else 0,
     )
 
 
@@ -196,4 +200,35 @@ def get_confident_and_pending(
             str(exc),
             recoverable=False,
             context={"entity": entity, "dimension": dimension},
+        )
+
+
+def query_ranked_by_dimension(
+    dimension: str,
+    *,
+    limit: int,
+    db_path: Path | None = None,
+) -> Result[list[KnowledgeEntry]]:
+    """Return non-retired entries for *dimension*, ranked by trust_score DESC,
+    confidence DESC, updated_at DESC, capped at *limit*.
+
+    The caller supplies the cap (typically CONFIG.classify.max_entries_per_dimension);
+    this function does NOT read config itself.
+    """
+    try:
+        with get_connection(db_path, readonly=True) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """SELECT * FROM knowledge_entries
+                   WHERE status != 'retired' AND dimension = ?
+                   ORDER BY trust_score DESC, confidence DESC, updated_at DESC
+                   LIMIT ?""",
+                (dimension, limit),
+            ).fetchall()
+            return Success([_row_to_entry(r) for r in rows])
+    except sqlite3.Error as exc:
+        return Failure(
+            str(exc),
+            recoverable=False,
+            context={"dimension": dimension, "limit": limit},
         )
