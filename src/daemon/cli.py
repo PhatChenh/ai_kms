@@ -305,10 +305,7 @@ def start(config_path: str) -> None:
                     match extract(disk_path, cfg.vault_root, cfg.max_file_size_bytes):
                         case Success() as extracted:
                             # ── After extract, before upload: check Move Detective ──
-                            if isinstance(extracted.value, TextContent):
-                                content_hash = extracted.value.content_hash
-                            else:
-                                content_hash = extracted.value.content_hash
+                            content_hash = extracted.value.content_hash
 
                             old_vp = move_buffer.match_create(content_hash)
                             if old_vp is not None:

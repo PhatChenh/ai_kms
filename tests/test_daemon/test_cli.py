@@ -1080,6 +1080,453 @@ cache_path: {cache_path}
             "renamed.txt", content_hash, st.st_size, st.st_mtime
         )
 
+    # ── integration (cache-on-disk) tests ────────────────────────────────
+
+    def test_cache_saved_to_disk_at_shutdown(self, tmp_path: Path, monkeypatch):
+        """Cache is persisted to disk when the daemon shuts down gracefully."""
+        monkeypatch.setenv("KMS_DAEMON_API_KEY", "test-key")
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        cache_path = tmp_path / "cache.json"
+        # Pre-write an empty cache so the path is in the config
+        cache_path.write_text("{}")
+        config_content = f"""vault_root: {vault}
+cloud_endpoint: http://fake:8080
+cache_path: {cache_path}
+"""
+        config_path = _tmp_yaml(tmp_path, config_content)
+
+        fake_result = ScanResult(uploaded=0, re_uploaded=0, deleted=0, skipped=0)
+
+        async def _fake_scan(cfg, client, cache=None, candidate_deletes=None, sweep_delete_confirmations=1):
+            # Simulate that some entries were written during scan
+            if cache is not None:
+                cache.set_after_ack("test.txt", "abc123", 42, 9000000000.0)
+            return fake_result
+
+        sleep_count = [0]
+
+        async def _fake_sleep(seconds):
+            sleep_count[0] += 1
+            if sleep_count[0] == 1:
+                raise KeyboardInterrupt()
+            await asyncio.sleep(0)
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        mock_watcher = MagicMock()
+        mock_watcher.start = MagicMock()
+        mock_watcher.stop = MagicMock()
+        mock_watcher.join = MagicMock()
+
+        with (
+            patch("daemon.cli.httpx.AsyncClient", return_value=mock_client),
+            patch("daemon.cli.scan", side_effect=_fake_scan),
+            patch("daemon.cli.DaemonWatcher", return_value=mock_watcher),
+            patch("daemon.cli.asyncio.sleep", side_effect=_fake_sleep),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["start", "--config", str(config_path)])
+            assert result.exit_code == 0
+
+        # Cache must have been saved to disk
+        assert cache_path.exists()
+        raw = json.loads(cache_path.read_text())
+        assert "test.txt" in raw
+        assert raw["test.txt"]["hash"] == "abc123"
+        assert raw["test.txt"]["size"] == 42
+
+    def test_cache_loaded_from_disk_on_startup(self, tmp_path: Path, monkeypatch):
+        """Entries written to cache survive a daemon restart."""
+        monkeypatch.setenv("KMS_DAEMON_API_KEY", "test-key")
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        cache_path = tmp_path / "cache.json"
+
+        # Pre-populate the cache file with entries
+        cache_json = {
+            "persisted.txt": {
+                "hash": "def456",
+                "size": 99,
+                "mtime": 8000000000.0,
+            }
+        }
+        cache_path.write_text(json.dumps(cache_json))
+
+        config_content = f"""vault_root: {vault}
+cloud_endpoint: http://fake:8080
+cache_path: {cache_path}
+"""
+        config_path = _tmp_yaml(tmp_path, config_content)
+
+        fake_result = ScanResult(uploaded=0, re_uploaded=0, deleted=0, skipped=0)
+
+        async def _fake_scan(cfg, client, cache=None, candidate_deletes=None, sweep_delete_confirmations=1):
+            # Verify the cache already has the persisted entry on startup
+            if cache is not None:
+                entry = cache.get("persisted.txt")
+                assert entry is not None, "Cache should have loaded persisted.txt from disk"
+                assert entry["hash"] == "def456"
+            return fake_result
+
+        sleep_count = [0]
+
+        async def _fake_sleep(seconds):
+            sleep_count[0] += 1
+            if sleep_count[0] == 1:
+                raise KeyboardInterrupt()
+            await asyncio.sleep(0)
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        mock_watcher = MagicMock()
+        mock_watcher.start = MagicMock()
+        mock_watcher.stop = MagicMock()
+        mock_watcher.join = MagicMock()
+
+        with (
+            patch("daemon.cli.httpx.AsyncClient", return_value=mock_client),
+            patch("daemon.cli.scan", side_effect=_fake_scan),
+            patch("daemon.cli.DaemonWatcher", return_value=mock_watcher),
+            patch("daemon.cli.asyncio.sleep", side_effect=_fake_sleep),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["start", "--config", str(config_path)])
+            assert result.exit_code == 0
+
+    def test_full_lifecycle_no_errors(self, tmp_path: Path, monkeypatch):
+        """A full startup→scan→watch→modify→upload→delete→shutdown cycle completes."""
+        monkeypatch.setenv("KMS_DAEMON_API_KEY", "test-key")
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        cache_path = tmp_path / "cache.json"
+        cache_path.write_text("{}")
+
+        config_content = f"""vault_root: {vault}
+cloud_endpoint: http://fake:8080
+cache_path: {cache_path}
+move_window_seconds: 2.0
+"""
+        config_path = _tmp_yaml(tmp_path, config_content)
+
+        # Create a test file on disk for the modify/upload test
+        test_file = vault / "notes.txt"
+        test_file.write_text("hello lifecycle", encoding="utf-8")
+        st = test_file.stat()
+        content_hash = hashlib.sha256(test_file.read_bytes()).hexdigest()
+
+        fake_result = ScanResult(uploaded=0, re_uploaded=0, deleted=0, skipped=0)
+
+        async def _fake_scan(cfg, client, cache=None, candidate_deletes=None, sweep_delete_confirmations=1):
+            return fake_result
+
+        # Simulate: run scan, then trigger a create (which does upload),
+        # a delete, then shutdown
+        captured_callbacks: dict = {}
+
+        class _MockWatcher:
+            def __init__(self, config, on_create, on_modify, on_move, on_delete):
+                captured_callbacks["on_create"] = on_create
+                captured_callbacks["on_modify"] = on_modify
+                captured_callbacks["on_move"] = on_move
+                captured_callbacks["on_delete"] = on_delete
+
+            def start(self) -> None:
+                pass
+            def stop(self) -> None:
+                pass
+            def join(self) -> None:
+                pass
+
+        sleep_count = [0]
+
+        async def _fake_sleep(seconds):
+            sleep_count[0] += 1
+            if sleep_count[0] == 1:
+                # After the first sleep (main loop), trigger callbacks
+                # then raise KeyboardInterrupt to shut down
+                pass
+            if sleep_count[0] == 2:
+                raise KeyboardInterrupt()
+            await asyncio.sleep(0)
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        fake_text_content = TextContent(
+            text="hello lifecycle",
+            content_hash=content_hash,
+            vault_path="notes.txt",
+            original_filename="notes.txt",
+            file_size_bytes=st.st_size,
+        )
+
+        async def _fake_upload_text(client, cfg, tc):
+            return Success(value="doc-lifecycle")
+
+        async def _fake_report_deleted(client, cfg, vp):
+            return Success(value=None)
+
+        # Patch asyncio.run_coroutine_threadsafe to run synchronously
+        def _sync_rct(coro, loop):
+            asyncio.run(coro)
+
+        with (
+            patch("daemon.cli.httpx.AsyncClient", return_value=mock_client),
+            patch("daemon.cli.scan", side_effect=_fake_scan),
+            patch("daemon.cli.DaemonWatcher", side_effect=_MockWatcher),
+            patch("daemon.cli.asyncio.sleep", side_effect=_fake_sleep),
+            patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
+            patch("daemon.cli.extract", return_value=Success(value=fake_text_content)),
+            patch("daemon.cli.upload_text", side_effect=_fake_upload_text),
+            patch("daemon.cli.report_deleted", side_effect=_fake_report_deleted),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["start", "--config", str(config_path)])
+            assert result.exit_code == 0
+
+        # After shutdown, the cache file should exist (saved in finally block)
+        assert cache_path.exists()
+
+    # ── end-to-end cache-on-disk verification ────────────────────────────
+
+    def test_cache_json_matches_after_upload(self, tmp_path: Path, monkeypatch):
+        """After a successful upload, set_after_ack is called; a save persists to disk."""
+        monkeypatch.setenv("KMS_DAEMON_API_KEY", "test-key")
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        cache_path = tmp_path / "cache.json"
+        cache_path.write_text("{}")
+
+        config_content = f"""vault_root: {vault}
+cloud_endpoint: http://fake:8080
+cache_path: {cache_path}
+"""
+        config_path = _tmp_yaml(tmp_path, config_content)
+
+        # Real file on disk
+        test_file = vault / "doc.txt"
+        test_file.write_text("end-to-end upload test", encoding="utf-8")
+        st = test_file.stat()
+        content_hash = hashlib.sha256(test_file.read_bytes()).hexdigest()
+
+        captured = self._run_start_and_capture_callbacks(
+            tmp_path, monkeypatch, vault, config_path, cache_json={}
+        )
+
+        def _sync_rct(coro, loop):
+            asyncio.run(coro)
+
+        fake_text_content = TextContent(
+            text="end-to-end upload test",
+            content_hash=content_hash,
+            vault_path="doc.txt",
+            original_filename="doc.txt",
+            file_size_bytes=st.st_size,
+        )
+
+        async def _fake_upload_text(client, cfg, tc):
+            return Success(value="doc-e2e")
+
+        with (
+            patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
+            patch("daemon.cli.extract", return_value=Success(value=fake_text_content)),
+            patch("daemon.cli.upload_text", side_effect=_fake_upload_text),
+            patch.object(daemon.cli.LocalCache, "set_after_ack") as mock_set,
+        ):
+            captured["on_create"]("doc.txt")
+
+        # set_after_ack must have been called (in-memory update)
+        mock_set.assert_called_once_with(
+            "doc.txt", content_hash, st.st_size, st.st_mtime
+        )
+
+    def test_cache_unchanged_after_failed_upload(self, tmp_path: Path, monkeypatch):
+        """After a failed upload, set_after_ack is NOT called."""
+        monkeypatch.setenv("KMS_DAEMON_API_KEY", "test-key")
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        cache_path = tmp_path / "cache.json"
+        cache_path.write_text("{}")
+
+        config_content = f"""vault_root: {vault}
+cloud_endpoint: http://fake:8080
+cache_path: {cache_path}
+"""
+        config_path = _tmp_yaml(tmp_path, config_content)
+
+        test_file = vault / "fail.txt"
+        test_file.write_text("this will fail", encoding="utf-8")
+        st = test_file.stat()
+
+        captured = self._run_start_and_capture_callbacks(
+            tmp_path, monkeypatch, vault, config_path, cache_json={}
+        )
+
+        def _sync_rct(coro, loop):
+            asyncio.run(coro)
+
+        fake_text_content = TextContent(
+            text="this will fail",
+            content_hash=hashlib.sha256(b"this will fail").hexdigest(),
+            vault_path="fail.txt",
+            original_filename="fail.txt",
+            file_size_bytes=st.st_size,
+        )
+
+        async def _fake_upload_text_fails(client, cfg, tc):
+            return Failure(error="simulated 500", recoverable=False, context={})
+
+        with (
+            patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
+            patch("daemon.cli.extract", return_value=Success(value=fake_text_content)),
+            patch("daemon.cli.upload_text", side_effect=_fake_upload_text_fails),
+            patch.object(daemon.cli.LocalCache, "set_after_ack") as mock_set,
+            patch.object(daemon.cli, "_log") as mock_log,
+        ):
+            captured["on_create"]("fail.txt")
+
+        # set_after_ack must NOT have been called
+        mock_set.assert_not_called()
+        # Warning log must mention upload_text failed
+        mock_log.warning.assert_any_call(
+            "upload_text failed", vault_path="fail.txt", error="simulated 500"
+        )
+
+    def test_cache_move_bookkeeping(self, tmp_path: Path, monkeypatch):
+        """After a move, old path is gone from in-memory cache and new path is present."""
+        monkeypatch.setenv("KMS_DAEMON_API_KEY", "test-key")
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        cache_path = tmp_path / "cache.json"
+
+        # Pre-populate with old entry
+        old_hash = hashlib.sha256(b"move content").hexdigest()
+        cache_json = {
+            "old.txt": {
+                "hash": old_hash,
+                "size": len(b"move content"),
+                "mtime": 1000000000.0,
+            }
+        }
+        cache_path.write_text(json.dumps(cache_json))
+
+        config_content = f"""vault_root: {vault}
+cloud_endpoint: http://fake:8080
+cache_path: {cache_path}
+"""
+        config_path = _tmp_yaml(tmp_path, config_content)
+
+        # Create the new file on disk
+        new_file = vault / "new.txt"
+        new_file.write_text("move content", encoding="utf-8")
+        st = new_file.stat()
+        new_hash = hashlib.sha256(new_file.read_bytes()).hexdigest()
+
+        captured = self._run_start_and_capture_callbacks(
+            tmp_path, monkeypatch, vault, config_path, cache_json=cache_json
+        )
+
+        def _sync_rct(coro, loop):
+            asyncio.run(coro)
+
+        async def _fake_report_moved(client, cfg, old_vp, new_vp):
+            return Success(value=None)
+
+        with (
+            patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
+            patch("daemon.cli.report_moved", side_effect=_fake_report_moved),
+            patch.object(daemon.cli.LocalCache, "forget") as mock_forget,
+            patch.object(daemon.cli.LocalCache, "set_after_ack") as mock_set,
+        ):
+            captured["on_move"]("old.txt", "new.txt")
+
+        # In-memory cache: old forgotten, new set
+        mock_forget.assert_called_once_with("old.txt")
+        mock_set.assert_called_once_with(
+            "new.txt", new_hash, st.st_size, st.st_mtime
+        )
+
+    def test_cache_delete_removal(self, tmp_path: Path, monkeypatch):
+        """After a successful delete report (expired path), cache.forget removes the entry."""
+        monkeypatch.setenv("KMS_DAEMON_API_KEY", "test-key")
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        cache_path = tmp_path / "cache.json"
+
+        content_hash = hashlib.sha256(b"to be deleted").hexdigest()
+        cache_json = {
+            "delete-me.txt": {
+                "hash": content_hash,
+                "size": len(b"to be deleted"),
+                "mtime": 1000000000.0,
+            }
+        }
+        cache_path.write_text(json.dumps(cache_json))
+
+        config_content = f"""vault_root: {vault}
+cloud_endpoint: http://fake:8080
+cache_path: {cache_path}
+move_window_seconds: 0.01
+"""
+        config_path = _tmp_yaml(tmp_path, config_content)
+
+        captured = self._run_start_and_capture_callbacks(
+            tmp_path, monkeypatch, vault, config_path, cache_json=cache_json
+        )
+
+        def _sync_rct(coro, loop):
+            asyncio.run(coro)
+
+        # Mock Timer to capture the expiry callback
+        mock_timers: list = []
+
+        class _MockTimer:
+            def __init__(self, interval, function):
+                self.interval = interval
+                self.function = function
+                self.daemon = False
+                mock_timers.append(self)
+            def start(self):
+                pass
+            def cancel(self):
+                pass
+
+        async def _fake_report_deleted(client, cfg, vp):
+            return Success(value=None)
+
+        # Make expire return our parked entry
+        def _fake_expire(move_window_seconds):
+            return [(content_hash, "delete-me.txt")]
+
+        with (
+            patch("daemon.cli.asyncio.run_coroutine_threadsafe", side_effect=_sync_rct),
+            patch("daemon.cli.threading.Timer", side_effect=_MockTimer),
+            patch("daemon.cli.report_deleted", side_effect=_fake_report_deleted),
+            patch.object(daemon.cli.MoveBuffer, "expire", side_effect=_fake_expire),
+            patch.object(daemon.cli.LocalCache, "forget") as mock_forget,
+            patch.object(daemon.cli, "_log") as mock_log,
+        ):
+            # Step 1: Delete the file — parks in buffer
+            captured["on_delete"]("delete-me.txt")
+
+            # Step 2: Trigger expiry
+            assert len(mock_timers) == 1
+            expiry_callback = mock_timers[0].function
+            expiry_callback()  # calls _on_move_window_expired → cache.forget
+
+        # Cache.forget must have been called
+        mock_forget.assert_called_once_with("delete-me.txt")
+        # Info log must confirm
+        mock_log.info.assert_any_call(
+            "reported deleted (move window expired)", vault_path="delete-me.txt"
+        )
+
     # ── periodic reconcile tests ─────────────────────────────────────────
 
     def test_periodic_reconcile_created_when_interval_positive(

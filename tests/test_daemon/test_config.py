@@ -181,6 +181,20 @@ class TestDefaults:
         # Default list should be exactly 10 entries
         assert len(patterns) == 10
 
+    def test_cache_path_default(self, minimal_cfg: DaemonConfig):
+        assert minimal_cfg.cache_path == str(
+            Path.home() / ".kms-daemon" / "cache.json"
+        )
+
+    def test_move_window_seconds_default(self, minimal_cfg: DaemonConfig):
+        assert minimal_cfg.move_window_seconds == 2.0
+
+    def test_periodic_interval_seconds_default(self, minimal_cfg: DaemonConfig):
+        assert minimal_cfg.periodic_interval_seconds == 21600
+
+    def test_sweep_delete_confirmations_default(self, minimal_cfg: DaemonConfig):
+        assert minimal_cfg.sweep_delete_confirmations == 2
+
 
 # ===========================================================================
 # Section 3 — api_key exclusion from serialisation
@@ -332,6 +346,7 @@ class TestLoadDaemonConfig:
                 f"vault_root: {tmp_path}\n"
                 "cloud_endpoint: http://localhost:8080\n"
                 "debounce_seconds: 2.5\n"
+                "move_window_seconds: 3.0\n"
                 "ignore_patterns:\n"
                 "  - .git\n"
                 "  - .obsidian\n"
@@ -353,6 +368,48 @@ class TestLoadDaemonConfig:
         assert cfg.scan_batch_size == 100
         assert cfg.max_file_size_bytes == 10_000_000
 
+    def test_phase2_fields_can_be_set_in_yaml(self, tmp_path: Path, monkeypatch):
+        """Phase 2 cache/reconcile fields can be overridden via YAML."""
+        yaml_path = _tmp_yaml(
+            tmp_path,
+            (
+                f"vault_root: {tmp_path}\n"
+                "cloud_endpoint: http://localhost:8080\n"
+                "cache_path: /custom/cache.json\n"
+                "move_window_seconds: 5.0\n"
+                "periodic_interval_seconds: 3600\n"
+                "sweep_delete_confirmations: 3\n"
+            ),
+        )
+        _set_env(monkeypatch, "KMS_DAEMON_API_KEY", "sk-test")
+
+        cfg = load_daemon_config(yaml_path)
+
+        assert cfg.cache_path == "/custom/cache.json"
+        assert cfg.move_window_seconds == 5.0
+        assert cfg.periodic_interval_seconds == 3600
+        assert cfg.sweep_delete_confirmations == 3
+
+    def test_phase2_fields_omitted_use_defaults(self, tmp_path: Path, monkeypatch):
+        """Omitting Phase 2 fields from YAML uses documented defaults."""
+        yaml_path = _tmp_yaml(
+            tmp_path,
+            (
+                f"vault_root: {tmp_path}\n"
+                "cloud_endpoint: http://localhost:8080\n"
+            ),
+        )
+        _set_env(monkeypatch, "KMS_DAEMON_API_KEY", "sk-test")
+
+        cfg = load_daemon_config(yaml_path)
+
+        assert cfg.cache_path == str(
+            Path.home() / ".kms-daemon" / "cache.json"
+        )
+        assert cfg.move_window_seconds == 2.0
+        assert cfg.periodic_interval_seconds == 21600
+        assert cfg.sweep_delete_confirmations == 2
+
     def test_invalid_yaml_syntax_raises(self, tmp_path: Path, monkeypatch):
         """Broken YAML must surface as yaml.YAMLError."""
         yaml_path = _tmp_yaml(tmp_path, "vault_root: [unclosed\n  sub: value\n")
@@ -370,3 +427,173 @@ class TestLoadDaemonConfig:
 
         with pytest.raises(ValidationError):
             load_daemon_config(yaml_path)
+
+
+# ===========================================================================
+# Section 5 — Phase 2 cache/reconcile field validators
+# ===========================================================================
+
+
+class TestCachePathValidator:
+    """@field_validator("cache_path") — tilde expansion."""
+
+    def test_tilde_expanded_to_home(self, tmp_path: Path):
+        cfg = DaemonConfig(
+            vault_root=tmp_path,
+            cloud_endpoint="http://localhost:8080",
+            api_key="sk-test",
+            cache_path="~/custom/cache.json",
+        )
+        assert cfg.cache_path == str(Path.home() / "custom" / "cache.json")
+
+    def test_absolute_path_preserved(self, tmp_path: Path):
+        cfg = DaemonConfig(
+            vault_root=tmp_path,
+            cloud_endpoint="http://localhost:8080",
+            api_key="sk-test",
+            cache_path="/absolute/path/cache.json",
+        )
+        assert cfg.cache_path == "/absolute/path/cache.json"
+
+    def test_relative_path_preserved(self, tmp_path: Path):
+        cfg = DaemonConfig(
+            vault_root=tmp_path,
+            cloud_endpoint="http://localhost:8080",
+            api_key="sk-test",
+            cache_path="relative/cache.json",
+        )
+        assert cfg.cache_path == "relative/cache.json"
+
+
+class TestMoveWindowValidator:
+    """@model_validator — move_window_seconds > debounce_seconds."""
+
+    def test_move_window_gt_debounce_passes(self, tmp_path: Path):
+        cfg = DaemonConfig(
+            vault_root=tmp_path,
+            cloud_endpoint="http://localhost:8080",
+            api_key="sk-test",
+            debounce_seconds=1.0,
+            move_window_seconds=3.0,
+        )
+        assert cfg.move_window_seconds == 3.0
+        assert cfg.debounce_seconds == 1.0
+
+    def test_move_window_equal_debounce_raises(self, tmp_path: Path):
+        with pytest.raises(ValidationError) as exc_info:
+            DaemonConfig(
+                vault_root=tmp_path,
+                cloud_endpoint="http://localhost:8080",
+                api_key="sk-test",
+                debounce_seconds=2.0,
+                move_window_seconds=2.0,
+            )
+        errors = exc_info.value.errors()
+        assert any(
+            "move_window_seconds must be greater than debounce_seconds"
+            in e["msg"]
+            for e in errors
+        )
+
+    def test_move_window_lt_debounce_raises(self, tmp_path: Path):
+        with pytest.raises(ValidationError) as exc_info:
+            DaemonConfig(
+                vault_root=tmp_path,
+                cloud_endpoint="http://localhost:8080",
+                api_key="sk-test",
+                debounce_seconds=3.0,
+                move_window_seconds=1.0,
+            )
+        errors = exc_info.value.errors()
+        assert any(
+            "move_window_seconds must be greater than debounce_seconds"
+            in e["msg"]
+            for e in errors
+        )
+
+    def test_defaults_satisfy_move_window_gt_debounce(self, tmp_path: Path):
+        """Default debounce=1.0, move_window=2.0 — should pass validation."""
+        cfg = DaemonConfig(
+            vault_root=tmp_path,
+            cloud_endpoint="http://localhost:8080",
+            api_key="sk-test",
+        )
+        assert cfg.move_window_seconds > cfg.debounce_seconds
+
+
+class TestSweepDeleteConfirmationsValidator:
+    """@field_validator — sweep_delete_confirmations >= 1."""
+
+    def test_zero_raises(self, tmp_path: Path):
+        with pytest.raises(ValidationError) as exc_info:
+            DaemonConfig(
+                vault_root=tmp_path,
+                cloud_endpoint="http://localhost:8080",
+                api_key="sk-test",
+                sweep_delete_confirmations=0,
+            )
+        errors = exc_info.value.errors()
+        assert any(
+            "sweep_delete_confirmations" in str(e["loc"])
+            for e in errors
+        )
+
+    def test_negative_raises(self, tmp_path: Path):
+        with pytest.raises(ValidationError) as exc_info:
+            DaemonConfig(
+                vault_root=tmp_path,
+                cloud_endpoint="http://localhost:8080",
+                api_key="sk-test",
+                sweep_delete_confirmations=-1,
+            )
+        errors = exc_info.value.errors()
+        assert any(
+            "sweep_delete_confirmations" in str(e["loc"])
+            for e in errors
+        )
+
+    def test_one_passes(self, tmp_path: Path):
+        cfg = DaemonConfig(
+            vault_root=tmp_path,
+            cloud_endpoint="http://localhost:8080",
+            api_key="sk-test",
+            sweep_delete_confirmations=1,
+        )
+        assert cfg.sweep_delete_confirmations == 1
+
+
+class TestPeriodicIntervalSecondsValidator:
+    """@field_validator — periodic_interval_seconds >= 0."""
+
+    def test_negative_raises(self, tmp_path: Path):
+        with pytest.raises(ValidationError) as exc_info:
+            DaemonConfig(
+                vault_root=tmp_path,
+                cloud_endpoint="http://localhost:8080",
+                api_key="sk-test",
+                periodic_interval_seconds=-1,
+            )
+        errors = exc_info.value.errors()
+        assert any(
+            "periodic_interval_seconds" in str(e["loc"])
+            for e in errors
+        )
+
+    def test_zero_passes_disables_periodic(self, tmp_path: Path):
+        """periodic_interval_seconds = 0 disables periodic reconcile."""
+        cfg = DaemonConfig(
+            vault_root=tmp_path,
+            cloud_endpoint="http://localhost:8080",
+            api_key="sk-test",
+            periodic_interval_seconds=0,
+        )
+        assert cfg.periodic_interval_seconds == 0
+
+    def test_large_value_passes(self, tmp_path: Path):
+        cfg = DaemonConfig(
+            vault_root=tmp_path,
+            cloud_endpoint="http://localhost:8080",
+            api_key="sk-test",
+            periodic_interval_seconds=86400,
+        )
+        assert cfg.periodic_interval_seconds == 86400
