@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import dataclass
+from pathlib import Path
 
 from core.config import MainConfig
 from core.result import Failure, Success
@@ -247,3 +249,127 @@ async def classify(
             reasoning=reasoning,
         )
     )
+
+
+# ===========================================================================
+# Phase 6 — Content Reader + Context Loader (classify infra helpers)
+# ===========================================================================
+
+
+def content_reader(
+    doc_id: int,
+    *,
+    config: MainConfig,
+    db_path: Path | None = None,
+) -> Result[str]:
+    """Choose full_body or summary for a document based on token budget.
+
+    Uses the // 4 heuristic to estimate token count from character length.
+    If full_body fits within config.classify.max_content_tokens, it is used;
+    otherwise the summary is used instead.  When full_body is None or empty,
+    summary is always used as a fallback.
+
+    Args:
+        doc_id: Primary key of the documents row.
+        config: Validated MainConfig carrying the classify token cap.
+        db_path: Override DB path.
+
+    Returns:
+        Success(str) with the chosen text, or Failure if the row is missing
+        or the DB is unreachable.
+    """
+    from storage.db import get_connection
+
+    try:
+        with get_connection(db_path, readonly=True) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT full_body, summary FROM documents WHERE id = ?",
+                (doc_id,),
+            ).fetchone()
+    except sqlite3.Error as exc:
+        return Failure(
+            error=str(exc),
+            recoverable=False,
+            context={"doc_id": doc_id, "op": "content_reader"},
+        )
+
+    if row is None:
+        return Failure(
+            error=f"document not found: id={doc_id}",
+            recoverable=False,
+            context={"doc_id": doc_id, "op": "content_reader"},
+        )
+
+    full_body: str | None = row["full_body"]
+    summary: str | None = row["summary"]
+
+    # Fallback: None or empty full_body → summary
+    if not full_body:
+        return Success(summary or "")
+
+    max_tokens: int = config.classify.max_content_tokens
+    estimated_tokens = len(full_body) // 4
+
+    if estimated_tokens < max_tokens:
+        return Success(full_body)
+
+    return Success(summary or "")
+
+
+def context_loader(
+    *,
+    config: MainConfig,
+    db_path: Path | None = None,
+) -> Result[dict[str, list]]:
+    """Load ranked, capped, non-retired knowledge entries for every dimension.
+
+    Reads the dimension list from config/dimensions.yaml (Phase 2), then for
+    each dimension calls the Phase 4 ranked query with
+    ``config.classify.max_entries_per_dimension`` as the cap.
+
+    Args:
+        config:  Validated MainConfig carrying the per-dimension cap.
+        db_path: Override DB path.
+
+    Returns:
+        Success(dict[dimension → list[KnowledgeEntry]]) with ranked, capped,
+        non-retired facts.  Dimensions with zero matching facts get an empty
+        list (not an error).
+    """
+    from core.tags import load_dimensions
+    from storage.knowledge_entries import query_ranked_by_dimension
+
+    # Locate dimensions.yaml relative to this source file
+    _classify_dir = Path(__file__).resolve().parent  # src/pipelines
+    _project_root = _classify_dir.parent  # src
+    dimensions_path = _project_root / "config" / "dimensions.yaml"
+
+    dims_result = load_dimensions(dimensions_path)
+    if isinstance(dims_result, Failure):
+        return Failure(
+            error=f"context_loader cannot load dimensions: {dims_result.error}",
+            recoverable=False,
+            context={"op": "context_loader", "path": str(dimensions_path)},
+        )
+
+    rulebook: dict = dims_result.value
+    cap: int = config.classify.max_entries_per_dimension
+
+    result: dict[str, list] = {}
+
+    for dim_name in rulebook:
+        ranked = query_ranked_by_dimension(
+            dim_name,
+            limit=cap,
+            db_path=db_path,
+        )
+        if isinstance(ranked, Failure):
+            return Failure(
+                error=f"context_loader query failed for dimension {dim_name!r}: {ranked.error}",
+                recoverable=False,
+                context={"op": "context_loader", "dimension": dim_name},
+            )
+        result[dim_name] = ranked.value
+
+    return Success(result)
