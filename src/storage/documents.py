@@ -14,14 +14,21 @@ Pipelines can override by setting extra["title"] before calling upsert.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from core.result import Failure, Result, Success
 from storage.db import get_connection
 from vault.writer import WriteOutcome
+
+if TYPE_CHECKING:
+    from storage.blobs import BlobStore
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -111,6 +118,7 @@ def upsert_from_upload(
     title: str | None = None,
     blob_ref: str | None = None,
     mime_type: str | None = None,
+    blob_store: BlobStore | None = None,
     db_path: Path | None = None,
 ) -> Result[int]:
     """Save-or-update one uploaded file's record, deciding by content fingerprint.
@@ -120,6 +128,10 @@ def upsert_from_upload(
     * No existing row for *vault_path* → INSERT, return new ``id``.
     * Same ``content_hash``            → no write, return existing ``id``.
     * Different ``content_hash``       → UPDATE in place, return same ``id``.
+
+    When a content change replaces a ``blob_ref``, the old blob is
+    reference-counted and deleted best-effort if no other row still
+    references it.  A dedicated GC sweep is the long-term answer.
 
     Args:
         vault_path:        POSIX-relative path for the documents row.
@@ -132,6 +144,7 @@ def upsert_from_upload(
                            on INSERT, keeps existing title on UPDATE unless provided.
         blob_ref:           Optional content-addressed key for binary blobs.
         mime_type:          Optional MIME type for binary uploads.
+        blob_store:         Optional blob store for orphan cleanup.
         db_path:           Override DB path.
 
     Returns:
@@ -141,7 +154,7 @@ def upsert_from_upload(
         with get_connection(db_path) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
-                "SELECT id, content_hash, title FROM documents WHERE vault_path = ?",
+                "SELECT id, content_hash, title, blob_ref FROM documents WHERE vault_path = ?",
                 (vault_path,),
             ).fetchone()
 
@@ -177,6 +190,7 @@ def upsert_from_upload(
                 return Success(existing_id)
 
             # ── UPDATE — content changed ────────────────────────────────
+            old_blob_ref: str | None = row["blob_ref"]
             resolved_title = title if title is not None else row["title"]
             conn.execute(
                 """
@@ -202,6 +216,25 @@ def upsert_from_upload(
                     existing_id,
                 ),
             )
+            # Best-effort orphan blob cleanup: if the blob_ref changed,
+            # ref-count the old one and delete if this was the last reference.
+            # A dedicated GC sweep is the long-term answer.
+            if (
+                blob_store is not None
+                and old_blob_ref is not None
+                and old_blob_ref != blob_ref
+            ):
+                try:
+                    cnt_row = conn.execute(
+                        "SELECT COUNT(*) FROM documents WHERE blob_ref = ?",
+                        (old_blob_ref,),
+                    ).fetchone()
+                    if cnt_row is not None and cnt_row[0] == 0:
+                        _del = blob_store.delete(old_blob_ref)
+                        if _del.is_failure():
+                            _log_blob_cleanup_failure(old_blob_ref, _del.error)
+                except Exception as exc:
+                    _log_blob_cleanup_failure(old_blob_ref, str(exc))
             return Success(existing_id)
     except sqlite3.Error as exc:
         return Failure(
@@ -462,6 +495,8 @@ def attach_summary(
     vault_path: str,
     summary: str,
     title: str,
+    *,
+    full_body: str | None = None,
     db_path: Path | None = None,
 ) -> Result[int]:
     """Attach an AI-generated summary and title to an existing document row.
@@ -471,10 +506,15 @@ def attach_summary(
     filename + size first; this routine fills in the AI output columns without
     disturbing the raw columns.
 
+    When *full_body* is not None, the ``full_body`` column is also updated
+    (used by the binary/vision branch so the description text is searchable
+    via ``notes_fts.body`` — P7-CAP-11).
+
     Args:
         vault_path: POSIX-relative path identifying the document row.
         summary:    Structured Markdown summary from the Housekeeping AI.
         title:      Descriptive title from the Housekeeping AI.
+        full_body:  Optional content for the ``full_body`` column.
         db_path:    Override DB path.
 
     Returns:
@@ -483,16 +523,29 @@ def attach_summary(
     """
     try:
         with get_connection(db_path) as conn:
-            cur = conn.execute(
-                """
-                UPDATE documents
-                SET summary = ?,
-                    title = ?,
-                    updated_at = datetime('now')
-                WHERE vault_path = ?
-                """,
-                (summary, title, vault_path),
-            )
+            if full_body is not None:
+                cur = conn.execute(
+                    """
+                    UPDATE documents
+                    SET summary = ?,
+                        title = ?,
+                        full_body = ?,
+                        updated_at = datetime('now')
+                    WHERE vault_path = ?
+                    """,
+                    (summary, title, full_body, vault_path),
+                )
+            else:
+                cur = conn.execute(
+                    """
+                    UPDATE documents
+                    SET summary = ?,
+                        title = ?,
+                        updated_at = datetime('now')
+                    WHERE vault_path = ?
+                    """,
+                    (summary, title, vault_path),
+                )
             return Success(cur.rowcount)
     except sqlite3.Error as exc:
         return Failure(
@@ -567,3 +620,17 @@ def filter_paths(
             recoverable=False,
             context={"project": project, "op": "filter_paths"},
         )
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _log_blob_cleanup_failure(blob_ref: str, error: str) -> None:
+    """Log a best-effort blob cleanup failure without raising."""
+    _log.warning(
+        "orphan_blob_cleanup_failed blob_ref=%s error=%s",
+        blob_ref,
+        error,
+    )
