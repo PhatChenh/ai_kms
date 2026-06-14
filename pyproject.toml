@@ -41,6 +41,7 @@ dependencies = [
 
 [project.scripts]
 kms = "cli.main:cli"
+daemon-app = "daemon.app:main"
 
 [build-system]
 requires = ["setuptools"]

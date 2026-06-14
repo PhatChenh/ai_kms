@@ -24,6 +24,11 @@ from daemon.config import load_daemon_config
 from daemon.secret_vault import load_key_into_env, read_key
 
 
+def main() -> None:
+    """Entry point for the frozen daemon application."""
+    run_app()
+
+
 def _show_error_tray(error_msg: str) -> None:
     """Show a tray icon indicating error state (non-blocking fallback)."""
     try:
@@ -103,3 +108,7 @@ def run_app() -> None:
         return "stopped"
 
     get_os_adapter().show_tray(_on_quit, _state_provider)
+
+
+if __name__ == "__main__":
+    main()
