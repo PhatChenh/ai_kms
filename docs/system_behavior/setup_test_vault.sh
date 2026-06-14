@@ -969,6 +969,62 @@ setup_P7_CAP_12() {
 setup_P7_CAP_13() {
     echo "P7-CAP-13: No pre-created fixtures. Trigger: POST /api/event (type=deleted) for a path whose row references a blob"
 }
+# ─── Phase 7.5 (full) ──────────────────────────────────────────────────────
+
+# full | P7H-FIX-01: Daemon startup scan aborts cleanly when the cloud endpoint is unreachable, instead of re-uploading the entire vault
+setup_P7H_FIX_01() {
+    echo "P7H-FIX-01: No pre-created fixtures. Trigger: daemon scan when cloud endpoint returns 500 or is unreachable"
+}
+
+# full | P7H-FIX-02: Daemon directory walk skips ignored directories entirely instead of descending into them and filtering individual files
+setup_P7H_FIX_02() {
+    echo "P7H-FIX-02: No pre-created fixtures. Trigger: daemon scan on a vault containing a .git directory"
+}
+
+# full | P7H-FIX-03: Exceptions in watcher async callbacks are logged instead of silently swallowed
+setup_P7H_FIX_03() {
+    echo "P7H-FIX-03: No pre-created fixtures. Trigger: A watcher callback coroutine raises an unexpected exception"
+}
+
+# full | P7H-FIX-04: Move events where only the source path is ignored are still processed (file moved FROM an ignored dir TO a watched dir)
+setup_P7H_FIX_04() {
+    echo "P7H-FIX-04: No pre-created fixtures. Trigger: A file is moved from .git/ to a watched folder"
+}
+
+# full | P7H-FIX-05: Vision describe prompt includes the file's mime type so the AI knows what kind of file it is describing
+setup_P7H_FIX_05() {
+    echo "P7H-FIX-05: No pre-created fixtures. Trigger: capture_upload is called with an image file"
+}
+
+# full | P7H-FIX-06: attach_summary failures in the capture pipeline are logged instead of silently discarded
+setup_P7H_FIX_06() {
+    echo "P7H-FIX-06: No pre-created fixtures. Trigger: attach_summary returns a Failure result during capture"
+}
+
+# full | P7H-FIX-07: Daemon sync engine is encapsulated in a DaemonLoop class instead of a 243-line function with nested closures
+setup_P7H_FIX_07() {
+    echo "P7H-FIX-07: No pre-created fixtures. Trigger: daemon start or app.py launch"
+}
+
+# full | P7H-FIX-08: Auth header is set once on the httpx.AsyncClient default headers instead of being duplicated at each HTTP call site
+setup_P7H_FIX_08() {
+    echo "P7H-FIX-08: No pre-created fixtures. Trigger: Any daemon HTTP call (upload, event report, cloud state fetch)"
+}
+
+# full | P7H-FIX-09: Best-effort indexing (keyword + embedding) is a single helper function called from both text and binary capture paths
+setup_P7H_FIX_09() {
+    echo "P7H-FIX-09: No pre-created fixtures. Trigger: capture_upload processes a text or binary file"
+}
+
+# full | P7H-FIX-10: The dead _build_disk_state function is removed and the A1 backward-compat path reuses _build_disk_entries
+setup_P7H_FIX_10() {
+    echo "P7H-FIX-10: No pre-created fixtures. Trigger: daemon scan with cache=None (A1 path)"
+}
+
+# full | P7H-FIX-11: The dead scan_batch_size config field is removed from DaemonConfig
+setup_P7H_FIX_11() {
+    echo "P7H-FIX-11: No pre-created fixtures. Trigger: DaemonConfig construction"
+}
 
 # ─── Tier runners ──────────────────────────────────────────────────────────────
 
@@ -1078,6 +1134,17 @@ run_all() {
     setup_P7_CAP_11
     setup_P7_CAP_12
     setup_P7_CAP_13
+    setup_P7H_FIX_01
+    setup_P7H_FIX_02
+    setup_P7H_FIX_03
+    setup_P7H_FIX_04
+    setup_P7H_FIX_05
+    setup_P7H_FIX_06
+    setup_P7H_FIX_07
+    setup_P7H_FIX_08
+    setup_P7H_FIX_09
+    setup_P7H_FIX_10
+    setup_P7H_FIX_11
 }
 
 # ─── Main dispatch ─────────────────────────────────────────────────────────────
@@ -1200,6 +1267,17 @@ case "${1:-all}" in
     P7-CAP-11)  reset_db; clean_vault; setup_P7_CAP_11 ;;
     P7-CAP-12)  reset_db; clean_vault; setup_P7_CAP_12 ;;
     P7-CAP-13)  reset_db; clean_vault; setup_P7_CAP_13 ;;
+    P7H-FIX-01)  reset_db; clean_vault; setup_P7H_FIX_01 ;;
+    P7H-FIX-02)  reset_db; clean_vault; setup_P7H_FIX_02 ;;
+    P7H-FIX-03)  reset_db; clean_vault; setup_P7H_FIX_03 ;;
+    P7H-FIX-04)  reset_db; clean_vault; setup_P7H_FIX_04 ;;
+    P7H-FIX-05)  reset_db; clean_vault; setup_P7H_FIX_05 ;;
+    P7H-FIX-06)  reset_db; clean_vault; setup_P7H_FIX_06 ;;
+    P7H-FIX-07)  reset_db; clean_vault; setup_P7H_FIX_07 ;;
+    P7H-FIX-08)  reset_db; clean_vault; setup_P7H_FIX_08 ;;
+    P7H-FIX-09)  reset_db; clean_vault; setup_P7H_FIX_09 ;;
+    P7H-FIX-10)  reset_db; clean_vault; setup_P7H_FIX_10 ;;
+    P7H-FIX-11)  reset_db; clean_vault; setup_P7H_FIX_11 ;;
     *)
         echo "Unknown test ID: ${1}"
         echo "Usage: $0 [test-id|all|smoke|phase]"

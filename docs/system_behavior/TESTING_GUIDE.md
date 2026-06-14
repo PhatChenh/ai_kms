@@ -2732,3 +2732,236 @@ Then delete the surviving row and re-check the object store.
 ⚠ AI-authored — not yet human-verified.
 
 ---
+
+### Phase 7.5
+
+---
+
+### P7H-FIX-01 · Daemon startup scan aborts cleanly when the cloud endpoint is unreachable, instead of re-uploading the entire vault
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Start the daemon with the cloud endpoint down or returning 500.
+
+Observe that the scan does NOT upload any files.
+
+**Check:**
+- [ ] Scan aborts with a warning log, uploads zero files
+- [ ] No cache entries are written
+- [ ] The daemon retries on the next periodic interval
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P7H-FIX-02 · Daemon directory walk skips ignored directories entirely instead of descending into them and filtering individual files
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Run daemon scan on a vault with a .git directory.
+
+Verify that no files inside .git are visited.
+
+**Check:**
+- [ ] The .git directory tree is never descended into
+- [ ] The .obsidian directory tree is never descended into
+- [ ] Files in those directories never appear in scan results
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P7H-FIX-03 · Exceptions in watcher async callbacks are logged instead of silently swallowed
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Simulate a watcher callback that raises RuntimeError.
+
+Check that the error appears in the daemon log.
+
+**Check:**
+- [ ] The exception message and type appear in the log at error level
+- [ ] The daemon continues running (does not crash)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P7H-FIX-04 · Move events where only the source path is ignored are still processed (file moved FROM an ignored dir TO a watched dir)
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Move a file from an ignored directory to a watched directory.
+
+Verify the create/modify callback fires for the destination.
+
+**Check:**
+- [ ] The move event is NOT skipped when only the source is in an ignored directory
+- [ ] The event IS skipped when the destination is in an ignored directory
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P7H-FIX-05 · Vision describe prompt includes the file's mime type so the AI knows what kind of file it is describing
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Upload an image file through the capture pipeline.
+
+Inspect the prompt sent to the vision model.
+
+**Check:**
+- [ ] The prompt text contains the file's mime type (e.g. image/png)
+- [ ] The variables list in describe_image.yaml still declares mime_type
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P7H-FIX-06 · attach_summary failures in the capture pipeline are logged instead of silently discarded
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Simulate attach_summary returning Failure during a text capture.
+
+Check that the failure is logged at warning level.
+
+**Check:**
+- [ ] A warning log line appears with the attach_summary error message
+- [ ] The capture still returns Success (content is safe regardless)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P7H-FIX-07 · Daemon sync engine is encapsulated in a DaemonLoop class instead of a 243-line function with nested closures
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Start the daemon via CLI or app.py.
+
+Verify that _run_with_stop is replaced by DaemonLoop.
+
+Verify app.py imports and uses DaemonLoop instead of _run_with_stop.
+
+**Check:**
+- [ ] DaemonLoop class exists in daemon/cli.py with on_create_or_modify, on_move, on_delete, start, and stop methods
+- [ ] app.py imports DaemonLoop (not _run_with_stop)
+- [ ] Daemon starts and syncs files correctly (no behavioral change)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P7H-FIX-08 · Auth header is set once on the httpx.AsyncClient default headers instead of being duplicated at each HTTP call site
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Grep for per-call headers={"Authorization"} in daemon code.
+
+Verify that httpx.AsyncClient is constructed with default headers.
+
+**Check:**
+- [ ] Zero occurrences of per-call Authorization header construction in daemon code
+- [ ] {'httpx.AsyncClient constructed with headers={"Authorization"': '...} in one place'}
+- [ ] All HTTP calls still authenticate successfully
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P7H-FIX-09 · Best-effort indexing (keyword + embedding) is a single helper function called from both text and binary capture paths
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Inspect capture.py for duplicate indexing blocks.
+
+Verify a _best_effort_index helper exists and is called from both paths.
+
+**Check:**
+- [ ] A single _best_effort_index function exists in capture.py
+- [ ] Both text and binary success paths call it (no inline duplicate)
+- [ ] Indexing failures are still caught and logged without blocking capture
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P7H-FIX-10 · The dead _build_disk_state function is removed and the A1 backward-compat path reuses _build_disk_entries
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Grep for _build_disk_state in scanner.py.
+
+Verify the A1 path calls _build_disk_entries instead.
+
+**Check:**
+- [ ] _build_disk_state function does not exist in scanner.py
+- [ ] The cache=None path calls _build_disk_entries and discards the entries dict
+- [ ] Scan produces identical results to before (no behavioral change)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P7H-FIX-11 · The dead scan_batch_size config field is removed from DaemonConfig
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Inspect daemon/config.py for scan_batch_size.
+
+Verify it is no longer defined.
+
+**Check:**
+- [ ] scan_batch_size field does not exist in DaemonConfig
+- [ ] No code references scan_batch_size anywhere in the daemon package
+- [ ] Existing config YAML files with scan_batch_size are rejected by extra=forbid (or the field is silently absent if not in YAML)
+
+**Last tested:** never
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---

@@ -1,9 +1,17 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-06-14 (Phase 6 Slice B — Phases 1–3 + Phase 7 complete, 303 daemon tests pass) · 2026-06-14 added Phase 8 Slice A plan_
+_Last updated: 2026-06-14 (Phase 7.5 Issue Resolve — 3 waves, 12 fixes, 352 daemon+capture tests pass, merged to cloud-native)_
 
 ## Current Position
-**Phase**: Phase 6 (Daemon). Slice A1 (core sync pipe) built + merged to cloud-native; Slice A2 (cache + smart reconcile) is docs-only (spec/research/plan written, NOT implemented); **Slice B (installable desktop app) — build-pipeline COMPLETE (design→spec→research→plan), plan-only, NO code.** Slice B implementation is gated on A2 landing. (Prior: Phase 5 Slice 2 Deployment Foundation ✅ COMPLETE 2026-06-13, 450+ tests, Docker verified.) **Also plan-ready: Phase 8 Slice A (Classify Infrastructure) — see block below.**
+**Phase**: Phase 6 (Daemon). Slice A1 (core sync pipe) built + merged to cloud-native; Slice A2 (cache + smart reconcile) is docs-only (spec/research/plan written, NOT implemented); **Slice B (installable desktop app) — build-pipeline COMPLETE (design→spec→research→plan), plan-only, NO code.** Slice B implementation is gated on A2 landing. (Prior: Phase 5 Slice 2 Deployment Foundation ✅ COMPLETE 2026-06-13, 450+ tests, Docker verified.) **Phase 7.5 (Issue Resolve) — ✅ COMPLETE 2026-06-14** (3 waves, 12 fixes, 352 tests, merged to cloud-native). **Also plan-ready: Phase 8 Slice A (Classify Infrastructure) — see block below.**
+
+**[Phase 7.5 — Issue Resolve — ✅ COMPLETE 2026-06-14]** _(merged to cloud-native, 3 commits)_:
+- [x] Wave 1 — DaemonLoop Class Extract: `_run_with_stop` (242 lines) + 9 closures → `DaemonLoop` class. `_run_with_stop` preserved as 3-line wrapper. `_periodic_reconcile` moved into class. 310 daemon tests pass. [P7H-FIX-07]
+- [x] Wave 2 — 8 Daemon Fixes: retry for cloud fetch (#2), dir pruning (#3), callback exception logging (#4), auth centralization (#5), dead twin deletion (#7), dead config removal (M1), move-skip fix (M5), float type (M8). 323 daemon tests pass. [P7H-FIX-01/02/03/04/08/10/11/12]
+- [x] Wave 3 — 3 Capture + Prompt Fixes: `_best_effort_index` helper dedup (#6), `attach_summary` failure logging (M11), `{{mime_type}}` in vision prompt (C5). 30 capture tests pass. [P7H-FIX-05/06/09]
+- **Plan:** `docs/4_plans/phase7_5_issue_resolve.md`
+- **Spec:** `docs/2_specs/phase7_5_issue_resolve.md`
+- **Research:** `docs/3_research/phase7_5_issue_resolve.md`
 
 **[Phase 8 Slice A — Classify Infrastructure (no LLM) — Plan written 2026-06-14]** _(PENDING implementation — plan-only, no code)_:
 - [ ] Phase 1 — Migration 010 (`documents.classify_content_hash`; `knowledge_entries.trust_score` DEFAULT 0.5, `retrieval_count` DEFAULT 0; 2 indexes) + version-pin cascade 9→10 (`test_migration_007/008/009`) [P8-CLS-A-01]
