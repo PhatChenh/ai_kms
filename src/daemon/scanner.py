@@ -285,7 +285,8 @@ async def _scan_3way(
             continue
 
         # Row 6: Disk --, Cache ✔, Cloud ✔ → Candidate delete
-        if disk_hash is None and cache_hash is not None and cloud_present and cloud_hash is not None:
+        if (disk_hash is None and cache_hash is not None and cloud_present
+                and cloud_hash is not None and vp not in unreadable):
             _handle_candidate_delete(
                 vp, candidate_deletes, sweep_delete_confirmations,
                 sem, config, client, cache, result, tasks,
