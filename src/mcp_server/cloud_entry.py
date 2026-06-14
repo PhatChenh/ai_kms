@@ -119,8 +119,8 @@ def _wrap_lifespan(app: Starlette, db_path: Path | None) -> None:
         worker = asyncio.create_task(
             consumer(queue, db_path, CONFIG.main)
         )
-        await catch_up_scan(queue, db_path)
         try:
+            await catch_up_scan(queue, db_path)
             async with inner(app_ref):
                 yield
         finally:
