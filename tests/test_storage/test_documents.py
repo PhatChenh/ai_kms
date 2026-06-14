@@ -372,3 +372,201 @@ def test_attach_summary_db_error(tmp_path):
     )
     assert isinstance(result, Failure)
     assert result.recoverable is False
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — Work Finder + Classified-Stamp
+# ---------------------------------------------------------------------------
+
+
+def test_work_finder_returns_unclassified_and_stale(db: Path):
+    """Work Finder returns ids where classify_content_hash is NULL or != content_hash."""
+    import json
+
+    conn = sqlite3.connect(str(db))
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        # Doc 1: classify_content_hash IS NULL (never classified)
+        conn.execute(
+            """INSERT INTO documents
+               (vault_path, title, summary, note_type, confidence,
+                updated_at, updated_by_human, content_hash, key_topics,
+                classify_content_hash)
+               VALUES (?, ?, ?, ?, ?, datetime('now'), 0, ?, ?, NULL)""",
+            ("inbox/doc1.md", "Doc1", "s", "note", 0.9, "hash_abc", json.dumps([])),
+        )
+        # Doc 2: classify_content_hash != content_hash (stale)
+        conn.execute(
+            """INSERT INTO documents
+               (vault_path, title, summary, note_type, confidence,
+                updated_at, updated_by_human, content_hash, key_topics,
+                classify_content_hash)
+               VALUES (?, ?, ?, ?, ?, datetime('now'), 0, ?, ?, ?)""",
+            ("inbox/doc2.md", "Doc2", "s", "note", 0.9, "hash_def", json.dumps([]), "old_hash"),
+        )
+        # Doc 3: classify_content_hash == content_hash (up-to-date, should NOT be returned)
+        conn.execute(
+            """INSERT INTO documents
+               (vault_path, title, summary, note_type, confidence,
+                updated_at, updated_by_human, content_hash, key_topics,
+                classify_content_hash)
+               VALUES (?, ?, ?, ?, ?, datetime('now'), 0, ?, ?, ?)""",
+            ("inbox/doc3.md", "Doc3", "s", "note", 0.9, "hash_ghi", json.dumps([]), "hash_ghi"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    from storage.documents import find_unclassified
+
+    result = find_unclassified(db_path=db)
+    assert isinstance(result, Success)
+    ids = result.value
+    # Doc 1 and Doc 2 should be returned; Doc 3 should not
+    assert len(ids) == 2
+    # Find the actual ids
+    conn2 = sqlite3.connect(str(db))
+    try:
+        id1 = conn2.execute(
+            "SELECT id FROM documents WHERE vault_path = 'inbox/doc1.md'"
+        ).fetchone()[0]
+        id2 = conn2.execute(
+            "SELECT id FROM documents WHERE vault_path = 'inbox/doc2.md'"
+        ).fetchone()[0]
+    finally:
+        conn2.close()
+    assert set(ids) == {id1, id2}
+
+
+def test_stamp_classified_removes_from_work_finder(db: Path):
+    """After stamping a doc, Work Finder no longer returns it."""
+    import json
+
+    conn = sqlite3.connect(str(db))
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        # Doc A: NULL classify_content_hash
+        conn.execute(
+            """INSERT INTO documents
+               (vault_path, title, summary, note_type, confidence,
+                updated_at, updated_by_human, content_hash, key_topics,
+                classify_content_hash)
+               VALUES (?, ?, ?, ?, ?, datetime('now'), 0, ?, ?, NULL)""",
+            ("inbox/docA.md", "DocA", "s", "note", 0.9, "hash_a", json.dumps([])),
+        )
+        # Doc B: stale classify_content_hash (different from content_hash)
+        conn.execute(
+            """INSERT INTO documents
+               (vault_path, title, summary, note_type, confidence,
+                updated_at, updated_by_human, content_hash, key_topics,
+                classify_content_hash)
+               VALUES (?, ?, ?, ?, ?, datetime('now'), 0, ?, ?, ?)""",
+            ("inbox/docB.md", "DocB", "s", "note", 0.9, "hash_b", json.dumps([]), "old_b"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    from storage.documents import find_unclassified, stamp_classified
+
+    # Get docA's id
+    conn2 = sqlite3.connect(str(db))
+    try:
+        id_a = conn2.execute(
+            "SELECT id FROM documents WHERE vault_path = 'inbox/docA.md'"
+        ).fetchone()[0]
+        id_b = conn2.execute(
+            "SELECT id FROM documents WHERE vault_path = 'inbox/docB.md'"
+        ).fetchone()[0]
+    finally:
+        conn2.close()
+
+    # Both are unclassified now
+    r1 = find_unclassified(db_path=db)
+    assert isinstance(r1, Success)
+    assert set(r1.value) == {id_a, id_b}
+
+    # Stamp docA (the NULL one)
+    r_stamp = stamp_classified(id_a, db_path=db)
+    assert isinstance(r_stamp, Success)
+    assert r_stamp.value == 1  # one row updated
+
+    # Now Work Finder should only return docB (still unstamped)
+    r2 = find_unclassified(db_path=db)
+    assert isinstance(r2, Success)
+    assert r2.value == [id_b], f"Expected only docB, got {r2.value}"
+
+
+def test_stamp_classified_missing_id_returns_zero(db: Path):
+    """Classified-Stamp on a missing id returns Success(0)."""
+    from storage.documents import stamp_classified
+
+    result = stamp_classified(99999, db_path=db)
+    assert isinstance(result, Success)
+    assert result.value == 0
+
+
+def test_document_row_classify_content_hash_round_trips(db: Path):
+    """DocumentRow.classify_content_hash survives a get_by_path round-trip."""
+    import json
+
+    from storage.documents import get_by_path
+
+    conn = sqlite3.connect(str(db))
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        conn.execute(
+            """INSERT INTO documents
+               (vault_path, title, summary, note_type, confidence,
+                updated_at, updated_by_human, content_hash, key_topics,
+                classify_content_hash)
+               VALUES (?, ?, ?, ?, ?, datetime('now'), 0, ?, ?, ?)""",
+            ("inbox/roundtrip.md", "RT", "s", "note", 0.9, "hash_rt", json.dumps([]), "classify_rt"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    row_r = get_by_path("inbox/roundtrip.md", db_path=db)
+    assert isinstance(row_r, Success)
+    assert row_r.value is not None
+    assert row_r.value.classify_content_hash == "classify_rt"
+
+
+def test_document_row_classify_content_hash_default():
+    """DocumentRow without classify_content_hash → default is None."""
+    from storage.documents import DocumentRow
+
+    row = DocumentRow(
+        id=1,
+        vault_path="x",
+        title="y",
+        summary="s",
+        note_type="note",
+        confidence=0.9,
+        created_at="2026-01-01",
+        updated_at="2026-01-01",
+        updated_by_human=False,
+        content_hash="h",
+        batch_id=None,
+    )
+    assert row.classify_content_hash is None
+
+
+def test_find_unclassified_empty_db(db: Path):
+    """Work Finder on an empty DB returns an empty list."""
+    from storage.documents import find_unclassified
+
+    result = find_unclassified(db_path=db)
+    assert isinstance(result, Success)
+    assert result.value == []
+
+
+def test_find_unclassified_db_error(tmp_path):
+    """Work Finder on non-existent DB returns Failure."""
+    from storage.documents import find_unclassified
+
+    bad_db = tmp_path / "nonexistent" / "kb.db"
+    result = find_unclassified(db_path=bad_db)
+    assert isinstance(result, Failure)
+    assert result.recoverable is False
