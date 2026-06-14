@@ -1,6 +1,6 @@
 # Plan: Phase 6 Slice A2 — Local Cache + Smart Reconcile
 _Last updated: 2026-06-14_
-_Status: [ ] pending_
+_Status: [~] in progress_
 
 ---
 
@@ -182,7 +182,9 @@ Implements spec components 1 (cache module). Refer to the spec for the full Buil
 
 **Extension point**: `[extensible: protocol]` — The 7-method interface is a real seam. JSON backend today; SQLite documented as upgrade path. Callers depend on the interface, not the JSON serialization.
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-06-14
+**Notes**: Created `src/daemon/cache.py` (DaemonSyncState + LocalCache with 7 methods) and `tests/test_daemon/test_cache.py` (11 tests). All test criteria verified — valid JSON load, garbled/absent/malformed handling, save roundtrip, atomic rename, parent dir creation, thread safety, snapshot isolation, rebuild. No surprises.
 
 ---
 
