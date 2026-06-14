@@ -28,7 +28,7 @@ class MarkdownHandler(BaseHandler):
     def can_handle(self, path: Path) -> bool:
         return path.suffix.lower() == ".md"
 
-    def extract(self, path: Path) -> Result[RawContent]:
+    def extract(self, path: Path, *, max_file_size_bytes: int | None = None) -> Result[RawContent]:
         """Extract body text from a Markdown file.
 
         Returns:

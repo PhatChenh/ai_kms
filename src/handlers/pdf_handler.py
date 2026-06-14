@@ -33,12 +33,15 @@ class PdfHandler(BaseHandler):
     def can_handle(self, path: Path) -> bool:
         return path.suffix.lower() == ".pdf"
 
-    def extract(self, path: Path) -> Result[RawContent]:
-        # Lazy import: handlers must not load CONFIG at module scope or unit
-        # tests on machines without the vault directory fail at import.
-        from core.config import CONFIG
+    def extract(self, path: Path, *, max_file_size_bytes: int | None = None) -> Result[RawContent]:
+        if max_file_size_bytes is None:
+            # Lazy import: handlers must not load CONFIG at module scope or unit
+            # tests on machines without the vault directory fail at import.
+            from core.config import CONFIG
 
-        max_bytes = CONFIG.main.handlers.max_file_size_bytes
+            max_bytes = CONFIG.main.handlers.max_file_size_bytes
+        else:
+            max_bytes = max_file_size_bytes
 
         try:
             size = path.stat().st_size

@@ -32,20 +32,24 @@ class XlsxHandler(BaseHandler):
         """Return True for .xlsx files (case-insensitive)."""
         return path.suffix.lower() == ".xlsx"
 
-    def extract(self, path: Path) -> Result[RawContent]:
+    def extract(self, path: Path, *, max_file_size_bytes: int | None = None) -> Result[RawContent]:
         """Extract all sheet content as structured text.
 
         Args:
             path: Absolute path to the .xlsx file.
+            max_file_size_bytes: When None, reads the limit from CONFIG.
 
         Returns:
             Success(RawContent) with text containing one section per non-empty
             sheet, or Failure if the file cannot be read.
         """
-        # Lazy import — see handlers/pdf_handler.py for rationale.
-        from core.config import CONFIG
+        if max_file_size_bytes is None:
+            # Lazy import — see handlers/pdf_handler.py for rationale.
+            from core.config import CONFIG
 
-        max_bytes = CONFIG.main.handlers.max_file_size_bytes
+            max_bytes = CONFIG.main.handlers.max_file_size_bytes
+        else:
+            max_bytes = max_file_size_bytes
 
         try:
             size = path.stat().st_size
