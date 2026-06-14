@@ -2733,24 +2733,24 @@ Then delete the surviving row and re-check the object store.
 
 ---
 
-### Phase 7.5
+### Phase 8
 
 ---
 
-### P7H-FIX-01 · Daemon startup scan aborts cleanly when the cloud endpoint is unreachable, instead of re-uploading the entire vault
+### P8-CLS-A-01 · The classify-work-discovery query finds every document that has never been classified (empty classify-fingerprint) or whose content changed since it was last classified (classify-fingerprint no longer matches the content fingerprint), and skips documents whose two fingerprints match
 _Origin: design · Granularity: outcome_
 
 **Run:**
-Start the daemon with the cloud endpoint down or returning 500.
+Seed three documents — one with a NULL classify_content_hash, one whose classify_content_hash differs from its content_hash, and one whose two hashes match.
 
-Observe that the scan does NOT upload any files.
+Run the work-discovery query.
 
 **Check:**
-- [ ] Scan aborts with a warning log, uploads zero files
-- [ ] No cache entries are written
-- [ ] The daemon retries on the next periodic interval
+- [ ] The NULL-hash document is returned (never classified)
+- [ ] The mismatched-hash document is returned (content changed)
+- [ ] The matched-hash document is NOT returned (already classified)
 
-**Last tested:** never
+**Last tested:** 2026-06-14
 **Last result:** none
 **Current result:** ___
 
@@ -2758,20 +2758,19 @@ Observe that the scan does NOT upload any files.
 
 ---
 
-### P7H-FIX-02 · Daemon directory walk skips ignored directories entirely instead of descending into them and filtering individual files
+### P8-CLS-A-02 · A successful classify stamps the document's classify-fingerprint to match its current content fingerprint, so the same document is not re-discovered as work on the next scan; a failed classify leaves the fingerprint untouched so the document is retried
 _Origin: design · Granularity: outcome_
 
 **Run:**
-Run daemon scan on a vault with a .git directory.
+Stamp a document's classify_content_hash to its content_hash, then re-run work discovery.
 
-Verify that no files inside .git are visited.
+Leave a second document's classify_content_hash unstamped, then re-run work discovery.
 
 **Check:**
-- [ ] The .git directory tree is never descended into
-- [ ] The .obsidian directory tree is never descended into
-- [ ] Files in those directories never appear in scan results
+- [ ] The stamped document is no longer returned by work discovery
+- [ ] The unstamped document is still returned by work discovery (retry path)
 
-**Last tested:** never
+**Last tested:** 2026-06-14
 **Last result:** none
 **Current result:** ___
 
@@ -2779,19 +2778,19 @@ Verify that no files inside .git are visited.
 
 ---
 
-### P7H-FIX-03 · Exceptions in watcher async callbacks are logged instead of silently swallowed
+### P8-CLS-A-03 · The content reader returns the document's full extracted text when it fits under the configured token budget, and falls back to the short summary when the full text is too large
 _Origin: design · Granularity: outcome_
 
 **Run:**
-Simulate a watcher callback that raises RuntimeError.
+Read a document whose full_body is comfortably under the configured token budget.
 
-Check that the error appears in the daemon log.
+Read a document whose full_body exceeds the budget but has a summary.
 
 **Check:**
-- [ ] The exception message and type appear in the log at error level
-- [ ] The daemon continues running (does not crash)
+- [ ] The small document yields its full_body
+- [ ] The large document yields its summary instead of its full_body
 
-**Last tested:** never
+**Last tested:** 2026-06-14
 **Last result:** none
 **Current result:** ___
 
@@ -2799,19 +2798,20 @@ Check that the error appears in the daemon log.
 
 ---
 
-### P7H-FIX-04 · Move events where only the source path is ignored are still processed (file moved FROM an ignored dir TO a watched dir)
+### P8-CLS-A-04 · The dimension config loads each dimension with its allowed tags and its guidance text, every tag set keeps its mandatory catch-all tag, and a misconfigured dimension is rejected
 _Origin: design · Granularity: outcome_
 
 **Run:**
-Move a file from an ignored directory to a watched directory.
+Load the expanded dimension config and read back one dimension's tags and guidance.
 
-Verify the create/modify callback fires for the destination.
+Load a config where a dimension is missing its catch-all tag (or is otherwise malformed).
 
 **Check:**
-- [ ] The move event is NOT skipped when only the source is in an ignored directory
-- [ ] The event IS skipped when the destination is in an ignored directory
+- [ ] Each loaded dimension exposes its allowed tags and its guidance text
+- [ ] Every dimension still includes the mandatory catch-all tag
+- [ ] The malformed config is rejected with a clear failure, not silently accepted
 
-**Last tested:** never
+**Last tested:** 2026-06-14
 **Last result:** none
 **Current result:** ___
 
@@ -2819,19 +2819,21 @@ Verify the create/modify callback fires for the destination.
 
 ---
 
-### P7H-FIX-05 · Vision describe prompt includes the file's mime type so the AI knows what kind of file it is describing
+### P8-CLS-A-05 · The context loader returns existing facts per dimension excluding retired ones, ranked by trust then confidence then recency, capped at the configured maximum per dimension, with each returned fact carrying its database id
 _Origin: design · Granularity: outcome_
 
 **Run:**
-Upload an image file through the capture pipeline.
+Seed a dimension with confident, pending, and retired facts totalling more than the configured per-dimension cap, with varied trust/confidence/updated_at.
 
-Inspect the prompt sent to the vision model.
+Run the context loader for that dimension.
 
 **Check:**
-- [ ] The prompt text contains the file's mime type (e.g. image/png)
-- [ ] The variables list in describe_image.yaml still declares mime_type
+- [ ] No retired fact is returned
+- [ ] The returned facts are ordered by trust, then confidence, then recency
+- [ ] The count returned does not exceed the configured per-dimension cap
+- [ ] Each returned fact carries its database id
 
-**Last tested:** never
+**Last tested:** 2026-06-14
 **Last result:** none
 **Current result:** ___
 
@@ -2839,19 +2841,20 @@ Inspect the prompt sent to the vision model.
 
 ---
 
-### P7H-FIX-06 · attach_summary failures in the capture pipeline are logged instead of silently discarded
+### P8-CLS-A-06 · The async work queue processes document ids through a single consumer one at a time in order (never two concurrently), and a startup catch-up scan enqueues all currently-discoverable work when the consumer starts
 _Origin: design · Granularity: outcome_
 
 **Run:**
-Simulate attach_summary returning Failure during a text capture.
+Pre-seed several discoverable documents, start the consumer, and let the catch-up scan enqueue them.
 
-Check that the failure is logged at warning level.
+Observe the order and concurrency of processing.
 
 **Check:**
-- [ ] A warning log line appears with the attach_summary error message
-- [ ] The capture still returns Success (content is safe regardless)
+- [ ] The catch-up scan enqueues all currently-discoverable documents at startup
+- [ ] The consumer processes ids sequentially — never two at the same time
+- [ ] The queue drains to empty once all enqueued ids are processed
 
-**Last tested:** never
+**Last tested:** 2026-06-14
 **Last result:** none
 **Current result:** ___
 
@@ -2859,106 +2862,21 @@ Check that the failure is logged at warning level.
 
 ---
 
-### P7H-FIX-07 · Daemon sync engine is encapsulated in a DaemonLoop class instead of a 243-line function with nested closures
+### P8-CLS-A-07 · The Slice A migration adds the classify-fingerprint column to documents, the trust-score and retrieval-count columns to knowledge entries with their default values, and the two supporting indexes, without disturbing existing rows
 _Origin: design · Granularity: outcome_
 
 **Run:**
-Start the daemon via CLI or app.py.
+Apply migrations to a database that already holds documents and knowledge entries.
 
-Verify that _run_with_stop is replaced by DaemonLoop.
-
-Verify app.py imports and uses DaemonLoop instead of _run_with_stop.
+Inspect the new columns, their defaults, and the new indexes.
 
 **Check:**
-- [ ] DaemonLoop class exists in daemon/cli.py with on_create_or_modify, on_move, on_delete, start, and stop methods
-- [ ] app.py imports DaemonLoop (not _run_with_stop)
-- [ ] Daemon starts and syncs files correctly (no behavioral change)
+- [ ] documents has a nullable classify_content_hash column
+- [ ] knowledge_entries has trust_score defaulting to 0.5 and retrieval_count defaulting to 0
+- [ ] The trust-score index and the classify-hash index both exist
+- [ ] Existing rows are preserved and readable after the migration
 
-**Last tested:** never
-**Last result:** none
-**Current result:** ___
-
-⚠ AI-authored — not yet human-verified.
-
----
-
-### P7H-FIX-08 · Auth header is set once on the httpx.AsyncClient default headers instead of being duplicated at each HTTP call site
-_Origin: design · Granularity: outcome_
-
-**Run:**
-Grep for per-call headers={"Authorization"} in daemon code.
-
-Verify that httpx.AsyncClient is constructed with default headers.
-
-**Check:**
-- [ ] Zero occurrences of per-call Authorization header construction in daemon code
-- [ ] {'httpx.AsyncClient constructed with headers={"Authorization"': '...} in one place'}
-- [ ] All HTTP calls still authenticate successfully
-
-**Last tested:** never
-**Last result:** none
-**Current result:** ___
-
-⚠ AI-authored — not yet human-verified.
-
----
-
-### P7H-FIX-09 · Best-effort indexing (keyword + embedding) is a single helper function called from both text and binary capture paths
-_Origin: design · Granularity: outcome_
-
-**Run:**
-Inspect capture.py for duplicate indexing blocks.
-
-Verify a _best_effort_index helper exists and is called from both paths.
-
-**Check:**
-- [ ] A single _best_effort_index function exists in capture.py
-- [ ] Both text and binary success paths call it (no inline duplicate)
-- [ ] Indexing failures are still caught and logged without blocking capture
-
-**Last tested:** never
-**Last result:** none
-**Current result:** ___
-
-⚠ AI-authored — not yet human-verified.
-
----
-
-### P7H-FIX-10 · The dead _build_disk_state function is removed and the A1 backward-compat path reuses _build_disk_entries
-_Origin: design · Granularity: outcome_
-
-**Run:**
-Grep for _build_disk_state in scanner.py.
-
-Verify the A1 path calls _build_disk_entries instead.
-
-**Check:**
-- [ ] _build_disk_state function does not exist in scanner.py
-- [ ] The cache=None path calls _build_disk_entries and discards the entries dict
-- [ ] Scan produces identical results to before (no behavioral change)
-
-**Last tested:** never
-**Last result:** none
-**Current result:** ___
-
-⚠ AI-authored — not yet human-verified.
-
----
-
-### P7H-FIX-11 · The dead scan_batch_size config field is removed from DaemonConfig
-_Origin: design · Granularity: outcome_
-
-**Run:**
-Inspect daemon/config.py for scan_batch_size.
-
-Verify it is no longer defined.
-
-**Check:**
-- [ ] scan_batch_size field does not exist in DaemonConfig
-- [ ] No code references scan_batch_size anywhere in the daemon package
-- [ ] Existing config YAML files with scan_batch_size are rejected by extra=forbid (or the field is silently absent if not in YAML)
-
-**Last tested:** never
+**Last tested:** 2026-06-14
 **Last result:** none
 **Current result:** ___
 

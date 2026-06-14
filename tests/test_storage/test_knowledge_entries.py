@@ -1,6 +1,8 @@
-"""Tests for knowledge_entries store — Phase 3 of P5 Slice 1."""
+"""Tests for knowledge_entries store — Phase 3 of P5 Slice 1 + Phase 4 ranking."""
 
 from __future__ import annotations
+
+import sqlite3
 
 from core.config import ConfidenceBand
 from storage.db import init_db
@@ -9,6 +11,7 @@ from storage.knowledge_entries import (
     get_confident_and_pending,
     query_by_dimension,
     query_by_entity,
+    query_ranked_by_dimension,
     retire,
     upsert,
 )
@@ -310,3 +313,143 @@ def test_get_confident_and_pending_no_filters(tmp_path):
     assert len(entries) == 2
     entity_names = {e.entity for e in entries}
     assert entity_names == {"Alice", "Bob"}
+
+
+# ---------------------------------------------------------------------------
+# Phase 8 Slice A — Phase 4: ranking fields round-trip + ranked query
+# ---------------------------------------------------------------------------
+
+
+def test_upsert_round_trips_trust_score_and_retrieval_count(tmp_path):
+    """upsert then read-back preserves trust_score and retrieval_count defaults.
+
+    Per design decision, upsert does NOT include these columns — DB defaults
+    cover omitted inserts.  The round-trip verifies that _row_to_entry reads
+    the default values correctly.
+    """
+    db_path = tmp_path / "kb.db"
+    init_db(db_path)
+
+    entry = KnowledgeEntry(
+        dimension="people",
+        entity="Alice",
+        tag="role",
+        fact="Engineering Manager",
+        confidence=0.9,
+        sources=["notes/alice.md"],
+    )
+    band = ConfidenceBand(auto=0.8, suggest=0.5)
+    result = upsert(entry, band=band, db_path=db_path)
+    assert result.is_success()
+    row_id = result.value
+
+    # Read back via existing query
+    results = query_by_dimension("people", db_path=db_path)
+    assert results.is_success()
+    entries = results.value
+    assert len(entries) == 1
+    e = entries[0]
+    assert e.id == row_id
+    # DB defaults: trust_score=0.5, retrieval_count=0
+    assert e.trust_score == 0.5
+    assert e.retrieval_count == 0
+
+    # Insert a second entry (also with defaults) and confirm
+    entry2 = KnowledgeEntry(
+        dimension="people",
+        entity="Bob",
+        tag="role",
+        fact="Staff Engineer",
+        confidence=0.7,
+    )
+    result2 = upsert(entry2, band=band, db_path=db_path)
+    assert result2.is_success()
+    results2 = query_by_entity("Bob", db_path=db_path)
+    assert results2.is_success()
+    e2 = results2.value[0]
+    assert e2.trust_score == 0.5
+    assert e2.retrieval_count == 0
+
+
+def test_query_ranked_by_dimension_excludes_retired_orders_and_caps(tmp_path):
+    """Ranked query: excludes retired, orders trust→confidence→recency, respects cap."""
+    db_path = tmp_path / "kb.db"
+    init_db(db_path)
+
+    # Seed more rows than cap (cap=3) for one dimension, mixed values
+    cap = 3
+    dimension = "people"
+
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute(
+            """INSERT INTO knowledge_entries
+               (dimension, entity, tag, fact, status, confidence,
+                trust_score, retrieval_count, sources, reasoning)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (dimension, "Alice", "role", "Fact A", "confident", 0.9,
+             0.9, 10, '[]', ''),
+        )
+        conn.execute(
+            """INSERT INTO knowledge_entries
+               (dimension, entity, tag, fact, status, confidence,
+                trust_score, retrieval_count, sources, reasoning)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (dimension, "Bob", "role", "Fact B", "confident", 0.8,
+             0.7, 5, '[]', ''),
+        )
+        conn.execute(
+            """INSERT INTO knowledge_entries
+               (dimension, entity, tag, fact, status, confidence,
+                trust_score, retrieval_count, sources, reasoning)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (dimension, "Charlie", "role", "Fact C", "retired", 0.95,
+             0.95, 20, '[]', 'retired reason'),
+        )
+        conn.execute(
+            """INSERT INTO knowledge_entries
+               (dimension, entity, tag, fact, status, confidence,
+                trust_score, retrieval_count, sources, reasoning)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (dimension, "Diana", "role", "Fact D", "confident", 0.7,
+             0.6, 3, '[]', ''),
+        )
+        conn.execute(
+            """INSERT INTO knowledge_entries
+               (dimension, entity, tag, fact, status, confidence,
+                trust_score, retrieval_count, sources, reasoning)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (dimension, "Eve", "role", "Fact E", "pending", 0.5,
+             0.4, 1, '[]', ''),
+        )
+        conn.commit()
+
+    # Execute the new ranked query
+    results = query_ranked_by_dimension(dimension, limit=cap, db_path=db_path)
+    assert results.is_success()
+    entries = results.value
+
+    # 1) Cap — no more than cap
+    assert len(entries) <= cap  # should be exactly cap if non-retired >= cap
+
+    # 2) Exclude retired
+    facts = {e.fact for e in entries}
+    assert "Fact C" not in facts  # retired row
+
+    # 3) Order: trust_score DESC
+    if len(entries) >= 2:
+        for i in range(len(entries) - 1):
+            assert entries[i].trust_score >= entries[i + 1].trust_score, (
+                f"trust_score not descending at index {i}: "
+                f"{entries[i].trust_score} < {entries[i + 1].trust_score}"
+            )
+
+    # 4) Each entry has id, trust_score, retrieval_count
+    for e in entries:
+        assert e.id is not None
+        assert isinstance(e.id, int)
+        assert isinstance(e.trust_score, float)
+        assert isinstance(e.retrieval_count, int)
+
+    # 5) The top entry should be the one with highest trust_score (Alice, 0.9)
+    assert entries[0].trust_score == 0.9
+    assert entries[0].entity == "Alice"

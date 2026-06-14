@@ -54,6 +54,7 @@ class DocumentRow:
     file_size_bytes: int | None = None
     blob_ref: str | None = None
     mime_type: str | None = None
+    classify_content_hash: str | None = None
 
 
 def _row_from_sqlite(row: sqlite3.Row) -> DocumentRow:
@@ -85,6 +86,9 @@ def _row_from_sqlite(row: sqlite3.Row) -> DocumentRow:
         else None,
         blob_ref=row["blob_ref"] if "blob_ref" in row.keys() else None,
         mime_type=row["mime_type"] if "mime_type" in row.keys() else None,
+        classify_content_hash=row["classify_content_hash"]
+        if "classify_content_hash" in row.keys()
+        else None,
     )
 
 
@@ -619,6 +623,62 @@ def filter_paths(
             error=str(exc),
             recoverable=False,
             context={"project": project, "op": "filter_paths"},
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — Work Finder + Classified-Stamp
+# ---------------------------------------------------------------------------
+
+
+def find_unclassified(*, db_path: Path | None = None) -> Result[list[int]]:
+    """Return ids of documents whose classify_content_hash is NULL or stale.
+
+    Work-discovery query for the classify subsystem: a document needs
+    classification when it has never been classified (NULL) or its content
+    has changed since it was last classified (classify_content_hash !=
+    content_hash).
+    """
+    try:
+        with get_connection(db_path, readonly=True) as conn:
+            cur = conn.execute(
+                """SELECT id FROM documents
+                   WHERE classify_content_hash IS NULL
+                      OR classify_content_hash != content_hash"""
+            )
+            ids: list[int] = [row[0] for row in cur.fetchall()]
+        return Success(ids)
+    except sqlite3.Error as exc:
+        return Failure(
+            error=str(exc),
+            recoverable=False,
+            context={"op": "find_unclassified"},
+        )
+
+
+def stamp_classified(doc_id: int, *, db_path: Path | None = None) -> Result[int]:
+    """Mark a document as classified by setting its classify_content_hash to
+    its current content_hash.
+
+    Returns Success(rowcount) — 1 if the row was updated, 0 if no row with
+    that id exists.  In Slice A this function is built and unit-tested but
+    not called on the happy path until Slice B (no AI = no successful
+    classify).
+    """
+    try:
+        with get_connection(db_path) as conn:
+            cur = conn.execute(
+                """UPDATE documents
+                   SET classify_content_hash = content_hash
+                   WHERE id = ?""",
+                (doc_id,),
+            )
+            return Success(cur.rowcount)
+    except sqlite3.Error as exc:
+        return Failure(
+            error=str(exc),
+            recoverable=False,
+            context={"doc_id": doc_id, "op": "stamp_classified"},
         )
 
 

@@ -4055,11 +4055,11 @@
   - The mismatched-hash document is returned (content changed)
   - The matched-hash document is NOT returned (already classified)
   spec_ref: docs/1_design/phase8_sliceA_classify_infra.md §Success criteria
-  human_reviewed: false
-  last_tested: null
+  human_reviewed: 'no'
+  last_tested: '2026-06-14'
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_storage/test_documents.py::test_work_finder_returns_unclassified_and_stale
+  status: active
   retired: null
 - id: P8-CLS-A-02
   behavior: A successful classify stamps the document's classify-fingerprint to match
@@ -4080,11 +4080,11 @@
   - The stamped document is no longer returned by work discovery
   - The unstamped document is still returned by work discovery (retry path)
   spec_ref: docs/1_design/phase8_sliceA_classify_infra.md §Success criteria
-  human_reviewed: false
-  last_tested: null
+  human_reviewed: 'no'
+  last_tested: '2026-06-14'
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_storage/test_documents.py::test_stamp_classified_removes_from_work_finder
+  status: active
   retired: null
 - id: P8-CLS-A-03
   behavior: The content reader returns the document's full extracted text when it fits
@@ -4103,11 +4103,11 @@
   - The small document yields its full_body
   - The large document yields its summary instead of its full_body
   spec_ref: docs/1_design/phase8_sliceA_classify_infra.md §Success criteria
-  human_reviewed: false
-  last_tested: null
+  human_reviewed: 'no'
+  last_tested: '2026-06-14'
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_pipelines/test_classify_infra.py::TestContentReader::test_small_body_returns_full_body
+  status: active
   retired: null
 - id: P8-CLS-A-04
   behavior: The dimension config loads each dimension with its allowed tags and its
@@ -4128,11 +4128,11 @@
   - Every dimension still includes the mandatory catch-all tag
   - The malformed config is rejected with a clear failure, not silently accepted
   spec_ref: docs/1_design/phase8_sliceA_classify_infra.md §Success criteria
-  human_reviewed: false
-  last_tested: null
+  human_reviewed: 'no'
+  last_tested: '2026-06-14'
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_core/test_dimensions.py::TestValidateDimensions::test_missing_other_tag_is_rejected
+  status: active
   retired: null
 - id: P8-CLS-A-05
   behavior: The context loader returns existing facts per dimension excluding retired
@@ -4154,11 +4154,11 @@
   - The count returned does not exceed the configured per-dimension cap
   - Each returned fact carries its database id
   spec_ref: docs/1_design/phase8_sliceA_classify_infra.md §Success criteria
-  human_reviewed: false
-  last_tested: null
+  human_reviewed: 'no'
+  last_tested: '2026-06-14'
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_pipelines/test_classify_infra.py::TestContextLoader::test_ranking_order
+  status: active
   retired: null
 - id: P8-CLS-A-06
   behavior: The async work queue processes document ids through a single consumer one
@@ -4179,11 +4179,11 @@
   - The consumer processes ids sequentially — never two at the same time
   - The queue drains to empty once all enqueued ids are processed
   spec_ref: docs/1_design/phase8_sliceA_classify_infra.md §Success criteria
-  human_reviewed: false
-  last_tested: null
+  human_reviewed: 'no'
+  last_tested: '2026-06-14'
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_pipelines/test_classify_worker.py::TestWorkerIntegration::test_full_flow
+  status: active
   retired: null
 - id: P8-CLS-A-07
   behavior: The Slice A migration adds the classify-fingerprint column to documents,
@@ -4205,11 +4205,11 @@
   - The trust-score index and the classify-hash index both exist
   - Existing rows are preserved and readable after the migration
   spec_ref: docs/1_design/phase8_sliceA_classify_infra.md §Success criteria
-  human_reviewed: false
-  last_tested: null
+  human_reviewed: 'no'
+  last_tested: '2026-06-14'
   last_result: null
-  pytest_ref: null
-  status: planned
+  pytest_ref: tests/test_storage/test_migration_010.py::test_migration_010_sets_schema_version_to_10
+  status: active
   retired: null
 - id: P7H-FIX-01
   behavior: Daemon startup scan aborts cleanly when the cloud endpoint is unreachable,
