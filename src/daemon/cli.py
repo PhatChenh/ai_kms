@@ -145,6 +145,42 @@ def scan_cmd(config_path: str) -> None:
         raise click.Abort()
 
 
+# ── periodic reconcile ───────────────────────────────────────────────────────
+
+
+async def _periodic_reconcile(
+    cfg: DaemonConfig,
+    client: httpx.AsyncClient,
+    cache: LocalCache,
+    candidate_deletes: dict[str, int],
+    sweep_confirmations: int,
+) -> None:
+    """Re-run the 3-way reconcile on a timer while the daemon is running."""
+    _log.info("periodic reconcile started", interval_seconds=cfg.periodic_interval_seconds)
+    while True:
+        await asyncio.sleep(cfg.periodic_interval_seconds)
+        _log.debug("periodic reconcile running")
+        try:
+            result = await scan(
+                cfg,
+                client,
+                cache=cache,
+                candidate_deletes=candidate_deletes,
+                sweep_delete_confirmations=sweep_confirmations,
+            )
+            _log.info(
+                "periodic reconcile complete",
+                uploaded=result.uploaded,
+                re_uploaded=result.re_uploaded,
+                deleted=result.deleted,
+                skipped=result.skipped,
+                moved=result.moved,
+            )
+            cache.save(Path(cfg.cache_path).expanduser())
+        except Exception:
+            _log.exception("periodic reconcile failed, will retry on next interval")
+
+
 # ── start command ────────────────────────────────────────────────────────────
 
 
@@ -170,12 +206,21 @@ def start(config_path: str) -> None:
 
     _move_timer: threading.Timer | None = None
     _move_timer_lock = threading.Lock()
+    periodic_task: asyncio.Task[None] | None = None
 
     async def _run() -> None:
-        nonlocal _move_timer
+        nonlocal _move_timer, periodic_task
         async with httpx.AsyncClient(timeout=30) as client:
             # ── 1. Startup scan ──────────────────────────────────────────
-            result: ScanResult = await scan(cfg, client)
+            candidate_deletes: dict[str, int] = {}
+            sweep_confirmations = cfg.sweep_delete_confirmations
+
+            result: ScanResult = await scan(
+                cfg, client,
+                cache=cache,
+                candidate_deletes=candidate_deletes,
+                sweep_delete_confirmations=sweep_confirmations,
+            )
             _log.info(
                 "startup scan complete",
                 uploaded=result.uploaded,
@@ -354,14 +399,31 @@ def start(config_path: str) -> None:
             _log.info("watcher started", vault_root=str(cfg.vault_root))
             click.echo(f"Watching {cfg.vault_root} — Ctrl+C to stop")
 
+            # ── Periodic reconcile timer ─────────────────────────────────
+            if cfg.periodic_interval_seconds > 0:
+                periodic_task = asyncio.create_task(
+                    _periodic_reconcile(cfg, client, cache, candidate_deletes, sweep_confirmations)
+                )
+            else:
+                periodic_task = None
+
             # ── 4. Main loop ─────────────────────────────────────────────
             try:
                 while True:
                     await asyncio.sleep(1)
             finally:
+                # Cancel periodic reconcile
+                if periodic_task is not None:
+                    periodic_task.cancel()
+                    try:
+                        await periodic_task
+                    except asyncio.CancelledError:
+                        pass
+
                 with _move_timer_lock:
                     if _move_timer is not None:
                         _move_timer.cancel()
+                cache.save(Path(cfg.cache_path).expanduser())
                 watcher.stop()
                 watcher.join()
                 _log.info("watcher stopped")

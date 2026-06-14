@@ -21,6 +21,8 @@ import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
+import pytest
+
 import daemon.cli
 from click.testing import CliRunner
 
@@ -249,7 +251,7 @@ class TestStartCommand:
 
         fake_result = ScanResult(uploaded=0, re_uploaded=0, deleted=0, skipped=5)
 
-        async def _fake_scan(cfg, client):
+        async def _fake_scan(cfg, client, cache=None, candidate_deletes=None, sweep_delete_confirmations=1):
             return fake_result
 
         # We need to patch asyncio.sleep so the main loop doesn't block forever.
@@ -344,7 +346,7 @@ cache_path: {cache_path}
 
         fake_result = ScanResult(uploaded=0, re_uploaded=0, deleted=0, skipped=0)
 
-        async def _fake_scan(cfg, client):
+        async def _fake_scan(cfg, client, cache=None, candidate_deletes=None, sweep_delete_confirmations=1):
             return fake_result
 
         sleep_count = [0]
@@ -1077,6 +1079,294 @@ cache_path: {cache_path}
         mock_set.assert_called_once_with(
             "renamed.txt", content_hash, st.st_size, st.st_mtime
         )
+
+    # ── periodic reconcile tests ─────────────────────────────────────────
+
+    def test_periodic_reconcile_created_when_interval_positive(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """With periodic_interval_seconds=1, _periodic_reconcile is called."""
+        monkeypatch.setenv("KMS_DAEMON_API_KEY", "test-key")
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config_content = f"""vault_root: {vault}
+cloud_endpoint: http://fake:8080
+periodic_interval_seconds: 1
+"""
+        config_path = _tmp_yaml(tmp_path, config_content)
+
+        fake_result = ScanResult(uploaded=0, re_uploaded=0, deleted=0, skipped=0)
+
+        async def _fake_scan(cfg, client, cache=None, candidate_deletes=None, sweep_delete_confirmations=1):
+            return fake_result
+
+        # Mock _periodic_reconcile to verify it's called with correct args
+        mock_reconcile = AsyncMock()
+
+        sleep_count = [0]
+
+        async def _fake_sleep(seconds):
+            sleep_count[0] += 1
+            if sleep_count[0] == 1:
+                raise KeyboardInterrupt()
+            await asyncio.sleep(0)
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        mock_watcher = MagicMock()
+        mock_watcher.start = MagicMock()
+        mock_watcher.stop = MagicMock()
+        mock_watcher.join = MagicMock()
+
+        with (
+            patch("daemon.cli.httpx.AsyncClient", return_value=mock_client),
+            patch("daemon.cli.scan", side_effect=_fake_scan),
+            patch("daemon.cli.DaemonWatcher", return_value=mock_watcher),
+            patch("daemon.cli.asyncio.sleep", side_effect=_fake_sleep),
+            patch("daemon.cli._periodic_reconcile", mock_reconcile),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["start", "--config", str(config_path)])
+            assert result.exit_code == 0
+
+        # _periodic_reconcile must have been called
+        mock_reconcile.assert_called_once()
+        call_args = mock_reconcile.call_args[0]
+        # First arg is cfg (DaemonConfig)
+        assert call_args[0].periodic_interval_seconds == 1
+        # cache is passed
+        assert isinstance(call_args[2], daemon.cli.LocalCache)
+        # candidate_deletes is an empty dict
+        assert call_args[3] == {}
+        # sweep_confirmations comes from config
+        assert call_args[4] == 2  # default sweep_delete_confirmations
+
+    def test_periodic_reconcile_disabled_when_interval_zero(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """With periodic_interval_seconds=0, _periodic_reconcile is NOT called."""
+        monkeypatch.setenv("KMS_DAEMON_API_KEY", "test-key")
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config_content = f"""vault_root: {vault}
+cloud_endpoint: http://fake:8080
+periodic_interval_seconds: 0
+"""
+        config_path = _tmp_yaml(tmp_path, config_content)
+
+        fake_result = ScanResult(uploaded=0, re_uploaded=0, deleted=0, skipped=0)
+
+        async def _fake_scan(cfg, client, cache=None, candidate_deletes=None, sweep_delete_confirmations=1):
+            return fake_result
+
+        mock_reconcile = AsyncMock()
+
+        sleep_count = [0]
+
+        async def _fake_sleep(seconds):
+            sleep_count[0] += 1
+            if sleep_count[0] == 1:
+                raise KeyboardInterrupt()
+            await asyncio.sleep(0)
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        mock_watcher = MagicMock()
+        mock_watcher.start = MagicMock()
+        mock_watcher.stop = MagicMock()
+        mock_watcher.join = MagicMock()
+
+        with (
+            patch("daemon.cli.httpx.AsyncClient", return_value=mock_client),
+            patch("daemon.cli.scan", side_effect=_fake_scan),
+            patch("daemon.cli.DaemonWatcher", return_value=mock_watcher),
+            patch("daemon.cli.asyncio.sleep", side_effect=_fake_sleep),
+            patch("daemon.cli._periodic_reconcile", mock_reconcile),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["start", "--config", str(config_path)])
+            assert result.exit_code == 0
+
+        # _periodic_reconcile must NOT have been called
+        mock_reconcile.assert_not_called()
+
+    def test_periodic_task_cancelled_on_shutdown(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """The periodic task is cancelled cleanly when the daemon shuts down (no warnings)."""
+        monkeypatch.setenv("KMS_DAEMON_API_KEY", "test-key")
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config_content = f"""vault_root: {vault}
+cloud_endpoint: http://fake:8080
+periodic_interval_seconds: 1
+"""
+        config_path = _tmp_yaml(tmp_path, config_content)
+
+        fake_result = ScanResult(uploaded=0, re_uploaded=0, deleted=0, skipped=0)
+
+        async def _fake_scan(cfg, client, cache=None, candidate_deletes=None, sweep_delete_confirmations=1):
+            return fake_result
+
+        # Mock _periodic_reconcile with an AsyncMock that can be cancelled
+        mock_reconcile = AsyncMock()
+
+        sleep_count = [0]
+
+        async def _fake_sleep(seconds):
+            sleep_count[0] += 1
+            if sleep_count[0] == 1:
+                raise KeyboardInterrupt()
+            await asyncio.sleep(0)
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        mock_watcher = MagicMock()
+        mock_watcher.start = MagicMock()
+        mock_watcher.stop = MagicMock()
+        mock_watcher.join = MagicMock()
+
+        with (
+            patch("daemon.cli.httpx.AsyncClient", return_value=mock_client),
+            patch("daemon.cli.scan", side_effect=_fake_scan),
+            patch("daemon.cli.DaemonWatcher", return_value=mock_watcher),
+            patch("daemon.cli.asyncio.sleep", side_effect=_fake_sleep),
+            patch("daemon.cli._periodic_reconcile", mock_reconcile),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["start", "--config", str(config_path)])
+            # Must exit cleanly — cancellation should be handled without error
+            assert result.exit_code == 0
+
+        # _periodic_reconcile was called (task was created)
+        mock_reconcile.assert_called_once()
+
+    def test_periodic_reconcile_shares_cache(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """The periodic reconcile receives the same cache instance used by watcher callbacks."""
+        monkeypatch.setenv("KMS_DAEMON_API_KEY", "test-key")
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config_content = f"""vault_root: {vault}
+cloud_endpoint: http://fake:8080
+periodic_interval_seconds: 1
+"""
+        config_path = _tmp_yaml(tmp_path, config_content)
+
+        fake_result = ScanResult(uploaded=0, re_uploaded=0, deleted=0, skipped=0)
+
+        async def _fake_scan(cfg, client, cache=None, candidate_deletes=None, sweep_delete_confirmations=1):
+            return fake_result
+
+        # Capture the cache argument passed to _periodic_reconcile
+        reconcile_cache: list = []
+
+        # Use a regular function (not async) so arguments are captured at call time
+        def _fake_reconcile(cfg, client, cache, candidate_deletes, sweep_confirmations):
+            reconcile_cache.append(cache)
+            async def _noop():
+                pass
+            return _noop()
+
+        sleep_count = [0]
+
+        async def _fake_sleep(seconds):
+            sleep_count[0] += 1
+            if sleep_count[0] == 1:
+                raise KeyboardInterrupt()
+            await asyncio.sleep(0)
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        mock_watcher = MagicMock()
+        mock_watcher.start = MagicMock()
+        mock_watcher.stop = MagicMock()
+        mock_watcher.join = MagicMock()
+
+        with (
+            patch("daemon.cli.httpx.AsyncClient", return_value=mock_client),
+            patch("daemon.cli.scan", side_effect=_fake_scan),
+            patch("daemon.cli.DaemonWatcher", return_value=mock_watcher),
+            patch("daemon.cli.asyncio.sleep", side_effect=_fake_sleep),
+            patch("daemon.cli._periodic_reconcile", new=_fake_reconcile),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["start", "--config", str(config_path)])
+            assert result.exit_code == 0
+
+        # _periodic_reconcile was called and received a cache instance
+        assert len(reconcile_cache) == 1
+        assert isinstance(reconcile_cache[0], daemon.cli.LocalCache)
+
+    @pytest.mark.asyncio
+    async def test_periodic_reconcile_calls_scan_repeatedly(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """_periodic_reconcile calls scan() in a loop, once per interval."""
+        monkeypatch.setenv("KMS_DAEMON_API_KEY", "test-key")
+
+        # Create a minimal config and cache
+        from daemon.config import DaemonConfig
+        from daemon.cache import DaemonSyncState, LocalCache
+
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        cache_path = tmp_path / "cache.json"
+        cache_path.write_text("{}")
+
+        cfg = DaemonConfig(
+            vault_root=vault,
+            cloud_endpoint="http://fake:8080",
+            api_key="test-key",
+            periodic_interval_seconds=1,  # short for testing
+            cache_path=str(cache_path),
+        )
+
+        sync_state = DaemonSyncState()
+        cache = LocalCache(sync_state)
+        cache.load(cache_path)
+        candidate_deletes: dict[str, int] = {}
+
+        fake_result = ScanResult(uploaded=1, re_uploaded=0, deleted=0, skipped=0)
+        scan_calls = [0]
+        sleep_calls = [0]
+
+        async def _fake_scan(cfg, client, cache=None, candidate_deletes=None, sweep_delete_confirmations=1):
+            scan_calls[0] += 1
+            return fake_result
+
+        async def _fake_sleep(seconds):
+            sleep_calls[0] += 1
+            if sleep_calls[0] >= 3:  # let it loop twice then stop
+                raise asyncio.CancelledError()
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("daemon.cli.scan", side_effect=_fake_scan),
+            patch("daemon.cli.asyncio.sleep", side_effect=_fake_sleep),
+            patch.object(daemon.cli.LocalCache, "save"),
+        ):
+            try:
+                await daemon.cli._periodic_reconcile(
+                    cfg, mock_client, cache, candidate_deletes, sweep_confirmations=2,
+                )
+            except asyncio.CancelledError:
+                pass
+
+        # scan should have been called at least twice (once per interval loop)
+        assert scan_calls[0] >= 2, f"Expected >= 2 scan calls, got {scan_calls[0]}"
 
 
 # ── CLI group tests ─────────────────────────────────────────────────────────
