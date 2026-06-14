@@ -69,7 +69,18 @@ class LocalBlobStore(BlobStore):
     # ------------------------------------------------------------------
 
     def _path_for(self, key: str) -> Path:
-        return self._root / "blobs" / key
+        # Reject empty or separator-only keys.
+        if not key or not key.strip("/"):
+            raise ValueError("invalid key")
+
+        blob_root = (self._root / "blobs").resolve()
+        full_path = (self._root / "blobs" / key).resolve()
+
+        # Prevent path traversal — the resolved path must stay inside blob_root.
+        if not full_path.is_relative_to(blob_root):
+            raise ValueError("invalid key")
+
+        return full_path
 
     # ------------------------------------------------------------------
     # public interface
@@ -80,6 +91,9 @@ class LocalBlobStore(BlobStore):
             p = self._path_for(key)
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_bytes(data)
+            # Persist mime_type in a sidecar file so tests can verify it.
+            mime_path = p.with_suffix(p.suffix + ".mime")
+            mime_path.write_text(mime_type)
             return Success(None)
         except Exception as exc:
             return Failure(
@@ -110,6 +124,10 @@ class LocalBlobStore(BlobStore):
             p = self._path_for(key)
             if p.exists():
                 p.unlink()
+            # Also remove the mime-type sidecar if present.
+            mime_path = p.with_suffix(p.suffix + ".mime")
+            if mime_path.exists():
+                mime_path.unlink()
             # Missing key is not an error — the caller wanted it gone,
             # and it is gone.
             return Success(None)
@@ -128,6 +146,25 @@ class LocalBlobStore(BlobStore):
                 error=str(exc),
                 recoverable=False,
                 context={"key": key, "operation": "exists"},
+            )
+
+    def get_mime_type(self, key: str) -> Result[str | None]:
+        """Return the stored MIME type for *key*, or None if not recorded.
+
+        This is a *LocalBlobStore*-only helper (not part of the ABC) so tests
+        can verify mime-type round-trips end-to-end.
+        """
+        try:
+            p = self._path_for(key)
+            mime_path = p.with_suffix(p.suffix + ".mime")
+            if mime_path.exists():
+                return Success(mime_path.read_text())
+            return Success(None)
+        except Exception as exc:
+            return Failure(
+                error=str(exc),
+                recoverable=False,
+                context={"key": key, "operation": "get_mime_type"},
             )
 
 
@@ -225,9 +262,16 @@ class S3BlobStore(BlobStore):
                 Key=key,
             )
             return Success(True)
-        except self._client.exceptions.ClientError:
-            # Typically a 404 — key not found
-            return Success(False)
+        except self._client.exceptions.ClientError as exc:
+            # Only 404 / NoSuchKey means the key does not exist.
+            error_code = exc.response.get("Error", {}).get("Code", "")
+            if error_code in ("NoSuchKey", "404"):
+                return Success(False)
+            return Failure(
+                error=str(exc),
+                recoverable=False,
+                context={"key": key, "operation": "exists", "error_code": error_code},
+            )
         except Exception as exc:
             return Failure(
                 error=str(exc),
