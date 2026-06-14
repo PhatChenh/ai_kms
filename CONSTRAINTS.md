@@ -5,14 +5,13 @@
 
 ## Write Safety
 
-### C-01 · Vault is source of truth; documents table is index only
+### C-01 · Database is source of truth for AI content; vault is read-only user input
 **Severity:** CRITICAL
 **Domain:** Write Safety
-**Rule:** `vault/writer.py` is the only code that writes to the vault; `documents` table stores index metadata, never note body or content cache.
-**Why:** Bypassing the writer skips the `updated_by_human` gate and idempotency checks, silently corrupting human notes.
-**Danger signal:** Any `.write_text()` or `open(..., 'w')` in a `.py` file other than `vault/writer.py`; any code reading note body from `documents` instead of calling `read_note`.
-**Source:** DEBTS_CONSTRAINTS.md Cross-Phase Constraints §1; hook enforcement in `.claude/settings.json`
-**⚠️ Rearchitecture (2026-06-12):** This constraint **inverts** under the cloud-native rearchitecture — DB becomes source of truth for AI content; vault becomes read-only user input; `vault/writer.py` retires. See `docs/0_draft/cloud_native_rearchitecture.md` §5/§12 and ADR-0012. **Still in force for current code** — the flip happens in the phase that rewrites the last vault-writing consumer (Phases 6/7), NOT in Phase 5 Slice 1. Do not flip until that code ships.
+**Rule:** The `documents` table is the source of truth for AI-generated content (summaries, classifications, facts). The user's vault is read-only input — capture makes **zero** vault writes. The `vault/writer.py` module is retained only for the live `kms_move` tool and the Phase 6 daemon; all other consumers write directly to the database.
+**Why:** The cloud-native rearchitecture flips the original source-of-truth model: AI output lives in the cloud database, not scattered across the user's folders. Capture writes to the vault would create a second unsynchronized copy and introduce the stale-data and conflict problems the rearchitecture was designed to eliminate.
+**Danger signal:** Any `.write_text()` or `open(..., 'w')` in a capture pipeline; any code reading AI-generated content from the vault instead of the `documents` table.
+**Source:** Phase 7A (Text Capture, 2026-06); ADR-0014 (capture data-safety); ADR-0012 (additive rearchitecture). Previously this constraint stated "vault is source of truth" — flipped in Phase 7A.
 
 ---
 
@@ -26,14 +25,13 @@
 
 ---
 
-### C-03 · write_note is a pure writer — pipeline owns the merge
+### C-03 · write_note is scoped to retained consumers (kms_move, daemon); capture does not call it
 **Severity:** CRITICAL
 **Domain:** Write Safety
-**Rule:** `write_note` writes exactly what the caller passes; to preserve any existing field the pipeline MUST call `read_note` first and re-pass existing values explicitly. Only `created` is automatically preserved.
+**Rule:** `write_note` writes exactly what the caller passes; to preserve any existing field the pipeline MUST call `read_note` first and re-pass existing values explicitly. Only `created` is automatically preserved. **Capture (Phase 7A+) does not call `write_note` at all** — it writes directly to the `documents` table via `upsert_from_upload` + `attach_summary`. The retained consumers are `kms_move` (MCP tool) and the Phase 6 daemon.
 **Why:** Calling `write_note` with default `NoteMetadata()` wipes all existing metadata on the note — tags, project, summary, all gone.
-**Danger signal:** Any pipeline calling `write_note` with `NoteMetadata()` or partial metadata without a preceding `read_note`; any assumption that `write_note` will merge or preserve existing fields other than `created`.
-**Source:** TD-014 (resolved 2026-05-20); DEBTS_CONSTRAINTS.md Cross-Phase Constraints §10
-**⚠️ Rearchitecture (2026-06-12):** `write_note` (and all vault writes) **retire** under the cloud-native rearchitecture — AI output goes to DB, not the vault. See `cloud_native_rearchitecture.md` §12 and ADR-0012. **Still in force for current code**; retires in the phase that rewrites its last consumer (Phases 6/7), NOT Phase 5 Slice 1.
+**Danger signal:** Any pipeline calling `write_note` with `NoteMetadata()` or partial metadata without a preceding `read_note`; any capture code importing `write_note` or `WriteOutcome`.
+**Source:** Phase 7A (Text Capture, 2026-06); TD-014 (resolved 2026-05-20). Previously this constraint described the general writer contract — scoped in Phase 7A to the remaining consumers.
 
 ---
 

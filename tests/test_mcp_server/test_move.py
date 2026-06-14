@@ -98,10 +98,15 @@ def _make_human_note(path: Path, content: str, **meta_kwargs) -> WriteOutcome:
 
 def _upsert_to_db(outcome: WriteOutcome, db_path: Path) -> None:
     """Insert the outcome into the documents DB so get_by_path can find it."""
-    from storage.documents import upsert
+    from storage.documents import upsert_from_upload
 
-    r = upsert(outcome, db_path=db_path)
-    assert isinstance(r, Success), f"Failed to upsert: {r}"
+    r = upsert_from_upload(
+        vault_path=outcome.vault_path,
+        extracted_text="dummy text content",
+        content_hash=outcome.content_hash or "dummy_hash",
+        db_path=db_path,
+    )
+    assert isinstance(r, Success), f"Failed to upsert_from_upload: {r}"
 
 
 # ---------------------------------------------------------------------------

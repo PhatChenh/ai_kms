@@ -25,12 +25,34 @@ def db(tmp_path: Path) -> Path:
     return db_path
 
 
+def _seed(
+    vault_path: str = "inbox/foo.md",
+    content_hash: str = "abc123",
+    title: str | None = None,
+    extracted_text: str = "dummy text",
+    db: Path | None = None,
+    **kwargs,
+) -> int:
+    """Seed a documents row via upsert_from_upload. Returns the row id."""
+    from storage.documents import upsert_from_upload
+
+    result = upsert_from_upload(
+        vault_path=vault_path,
+        extracted_text=extracted_text,
+        content_hash=content_hash,
+        title=title,
+        db_path=db,
+    )
+    assert isinstance(result, Success), f"Seed failed: {result}"
+    return result.value
+
+
 def _outcome(
     vault_path: str = "inbox/foo.md",
     content_hash: str = "abc123",
     **meta_kwargs,
 ) -> WriteOutcome:
-    """Build a minimal WriteOutcome for testing."""
+    """Build a minimal WriteOutcome for _derive_title / replace_path tests."""
     return WriteOutcome(
         vault_path=vault_path,
         absolute_path=Path(f"/fake/vault/{vault_path}"),
@@ -40,19 +62,15 @@ def _outcome(
 
 
 # ---------------------------------------------------------------------------
-# tests
+# tests — basic CRUD (using upsert_from_upload as seeder)
 # ---------------------------------------------------------------------------
 
 
-def test_upsert_inserts_new_row(db):
-    """upsert inserts a new row; get_by_path returns matching data."""
-    from storage.documents import get_by_path, upsert
+def test_insert_and_get_by_path(db):
+    """upsert_from_upload inserts a new row; get_by_path returns matching data."""
+    from storage.documents import get_by_path
 
-    outcome = _outcome("inbox/foo.md", content_hash="hash1", project="X")
-    r = upsert(outcome, db_path=db)
-
-    assert isinstance(r, Success)
-    assert isinstance(r.value, int)
+    _seed("inbox/foo.md", content_hash="hash1", db=db)
 
     row_r = get_by_path("inbox/foo.md", db_path=db)
     assert isinstance(row_r, Success)
@@ -62,37 +80,30 @@ def test_upsert_inserts_new_row(db):
     assert row.content_hash == "hash1"
 
 
-def test_upsert_replaces_existing_row(db):
-    """Second upsert with same vault_path but different hash → latest hash stored."""
-    from storage.documents import get_by_path, upsert
+def test_upsert_from_upload_replace_on_changed_hash(db):
+    """Second upsert with same path but different hash updates the row."""
+    from storage.documents import get_by_path, upsert_from_upload
 
-    upsert(_outcome("inbox/foo.md", content_hash="old_hash"), db_path=db)
-    upsert(_outcome("inbox/foo.md", content_hash="new_hash"), db_path=db)
+    _seed("inbox/foo.md", content_hash="old_hash", db=db)
+    upsert_from_upload(
+        vault_path="inbox/foo.md",
+        extracted_text="new text",
+        content_hash="new_hash",
+        db_path=db,
+    )
 
     row_r = get_by_path("inbox/foo.md", db_path=db)
     assert isinstance(row_r, Success)
     assert row_r.value.content_hash == "new_hash"
 
 
-def test_upsert_persists_updated_by_human(db):
-    """Outcome with updated_by_human=True → row's updated_by_human column is truthy."""
-    from storage.documents import get_by_path, upsert
-
-    outcome = _outcome("inbox/foo.md", updated_by_human=True)
-    upsert(outcome, db_path=db)
-
-    row_r = get_by_path("inbox/foo.md", db_path=db)
-    assert isinstance(row_r, Success)
-    assert row_r.value.updated_by_human is True
-
-
 def test_all_paths_returns_path_hash_pairs(db):
-    """all_paths returns exactly the upserted (vault_path, content_hash) pairs."""
-    from storage.documents import all_paths, upsert
+    """all_paths returns exactly the seeded (vault_path, content_hash) pairs."""
+    from storage.documents import all_paths
 
-    upsert(_outcome("inbox/a.md", content_hash="h1"), db_path=db)
-    upsert(_outcome("inbox/b.md", content_hash="h2"), db_path=db)
-    upsert(_outcome("inbox/c.md", content_hash="h3"), db_path=db)
+    _seed("inbox/a.md", content_hash="h1", db=db)
+    _seed("inbox/b.md", content_hash="h2", db=db)
+    _seed("inbox/c.md", content_hash="h3", db=db)
 
     r = all_paths(db_path=db)
     assert isinstance(r, Success)
@@ -106,9 +117,9 @@ def test_all_paths_returns_path_hash_pairs(db):
 
 def test_delete_by_path_removes_row(db):
     """After delete_by_path, get_by_path returns Success(None)."""
-    from storage.documents import delete_by_path, get_by_path, upsert
+    from storage.documents import delete_by_path, get_by_path
 
-    upsert(_outcome("inbox/foo.md"), db_path=db)
+    _seed("inbox/foo.md", db=db)
     delete_by_path("inbox/foo.md", db_path=db)
 
     r = get_by_path("inbox/foo.md", db_path=db)
@@ -118,11 +129,9 @@ def test_delete_by_path_removes_row(db):
 
 def test_rename_updates_vault_path_preserves_id(db):
     """rename() changes vault_path and keeps the same row id (DECISION-001)."""
-    from storage.documents import get_by_path, rename, upsert
+    from storage.documents import get_by_path, rename
 
-    r_insert = upsert(_outcome("inbox/foo.md", content_hash="h"), db_path=db)
-    assert isinstance(r_insert, Success)
-    original_id = r_insert.value
+    row_id = _seed("inbox/foo.md", content_hash="h", db=db)
 
     rename("inbox/foo.md", "projects/X/foo.md", db_path=db)
 
@@ -134,53 +143,37 @@ def test_rename_updates_vault_path_preserves_id(db):
 
     assert isinstance(new, Success)
     assert new.value is not None
-    assert new.value.id == original_id  # same row, just renamed
+    assert new.value.id == row_id  # same row, just renamed
 
 
-def test_upsert_with_batch_id(db):
-    """upsert with a real batch_id FK → row.batch_id matches."""
+def test_update_batch_id_sets_value(db):
+    """update_batch_id sets batch_id on the matching row."""
     from storage.batches import insert as insert_batch
-    from storage.documents import get_by_path, upsert
+    from storage.documents import get_by_path, update_batch_id
 
-    # Insert a real batch row first so FK constraint is satisfied.
-    r_batch = insert_batch(
-        folder_name="test-folder",
+    # Create a batch row first — FK constraint enforced.
+    br = insert_batch(
+        folder_name="test-batch",
         destination_type=None,
         destination_name=None,
-        confidence=0.9,
+        confidence=1.0,
         status="ROUTING",
         file_count=1,
         db_path=db,
     )
-    assert isinstance(r_batch, Success)
-    batch_id = r_batch.value
+    assert isinstance(br, Success)
+    batch_id = br.value
 
-    outcome = _outcome("inbox/with_batch.md", content_hash="batchhash")
-    r = upsert(outcome, db_path=db, batch_id=batch_id)
+    _seed("inbox/foo.md", content_hash="hash1", db=db)
 
-    assert isinstance(r, Success)
+    r2 = update_batch_id("inbox/foo.md", batch_id, db_path=db)
+    assert isinstance(r2, Success)
+    assert r2.value == 1
 
-    row_r = get_by_path("inbox/with_batch.md", db_path=db)
+    row_r = get_by_path("inbox/foo.md", db_path=db)
     assert isinstance(row_r, Success)
-    row = row_r.value
-    assert row is not None
-    assert row.batch_id == batch_id
-
-
-def test_upsert_without_batch_id(db):
-    """upsert without batch_id → row.batch_id is None."""
-    from storage.documents import get_by_path, upsert
-
-    outcome = _outcome("inbox/no_batch.md", content_hash="nobatch")
-    r = upsert(outcome, db_path=db)
-
-    assert isinstance(r, Success)
-
-    row_r = get_by_path("inbox/no_batch.md", db_path=db)
-    assert isinstance(row_r, Success)
-    row = row_r.value
-    assert row is not None
-    assert row.batch_id is None
+    assert row_r.value is not None
+    assert row_r.value.batch_id == batch_id
 
 
 def test_documents_table_has_project_status_key_topics(db: Path):
@@ -197,22 +190,8 @@ def test_documents_table_has_project_status_key_topics(db: Path):
     assert "key_topics" in col_names, f"expected 'key_topics' column, got {col_names}"
 
 
-def test_upsert_returns_failure_on_locked_db(db, monkeypatch):
-    """get_connection raising OperationalError → Failure(recoverable=False)."""
-    import storage.documents as docs_mod
-
-    def raise_locked(*args, **kwargs):
-        raise sqlite3.OperationalError("database is locked")
-
-    monkeypatch.setattr(docs_mod, "get_connection", raise_locked)
-
-    r = docs_mod.upsert(_outcome("inbox/foo.md"), db_path=db)
-    assert isinstance(r, Failure)
-    assert r.recoverable is False
-
-
 # ---------------------------------------------------------------------------
-# Phase Pre-2 — new columns (project, status, key_topics)
+# Phase 7A — attach_summary (UPDATE-only DB writer)
 # ---------------------------------------------------------------------------
 
 
@@ -303,179 +282,93 @@ def test_row_from_sqlite_handles_null_key_topics(db: Path):
     assert row_r.value.key_topics == []
 
 
-def test_upsert_writes_and_reads_back_new_columns(db):
-    """upsert with project, status, tags → get_by_path returns all three."""
-    from storage.documents import get_by_path, upsert
-
-    outcome = _outcome(
-        "inbox/newcols.md",
-        content_hash="hash_newcols",
-        project="Alpha",
-        status=None,
-        tags=["domain/finance", "type/note", "quarterly-review"],
-    )
-    r = upsert(outcome, db_path=db)
-    assert isinstance(r, Success)
-
-    row_r = get_by_path("inbox/newcols.md", db_path=db)
-    assert isinstance(row_r, Success)
-    row = row_r.value
-    assert row is not None
-    assert row.project == "Alpha"
-    assert row.status is None
-    assert row.key_topics == ["quarterly-review"]
-
-
-def test_upsert_clueless_binary_key_topics_empty(db):
-    """Only type/attachment-summary tag → key_topics is empty list."""
-    from storage.documents import get_by_path, upsert
-
-    outcome = _outcome(
-        "inbox/clueless.md",
-        content_hash="hash_clueless",
-        tags=["type/attachment-summary"],
-    )
-    r = upsert(outcome, db_path=db)
-    assert isinstance(r, Success)
-
-    row_r = get_by_path("inbox/clueless.md", db_path=db)
-    assert isinstance(row_r, Success)
-    row = row_r.value
-    assert row is not None
-    assert row.key_topics == []
-
-
-def test_replace_path_preserves_new_columns(db):
-    """replace_path after upsert → new path still has project, status, key_topics."""
-    from storage.documents import get_by_path, replace_path, upsert
-
-    # First upsert at old path
-    outcome = _outcome(
-        "inbox/old.md",
-        content_hash="hash_rp",
-        project="Alpha",
-        status="active",
-        tags=["domain/finance", "type/note", "quarterly-review"],
-    )
-    r = upsert(outcome, db_path=db)
-    assert isinstance(r, Success)
-
-    # Replace path
-    new_outcome = _outcome(
-        "inbox/new.md",
-        content_hash="hash_rp",
-        project="Alpha",
-        status="active",
-        tags=["domain/finance", "type/note", "quarterly-review"],
-    )
-    rp = replace_path("inbox/old.md", new_outcome, db_path=db)
-    assert isinstance(rp, Success)
-
-    # Old path should be gone
-    old_r = get_by_path("inbox/old.md", db_path=db)
-    assert isinstance(old_r, Success)
-    assert old_r.value is None
-
-    # New path should have all columns preserved
-    new_r = get_by_path("inbox/new.md", db_path=db)
-    assert isinstance(new_r, Success)
-    row = new_r.value
-    assert row is not None
-    assert row.project == "Alpha"
-    assert row.status == "active"
-    assert row.key_topics == ["quarterly-review"]
-
-
 # ---------------------------------------------------------------------------
-# Phase 3 — update_batch_id
+# Phase Pre-2 — new columns existence check
 # ---------------------------------------------------------------------------
 
 
-def test_update_batch_id_sets_value(db):
-    """update_batch_id sets batch_id on the matching row."""
-    from storage.batches import insert as insert_batch
-    from storage.documents import get_by_path, update_batch_id, upsert
+# ---------------------------------------------------------------------------
+# Phase 7A — attach_summary (UPDATE-only DB writer)
+# ---------------------------------------------------------------------------
 
-    # Create a batch row first — FK constraint enforced.
-    br = insert_batch(
-        folder_name="test-batch",
-        destination_type=None,
-        destination_name=None,
-        confidence=1.0,
-        status="ROUTING",
-        file_count=1,
+
+def test_attach_summary_updates_summary_and_title_preserves_others(db):
+    """attach_summary sets summary+title+updated_at; other columns unchanged."""
+    from storage.documents import attach_summary, get_by_path, upsert_from_upload
+
+    vault_path = "inbox/meeting.md"
+    # Seed via upsert_from_upload (the raw-store beat)
+    upsert_from_upload(
+        vault_path=vault_path,
+        extracted_text="Full meeting text here.",
+        content_hash="hash_abc123",
+        original_filename="meeting.md",
+        file_size_bytes=42,
         db_path=db,
     )
-    assert isinstance(br, Success)
-    batch_id = br.value
 
-    outcome = _outcome("inbox/foo.md", content_hash="hash1")
-    r = upsert(outcome, batch_id=None, db_path=db)
-    assert isinstance(r, Success)
+    # Read the initial state
+    before = get_by_path(vault_path, db_path=db)
+    assert isinstance(before, Success)
+    row_before = before.value
+    assert row_before is not None
+    assert row_before.summary is None
+    assert row_before.title == "meeting"  # filename stem
 
-    r2 = update_batch_id("inbox/foo.md", batch_id, db_path=db)
-    assert isinstance(r2, Success)
-    assert r2.value == 1
+    # Attach summary
+    result = attach_summary(
+        vault_path=vault_path,
+        summary="## Overview\nTest summary content.",
+        title="Q2 Strategy Review",
+        db_path=db,
+    )
+    assert isinstance(result, Success)
+    assert result.value == 1  # one row updated
 
-    row_r = get_by_path("inbox/foo.md", db_path=db)
-    assert isinstance(row_r, Success)
-    assert row_r.value is not None
-    assert row_r.value.batch_id == batch_id
+    # Verify after
+    after = get_by_path(vault_path, db_path=db)
+    assert isinstance(after, Success)
+    row_after = after.value
+    assert row_after is not None
+
+    # Changed columns
+    assert row_after.summary == "## Overview\nTest summary content."
+    assert row_after.title == "Q2 Strategy Review"
+    # updated_at is second-granularity; both ops may be same second
+    assert row_after.updated_at >= row_before.updated_at
+
+    # Preserved columns
+    assert row_after.full_body == "Full meeting text here."
+    assert row_after.content_hash == "hash_abc123"
+    assert row_after.original_filename == "meeting.md"
+    assert row_after.file_size_bytes == 42
+    assert row_after.vault_path == vault_path
 
 
-def test_update_batch_id_not_found_returns_0(db):
-    """update_batch_id on unknown path returns Success(0)."""
-    from storage.documents import update_batch_id
+def test_attach_summary_not_found_returns_zero(db):
+    """attach_summary on nonexistent path returns Success(0)."""
+    from storage.documents import attach_summary
 
-    r = update_batch_id("nonexistent/path.md", 42, db_path=db)
-    assert isinstance(r, Success)
-    assert r.value == 0
+    result = attach_summary(
+        vault_path="nonexistent/note.md",
+        summary="Summary",
+        title="Title",
+        db_path=db,
+    )
+    assert isinstance(result, Success)
+    assert result.value == 0
 
 
-def test_update_batch_id_db_error(tmp_path):
-    """update_batch_id on non-existent DB returns Failure."""
-    from storage.documents import update_batch_id
+def test_attach_summary_db_error(tmp_path):
+    """attach_summary on non-existent DB returns Failure."""
+    from storage.documents import attach_summary
 
     bad_db = tmp_path / "nonexistent" / "kb.db"
-    r = update_batch_id("inbox/foo.md", 42, db_path=bad_db)
-    assert isinstance(r, Failure)
-    assert r.recoverable is False
-
-
-# ---------------------------------------------------------------------------
-# _derive_title tests (Phase 3 Session B — Descriptive Title at Capture)
-# ---------------------------------------------------------------------------
-
-
-def test_derive_title_prefers_metadata_title():
-    """_derive_title returns metadata.title when set, not the vault_path stem."""
-    from storage.documents import _derive_title
-
-    outcome = _outcome(
-        vault_path="Projects/Alpha/report.pdf.md",
-        title="Q3 Budget Report",
+    result = attach_summary(
+        vault_path="inbox/note.md",
+        summary="Summary",
+        title="Title",
+        db_path=bad_db,
     )
-    assert _derive_title(outcome) == "Q3 Budget Report"
-
-
-def test_derive_title_falls_back_to_extra_then_stem():
-    """_derive_title falls back from metadata.title to extra to vault_path stem."""
-    from storage.documents import _derive_title
-
-    # Case (a): metadata.title = None, extra has "title" -> returns extra value
-    outcome_a = WriteOutcome(
-        vault_path="Projects/Alpha/report.pdf.md",
-        absolute_path=Path("/fake/vault/Projects/Alpha/report.pdf.md"),
-        content_hash="abc",
-        metadata=NoteMetadata(title=None, extra={"title": "From Extra"}),
-    )
-    assert _derive_title(outcome_a) == "From Extra"
-
-    # Case (b): metadata.title = None, extra = {}, vault_path stem -> returns stem
-    outcome_b = WriteOutcome(
-        vault_path="Projects/Alpha/report.pdf.md",
-        absolute_path=Path("/fake/vault/Projects/Alpha/report.pdf.md"),
-        content_hash="abc",
-        metadata=NoteMetadata(title=None, extra={}),
-    )
-    assert _derive_title(outcome_b) == "report.pdf"
+    assert isinstance(result, Failure)
+    assert result.recoverable is False

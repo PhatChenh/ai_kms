@@ -43,7 +43,12 @@ def test_vault_layer_end_to_end(vault_root: Path, tmp_path: Path) -> None:
     assert outcome.vault_path == "inbox/test.md"
 
     # ── Step 3: upsert to SQLite ────────────────────────────────────────────
-    upsert_result = documents.upsert(outcome, db_path=db_path)
+    upsert_result = documents.upsert_from_upload(
+        vault_path=outcome.vault_path,
+        extracted_text="dummy text content",
+        content_hash=outcome.content_hash or "dummy_hash",
+        db_path=db_path,
+    )
     assert isinstance(upsert_result, Success)
     assert upsert_result.value > 0
 
@@ -85,7 +90,12 @@ def test_vault_layer_end_to_end(vault_root: Path, tmp_path: Path) -> None:
     assert cs2.deleted == []
 
     # ── Step 9: apply change; detect_changes → empty ───────────────────────
-    documents.upsert(new_outcome, db_path=db_path)
+    documents.upsert_from_upload(
+        vault_path=new_outcome.vault_path,
+        extracted_text="dummy text content updated",
+        content_hash=new_outcome.content_hash or "dummy_hash2",
+        db_path=db_path,
+    )
     entries3 = indexer.scan_vault(vault_root).value
     cs3 = indexer.detect_changes(entries3, db_path=db_path).value
     assert cs3.added == [] and cs3.modified == [] and cs3.deleted == [] and cs3.moved == []
