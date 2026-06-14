@@ -26,7 +26,7 @@ from pathlib import Path
 import httpx
 
 from core.result import Failure, Success
-from daemon.cache import DaemonSyncState, LocalCache
+from daemon.cache import LocalCache
 from daemon.config import DaemonConfig
 from daemon.event_reporter import report_deleted
 from daemon.extractor import BinaryContent, TextContent, extract
@@ -92,18 +92,22 @@ async def scan(
     cloud_state = await _fetch_cloud_state(config, client)
 
     # ── 2. Walk vault + build disk state ──────────────────────────────────
-    disk_state, unreadable = _build_disk_state(config)
 
     # ── A1 backward-compat path (cache=None) ──────────────────────────────
     if cache is None:
+        disk_state, unreadable = _build_disk_state(config)
         return await _scan_2way(
             config, client, cloud_state, disk_state, unreadable
         )
 
     # ── 3-way path (cache is provided) ────────────────────────────────────
+    # Single vault walk: _build_disk_entries produces entries for cache +
+    # disk_state + unreadable for scan logic.
+    disk_entries, disk_state, unreadable = _build_disk_entries(config)
     return await _scan_3way(
         config, client, cloud_state, disk_state, unreadable,
         cache, candidate_deletes, sweep_delete_confirmations,
+        disk_entries,
     )
 
 
@@ -191,11 +195,9 @@ async def _scan_3way(
     cache: LocalCache,
     candidate_deletes: dict[str, int] | None,
     sweep_delete_confirmations: int,
+    disk_entries: dict[str, dict],
 ) -> ScanResult:
     """3-way reconcile: disk vs cache vs cloud (9-row Decision Rulebook)."""
-
-    # Build full disk entries (hash + size + mtime) for rebuild + cache-on-ack
-    disk_entries, _ = _build_disk_entries(config)
 
     # Take cache snapshot
     cache_state = cache.snapshot()
@@ -341,7 +343,7 @@ def _handle_candidate_delete(
     client: httpx.AsyncClient,
     cache: LocalCache,
     result: ScanResult,
-    tasks: list,
+    tasks: list[asyncio.Task[tuple[str, str, bool]]],
 ) -> None:
     """Track a candidate-delete and trigger deletion when threshold met.
 
@@ -457,13 +459,21 @@ def _build_disk_state(config: DaemonConfig) -> tuple[dict[str, str], set[str]]:
     return result, unreadable
 
 
-def _build_disk_entries(config: DaemonConfig) -> tuple[dict[str, dict], set[str]]:
-    """Walk the vault and return ``({vault_path: entry_dict}, unreadable_set)``.
+def _build_disk_entries(config: DaemonConfig) -> tuple[dict[str, dict], dict[str, str], set[str]]:
+    """Walk the vault once and return ``(entries, disk_state, unreadable)``.
 
-    Each entry dict has keys ``"hash"`` (str), ``"size"`` (int), ``"mtime"`` (float).
-    This is the full-fingerprint version of :func:`_build_disk_state`.
+    *entries*: ``{vault_path: {"hash": ..., "size": ..., "mtime": ...}}``
+        Full fingerprint for cache rebuild / cache-on-ack.
+    *disk_state*: ``{vault_path: sha256_hex}``
+        Hash-only dict for scan diff logic.
+    *unreadable*: ``set[str]``
+        Paths that could not be read (excluded from cloud-only deletion).
+
+    This supersedes :func:`_build_disk_state` by producing both outputs from
+    a single walk, avoiding a double read+hash in the 3-way scan path.
     """
-    result: dict[str, dict] = {}
+    entries: dict[str, dict] = {}
+    disk_state: dict[str, str] = {}
     unreadable: set[str] = set()
     vault_root = config.vault_root.resolve()
     ignore_patterns = config.ignore_patterns
@@ -494,13 +504,14 @@ def _build_disk_entries(config: DaemonConfig) -> tuple[dict[str, dict], set[str]
                 continue
 
             content_hash = hashlib.sha256(raw).hexdigest()
-            result[vault_path] = {
+            entries[vault_path] = {
                 "hash": content_hash,
                 "size": stat.st_size,
                 "mtime": stat.st_mtime,
             }
+            disk_state[vault_path] = content_hash
 
-    return result, unreadable
+    return entries, disk_state, unreadable
 
 
 async def _upload_one(
