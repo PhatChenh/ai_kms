@@ -4232,7 +4232,7 @@
   last_tested: null
   last_result: null
   pytest_ref: null
-  status: planned
+  status: active
   retired: null
 - id: P7H-FIX-02
   behavior: Daemon directory walk skips ignored directories entirely instead of
@@ -4255,7 +4255,7 @@
   last_tested: null
   last_result: null
   pytest_ref: null
-  status: planned
+  status: active
   retired: null
 - id: P7H-FIX-03
   behavior: Exceptions in watcher async callbacks are logged instead of silently
@@ -4277,7 +4277,7 @@
   last_tested: null
   last_result: null
   pytest_ref: null
-  status: planned
+  status: active
   retired: null
 - id: P7H-FIX-04
   behavior: Move events where only the source path is ignored are still processed
@@ -4299,7 +4299,7 @@
   last_tested: null
   last_result: null
   pytest_ref: null
-  status: planned
+  status: active
   retired: null
 - id: P7H-FIX-05
   behavior: Vision describe prompt includes the file's mime type so the AI knows
@@ -4321,7 +4321,7 @@
   last_tested: null
   last_result: null
   pytest_ref: null
-  status: planned
+  status: active
   retired: null
 - id: P7H-FIX-06
   behavior: attach_summary failures in the capture pipeline are logged instead of
@@ -4343,7 +4343,7 @@
   last_tested: null
   last_result: null
   pytest_ref: null
-  status: planned
+  status: active
   retired: null
 - id: P7H-FIX-07
   behavior: Daemon sync engine is encapsulated in a DaemonLoop class instead of a
@@ -4368,7 +4368,7 @@
   last_tested: null
   last_result: null
   pytest_ref: null
-  status: planned
+  status: active
   retired: null
 - id: P7H-FIX-08
   behavior: Auth header is set once on the httpx.AsyncClient default headers instead
@@ -4391,7 +4391,7 @@
   last_tested: null
   last_result: null
   pytest_ref: null
-  status: planned
+  status: active
   retired: null
 - id: P7H-FIX-09
   behavior: Best-effort indexing (keyword + embedding) is a single helper function
@@ -4414,7 +4414,7 @@
   last_tested: null
   last_result: null
   pytest_ref: null
-  status: planned
+  status: active
   retired: null
 - id: P7H-FIX-10
   behavior: The dead _build_disk_state function is removed and the A1 backward-compat
@@ -4437,7 +4437,7 @@
   last_tested: null
   last_result: null
   pytest_ref: null
-  status: planned
+  status: active
   retired: null
 - id: P7H-FIX-11
   behavior: The dead scan_batch_size config field is removed from DaemonConfig
@@ -4460,7 +4460,7 @@
   last_tested: null
   last_result: null
   pytest_ref: null
-  status: planned
+  status: active
   retired: null
 - id: P7H-FIX-12
   behavior: periodic_interval_seconds accepts float values for sub-second or fractional
