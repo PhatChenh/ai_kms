@@ -6,6 +6,7 @@ call happens.  All tests use explicit db_path — no module-scope CONFIG (C-17).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from unittest import mock
@@ -33,15 +34,10 @@ class StubVisionProvider:
     ) -> Result:
         self.call_count += 1
         if self._fail:
-            return Failure(
-                error="Vision AI timeout", recoverable=True, context={}
-            )
+            return Failure(error="Vision AI timeout", recoverable=True, context={})
         return Success(
             _StubLLMResponse(
-                content=(
-                    "## Visual Description\n\nA screenshot.\n\n"
-                    "Title: Test Image"
-                ),
+                content=("## Visual Description\n\nA screenshot.\n\nTitle: Test Image"),
                 model="test-vision",
             )
         )
@@ -173,9 +169,7 @@ class TestCaptureUpload:
             call_count += 1
             return Success((_GOOD_SUMMARY, _GOOD_TITLE))
 
-        monkeypatch.setattr(
-            "pipelines.capture._summarize_upload", counting_stub
-        )
+        monkeypatch.setattr("pipelines.capture._summarize_upload", counting_stub)
         from pipelines.capture import capture_upload
 
         # First upload
@@ -274,6 +268,7 @@ class TestCaptureUpload:
 
         # Check audit_log table
         import sqlite3
+
         conn = sqlite3.connect(str(db))
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
@@ -298,6 +293,7 @@ class TestCaptureUpload:
         )
 
         import sqlite3
+
         conn = sqlite3.connect(str(db))
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
@@ -341,10 +337,11 @@ class TestCaptureUpload:
         )
 
         captured = capsys.readouterr()
-        assert "capture.classify_ready" in captured.out, (
-            f"Expected classify_ready in stdout, got: {captured.out[:500]}"
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", captured.out)
+        assert "capture.classify_ready" in clean, (
+            f"Expected classify_ready in stdout, got: {clean[:500]}"
         )
-        assert "vault_path=inbox/classify_log_test.md" in captured.out
+        assert "vault_path=inbox/classify_log_test.md" in clean
 
 
 class TestBestEffortIndex:
@@ -399,9 +396,7 @@ class TestBestEffortIndex:
                         db_path=None,
                     )
 
-        mock_logger.exception.assert_called_with(
-            "capture.index_keywords_failed"
-        )
+        mock_logger.exception.assert_called_with("capture.index_keywords_failed")
 
     def test_best_effort_index_logs_embedding_error_without_propagating(self):
         """_best_effort_index should log embedding errors but not raise."""
@@ -420,9 +415,7 @@ class TestBestEffortIndex:
                         db_path=None,
                     )
 
-        mock_logger.exception.assert_called_with(
-            "capture.index_embedding_failed"
-        )
+        mock_logger.exception.assert_called_with("capture.index_embedding_failed")
 
 
 class TestAttachSummaryFailure:
@@ -437,7 +430,9 @@ class TestAttachSummaryFailure:
         from pipelines.capture import capture_upload
 
         with mock.patch("pipelines.capture.documents.attach_summary") as mock_attach:
-            mock_attach.return_value = Failure(error="db locked", recoverable=True, context={})
+            mock_attach.return_value = Failure(
+                error="db locked", recoverable=True, context={}
+            )
             with mock.patch("pipelines.capture.logger") as mock_logger:
                 result = await capture_upload(
                     vault_path="inbox/attach_fail.md",
@@ -474,7 +469,9 @@ class TestAttachSummaryFailure:
         raw = b"\x89PNG\r\n\x1a\nfake png"
 
         with mock.patch("pipelines.capture.documents.attach_summary") as mock_attach:
-            mock_attach.return_value = Failure(error="db locked", recoverable=True, context={})
+            mock_attach.return_value = Failure(
+                error="db locked", recoverable=True, context={}
+            )
             with mock.patch("pipelines.capture.logger") as mock_logger:
                 result = await capture_upload(
                     vault_path="Projects/A/attachment/bin_attach_fail.png",

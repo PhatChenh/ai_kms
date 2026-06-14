@@ -191,7 +191,7 @@ This phase is purely internal cleanup — no new features, no API changes, no us
 
 - **Hardcoded retry delays (Finding M6)** — The retry helper uses `1s base, 2x multiplier` as constants. Convention says these should be in config, but they are internal retry parameters and acceptable for MVP. Deferred — no phase assigned yet.
 - **Event type string enum (Finding M7)** — `"deleted"` and `"moved"` are hardcoded strings in the Event Reporter. An enum would centralize them but the strings are used in only 2 places. Deferred — no phase assigned yet.
-- **Cloud/API findings C1-C4, C6-C8** — These are separate from the daemon and capture pipeline. C2 (sync blob blocks event loop) and C4 (missing UNIQUE constraint) are tracked for Phase 9 and Phase 8 respectively. The rest are cosmetic or false positives per the research verification.
+- **Cloud/API findings C1-C3, C6-C8** — These are separate from the daemon and capture pipeline. C2 (sync blob blocks event loop) is tracked for Phase 9. C4 (no UNIQUE constraint on knowledge_entries) is intentional — dedup is prompt-level by design (Phase 8 grill decision), not a SQL constraint. The rest are cosmetic or false positives per the research verification.
 - **Local-only mode watcher tests** — `test_watcher.py` (48 vault/watcher tests) was deleted on the cloud-native branch. Restoring or deprecating the legacy vault watcher is a separate decision. Not in scope for this batch.
 - **Auto-update mechanism** — The daemon installer (Phase 6 Slice B) defers auto-update. This batch does not add it.
 

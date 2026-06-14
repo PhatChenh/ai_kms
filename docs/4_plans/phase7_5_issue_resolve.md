@@ -572,7 +572,7 @@ None. All 12 approaches are locked per the design doc. All 14 assumptions (A1-A1
 | Item | Reason | Tracked where |
 |------|--------|---------------|
 | C1 -- multipart upload reads full body into memory | Deferred to Phase 9 (streaming upload) | Spec out-of-scope |
-| C4 -- missing UNIQUE constraint on vault_path | Deferred to Phase 8 (migration concern) | Spec out-of-scope |
+| C4 -- no UNIQUE constraint on knowledge_entries | Not a bug — intentional prompt-level dedup (Phase 8 grill decision) | N/A |
 | M2 -- structlog vs stdlib Logger inconsistency | Acceptable for MVP -- daemon uses structlog, scanner uses stdlib | Spec out-of-scope |
 | M3 -- _periodic_reconcile logs at info/exception inconsistently | Acceptable style variation | Spec out-of-scope |
 | M4 -- scan_batch_size unused but "might be needed later" | False positive -- dead code removed as M1 | Spec out-of-scope |
