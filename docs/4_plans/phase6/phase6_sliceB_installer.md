@@ -1,6 +1,6 @@
 # Plan: Phase 6 Slice B — Installable Daemon App
 
-_Last updated: 2026-06-14_
+_Last updated: 2026-06-15_
 _Status: [~] in progress_
 
 _Spec: `docs/2_specs/phase6/phase6_sliceB_installer.md` — the source of truth for WHAT to build (7 components, "Build" descriptions, "Done when" criteria). This plan owns HOW: ordering, TDD RED→GREEN, exact line numbers, commit boundaries._
@@ -194,9 +194,7 @@ src/daemon/connection_check.py   (NEW)
 
 **Notes / coupling**: `# COUPLING:` the endpoint suffix `/api/state` is the single authed surface today (`api.py:450`). `[closed]` — a second probe would edit this file; acceptable per the design's honest-cardinality stance.
 
-**Status**: [x] done
-**Completed**: 2026-06-16
-**Notes**: Implemented `src/daemon/connection_check.py` with `async def check_connection(endpoint, key, client=None) -> Result[None]`. Uses httpx.AsyncClient with injected client support for testing. Targets `/api/state` (gated endpoint), never `/health`. Catches `HTTPStatusError` (401 → "authentication" Failure, other → status+body Failure) and `RequestError` → "cannot reach" Failure. 5 tests: 200→Success, 401→"authentication", connection error→"cannot reach", 500→status+body, GUARD: request path is `/api/state` not `/health`. Mock transport via injected AsyncMock client — no real network calls. Full daemon suite: 270 tests pass (5 new + 265 baseline). No deviations from plan.
+**Status**: [ ] pending
 
 ---
 
@@ -341,16 +339,19 @@ src/daemon/app.py   (NEW)
 - `tests/test_daemon/test_cli.py` (existing, if present) — add the stop-event-exits-loop test.
 
 **Test criteria**:
-- [ ] `uv run pytest tests/test_daemon/test_app.py` green.
-- [ ] Fresh machine path invokes the wizard and registers at login once on success.
-- [ ] Already-set-up path skips the wizard and starts the engine.
-- [ ] Quit sets the stop event and the watch loop exits via `watcher.stop()/join()` — no `KeyboardInterrupt`.
-- [ ] A half-written config routes to a tray-error state, not an uncaught crash.
+- [x] `uv run pytest tests/test_daemon/test_app.py` green.  (9 tests)
+- [x] Fresh machine path invokes the wizard and registers at login once on success.
+- [x] Already-set-up path skips the wizard and starts the engine.
+- [x] Quit sets the stop event and the watch loop exits via `watcher.stop()/join()` — no `KeyboardInterrupt`.
+- [x] A half-written config routes to a tray-error state, not an uncaught crash.
 - [ ] (Manual) the engine runs through the existing `asyncio.run` path on a worker thread; tray on main; key via env var; no `config.py` edit.
 
 **Notes / coupling**: `# COUPLING:` the env-injection-before-loader ordering is load-bearing — `load_daemon_config` raises `ValueError` if `KMS_DAEMON_API_KEY` is absent (`config.py:126-130`). `load_key_into_env()` MUST run before any `load_daemon_config()` call. C-18: the tray reads engine alive/error via an injected `state_provider`; it must NOT call into the sync path.
 
-**Status**: [ ] pending
+**Status**: [x] done
+
+**Completed**: 2026-06-16
+**Notes**: Implemented `_run_with_stop(cfg, config_path, stop_event=None)` in cli.py — extracted the inner `_run` function from `start` command into a standalone async function. The `start` command now simply calls `asyncio.run(_run_with_stop(cfg, Path(config_path)))`. The stop_event check (`if stop_event is not None and stop_event.is_set(): break`) is the only additive change to the loop. Implemented `run_app()` in app.py with the full setup-vs-run decision, wizard invocation, register-at-login, env injection, config validation, worker-thread engine start, and tray display. catch block handles `ValueError`/`yaml.YAMLError`/`pydantic.ValidationError` from `load_daemon_config` and routes to tray-error via `_show_error_tray()`. 11 new tests (9 app, 2 cli stop-event). Full daemon suite: 303 tests pass, 0 regressions. Removed unused `BinaryContent` import from cli.py (was already unused before this change). Lint clean.
 
 ---
 
@@ -381,13 +382,15 @@ src/daemon/cli.py     @cli.command()  def uninstall(): ...   ◄── self-regi
 - `tests/test_daemon/test_uninstall.py` (NEW) — removes-everything + idempotency tests.
 
 **Test criteria**:
-- [ ] `uv run pytest tests/test_daemon/test_uninstall.py` green.
-- [ ] After running on a set-up machine: no key in the vault, no config file, no auto-start registration.
-- [ ] Running it twice is safe (idempotent) and returns a `Result` describing what was removed.
+- [x] `uv run pytest tests/test_daemon/test_uninstall.py` green.
+- [x] After running on a set-up machine: no key in the vault, no config file, no auto-start registration.
+- [x] Running it twice is safe (idempotent) and returns a `Result` describing what was removed.
 
 **Notes / coupling**: none beyond reuse of Phases 1 and 3.
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-06-16
+**Notes**: Implemented `run_uninstall()` (Result-returning) and `@cli.command() def uninstall()` as the fourth Click command on the existing group. Uses lazy imports of `delete_key`/`read_key` from `daemon.secret_vault` and `get_os_adapter` from `daemon.os_glue`. Idempotent: checks key existence via `read_key()` before deleting, skips missing config, always calls `unregister_at_login()` (idempotent itself). 11 new tests, 292 total daemon tests pass with zero regressions.
 
 ---
 

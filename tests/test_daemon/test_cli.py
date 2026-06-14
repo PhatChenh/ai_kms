@@ -1848,3 +1848,142 @@ def test_main_entry_point():
     # Verify the module imports without side effects (cli() is behind __main__ guard)
     import daemon.__main__
     assert daemon.__main__.cli is cli
+
+
+# ── _run_with_stop tests ────────────────────────────────────────────────────
+
+
+class TestRunWithStop:
+    """Tests for the extracted ``_run_with_stop`` stop-event seam (Phase 5)."""
+
+    @pytest.mark.asyncio
+    async def test_run_with_stop_exits_when_stop_event_set(self, tmp_path, monkeypatch):
+        """``_run_with_stop`` exits its main loop when stop_event is set.
+
+        The function must NOT hang forever — setting the event must cause the
+        ``while True`` loop to break and the ``finally`` block to run
+        (watcher.stop()/join()).
+        """
+        monkeypatch.setenv("KMS_DAEMON_API_KEY", "test-key")
+
+        from daemon.config import DaemonConfig
+
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(f"""vault_root: {vault}
+cloud_endpoint: http://fake:8080
+""")
+
+        cfg = DaemonConfig(
+            vault_root=vault,
+            cloud_endpoint="http://fake:8080",
+            api_key="test-key",
+            cache_path=str(tmp_path / "cache.json"),
+        )
+
+        fake_result = ScanResult(uploaded=0, re_uploaded=0, deleted=0, skipped=0)
+
+        async def _fake_scan(cfg, client, cache=None, candidate_deletes=None, sweep_delete_confirmations=1):
+            return fake_result
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        mock_watcher = MagicMock()
+        mock_watcher.start = MagicMock()
+        mock_watcher.stop = MagicMock()
+        mock_watcher.join = MagicMock()
+
+        # Count sleep iterations; set stop_event after 2 iterations
+        sleep_count = [0]
+        stop_event = asyncio.Event()
+        _real_sleep = asyncio.sleep
+
+        async def _fake_sleep(seconds):
+            sleep_count[0] += 1
+            if sleep_count[0] >= 2:
+                stop_event.set()
+            await _real_sleep(0)
+
+        with (
+            patch("daemon.cli.httpx.AsyncClient", return_value=mock_client),
+            patch("daemon.cli.scan", side_effect=_fake_scan),
+            patch("daemon.cli.DaemonWatcher", return_value=mock_watcher),
+            patch("daemon.cli.asyncio.sleep", side_effect=_fake_sleep),
+        ):
+            await daemon.cli._run_with_stop(
+                cfg=cfg,
+                config_path=config_path,
+                stop_event=stop_event,
+            )
+
+        # After _run_with_stop returns, the watcher must have been stopped
+        mock_watcher.start.assert_called_once()
+        mock_watcher.stop.assert_called_once()
+        mock_watcher.join.assert_called_once()
+        # The loop must have run at least 2 iterations before the stop event broke it
+        assert sleep_count[0] >= 2
+
+    @pytest.mark.asyncio
+    async def test_run_with_stop_no_stop_event_runs_normally(self, tmp_path, monkeypatch):
+        """``_run_with_stop`` with stop_event=None behaves like the original ``_run``.
+
+        The stop_event check is skipped when None, so the function must be
+        externally interrupted (e.g. KeyboardInterrupt) — same as before.
+        """
+        monkeypatch.setenv("KMS_DAEMON_API_KEY", "test-key")
+
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(f"""vault_root: {vault}
+cloud_endpoint: http://fake:8080
+""")
+
+        from daemon.config import DaemonConfig
+        cfg = DaemonConfig(
+            vault_root=vault,
+            cloud_endpoint="http://fake:8080",
+            api_key="test-key",
+            cache_path=str(tmp_path / "cache.json"),
+        )
+
+        fake_result = ScanResult(uploaded=0, re_uploaded=0, deleted=0, skipped=0)
+
+        async def _fake_scan(cfg, client, cache=None, candidate_deletes=None, sweep_delete_confirmations=1):
+            return fake_result
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        mock_watcher = MagicMock()
+        mock_watcher.start = MagicMock()
+        mock_watcher.stop = MagicMock()
+        mock_watcher.join = MagicMock()
+
+        sleep_count = [0]
+        _real_sleep = asyncio.sleep
+
+        async def _fake_sleep(seconds):
+            sleep_count[0] += 1
+            if sleep_count[0] >= 3:
+                raise KeyboardInterrupt()
+            await _real_sleep(0)
+
+        with (
+            patch("daemon.cli.httpx.AsyncClient", return_value=mock_client),
+            patch("daemon.cli.scan", side_effect=_fake_scan),
+            patch("daemon.cli.DaemonWatcher", return_value=mock_watcher),
+            patch("daemon.cli.asyncio.sleep", side_effect=_fake_sleep),
+        ):
+            try:
+                await daemon.cli._run_with_stop(cfg=cfg, config_path=config_path)
+            except KeyboardInterrupt:
+                pass
+
+        # The finally block must still run
+        mock_watcher.stop.assert_called_once()
+        mock_watcher.join.assert_called_once()
