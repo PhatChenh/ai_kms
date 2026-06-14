@@ -196,11 +196,24 @@ class _DaemonEventHandler(FileSystemEventHandler):
             return
         src_path = Path(str(event.src_path))
         dst_path = Path(str(event.dest_path))
-        if self._should_skip(src_path) or self._should_skip(dst_path):
+        src_skip = self._should_skip(src_path)
+        dst_skip = self._should_skip(dst_path)
+
+        if src_skip and dst_skip:
+            return  # both ignored -- drop silently
+        if dst_skip:
+            # Moving INTO ignored area -- treat as delete of source
+            old_vp = self._to_vault_path(src_path)
+            self._on_delete(old_vp)
             return
+        if src_skip:
+            # Moving OUT OF ignored area -- treat as create at destination
+            new_vp = self._to_vault_path(dst_path)
+            self._debounce(f"create:{new_vp}", self._on_create, (new_vp,))
+            return
+        # Neither skipped -- normal move
         old_vp = self._to_vault_path(src_path)
         new_vp = self._to_vault_path(dst_path)
-        # Moves are not debounced — they are discrete events
         self._on_move(old_vp, new_vp)
 
     def on_deleted(self, event) -> None:

@@ -212,7 +212,10 @@ def scan_cmd(config_path: str) -> None:
 
     async def _run() -> None:
         cfg = _load_config(config_path)
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(
+            timeout=30,
+            headers={"Authorization": f"Bearer {cfg.api_key}"},
+        ) as client:
             result: ScanResult = await scan(cfg, client)
         click.echo(f"Scan complete — vault: {cfg.vault_root}")
         click.echo(f"  Uploaded:    {result.uploaded}")
@@ -273,7 +276,10 @@ class DaemonLoop:
         self._move_timer = None
         self._periodic_task = None
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(
+            timeout=30,
+            headers={"Authorization": f"Bearer {self._cfg.api_key}"},
+        ) as client:
             self._client = client
 
             # ── 1. Startup scan ──────────────────────────────────────
@@ -377,7 +383,8 @@ class DaemonLoop:
                     case Failure() as f:
                         _log.warning("report_deleted failed (expired)", vault_path=old_vp, error=f.error)
 
-        asyncio.run_coroutine_threadsafe(_handle_expired(), self._loop)
+        fut = asyncio.run_coroutine_threadsafe(_handle_expired(), self._loop)
+        fut.add_done_callback(self._log_future_exception)
 
     def _on_create_or_modify(self, vp: str) -> None:
         """Schedule an extract + upload for a vault-relative path."""
@@ -452,7 +459,8 @@ class DaemonLoop:
                 case Failure() as f:
                     _log.warning("extract failed", vault_path=vp, error=f.error)
 
-        asyncio.run_coroutine_threadsafe(_handle(), self._loop)
+        fut = asyncio.run_coroutine_threadsafe(_handle(), self._loop)
+        fut.add_done_callback(self._log_future_exception)
 
     def _on_move(self, old_vp: str, new_vp: str) -> None:
         """Schedule a move event report."""
@@ -474,7 +482,8 @@ class DaemonLoop:
                 case Failure() as f:
                     _log.warning("report_moved failed", old_path=old_vp, new_path=new_vp, error=f.error)
 
-        asyncio.run_coroutine_threadsafe(_handle(), self._loop)
+        fut = asyncio.run_coroutine_threadsafe(_handle(), self._loop)
+        fut.add_done_callback(self._log_future_exception)
 
     def _on_delete(self, vp: str) -> None:
         """Buffer the delete in Move Detective; report only after window expires with no match."""
@@ -492,7 +501,19 @@ class DaemonLoop:
                     case Failure() as f:
                         _log.warning("report_deleted failed", vault_path=vp, error=f.error)
 
-            asyncio.run_coroutine_threadsafe(_handle(), self._loop)
+            fut = asyncio.run_coroutine_threadsafe(_handle(), self._loop)
+            fut.add_done_callback(self._log_future_exception)
+
+    # ── future exception logging ─────────────────────────────────────
+
+    def _log_future_exception(self, fut: asyncio.Future) -> None:
+        """Log any exception from a completed Future at error level."""
+        try:
+            exc = fut.exception()
+        except asyncio.CancelledError:
+            return
+        if exc is not None:
+            _log.error("Async callback failed", exc_info=exc)
 
     # ── periodic reconcile ────────────────────────────────────────────
 

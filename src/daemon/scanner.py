@@ -26,6 +26,7 @@ from pathlib import Path
 import httpx
 
 from core.result import Failure, Success
+from daemon._http_retry import retry_with_backoff
 from daemon.cache import LocalCache
 from daemon.config import DaemonConfig
 from daemon.event_reporter import report_deleted
@@ -34,6 +35,15 @@ from daemon.uploader import upload_binary, upload_text
 from daemon.watcher import should_skip_path
 
 _log = logging.getLogger(__name__)
+
+# ── glob metacharacters for pattern classification ───────────────────────────
+
+_GLOB_CHARS = {"*", "?", "[", "]"}
+
+
+def _skip_dirs_from_patterns(patterns: list[str]) -> set[str]:
+    """Extract non-glob directory names from ignore patterns for os.walk pruning."""
+    return {p for p in patterns if not set(p) & _GLOB_CHARS}
 
 
 @dataclass
@@ -90,12 +100,15 @@ async def scan(
 
     # ── 1. Fetch cloud state ──────────────────────────────────────────────
     cloud_state = await _fetch_cloud_state(config, client)
+    if cloud_state is None:
+        _log.warning("Scan aborted — cloud unreachable after retries")
+        return ScanResult()
 
     # ── 2. Walk vault + build disk state ──────────────────────────────────
 
     # ── A1 backward-compat path (cache=None) ──────────────────────────────
     if cache is None:
-        disk_state, unreadable = _build_disk_state(config)
+        _entries, disk_state, unreadable = _build_disk_entries(config)
         return await _scan_2way(config, client, cloud_state, disk_state, unreadable)
 
     # ── 3-way path (cache is provided) ────────────────────────────────────
@@ -429,21 +442,25 @@ def _handle_candidate_delete(
 async def _fetch_cloud_state(
     config: DaemonConfig,
     client: httpx.AsyncClient,
-) -> dict[str, str | None]:
+) -> dict[str, str | None] | None:
     """Fetch the cloud manifest and return ``{vault_path: content_hash}``.
 
     ``content_hash`` may be ``None`` when the cloud has not stored a hash
     (treated as "always re-upload").
+
+    Returns ``None`` when the cloud is unreachable after all retries.
     """
     url = f"{config.cloud_endpoint}/api/state"
-    headers = {"Authorization": f"Bearer {config.api_key}"}
 
-    try:
-        response = await client.get(url, headers=headers)
-        response.raise_for_status()
-    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
-        _log.error("Failed to fetch cloud state: %s", exc)
-        return {}
+    async def _request() -> httpx.Response:
+        return await client.get(url)
+
+    match await retry_with_backoff(client, config, _request):
+        case Success(value=response):
+            pass  # continue to parse response
+        case Failure() as f:
+            _log.warning("Cloud state fetch failed after retries: %s", f.error)
+            return None
 
     try:
         body = response.json()
@@ -475,51 +492,6 @@ async def _fetch_cloud_state(
     return result
 
 
-def _build_disk_state(config: DaemonConfig) -> tuple[dict[str, str], set[str]]:
-    """Walk the vault and return ``({vault_path: sha256_hex}, unreadable_set)``.
-
-    Directories are skipped; files matching *ignore_patterns* are skipped.
-    Unreadable files are logged at WARNING and added to the ``unreadable`` set
-    so the caller can exclude them from cloud-only deletion.
-    """
-    result: dict[str, str] = {}
-    unreadable: set[str] = set()
-    vault_root = config.vault_root.resolve()
-    ignore_patterns = config.ignore_patterns
-
-    for dirpath_str, _dirnames, filenames in os.walk(str(vault_root)):
-        dirpath = Path(dirpath_str)
-
-        for fname in filenames:
-            filepath = dirpath / fname
-
-            if should_skip_path(filepath, ignore_patterns, root=vault_root):
-                continue
-
-            try:
-                rel = filepath.resolve().relative_to(vault_root)
-            except ValueError:
-                _log.warning("File outside vault_root during scan: %s", filepath)
-                continue
-
-            vault_path = unicodedata.normalize("NFC", rel.as_posix())
-
-            try:
-                raw = filepath.read_bytes()
-            except OSError:
-                _log.warning(
-                    "Cannot read file during scan, will not delete cloud copy: %s",
-                    filepath,
-                )
-                unreadable.add(vault_path)
-                continue
-
-            content_hash = hashlib.sha256(raw).hexdigest()
-            result[vault_path] = content_hash
-
-    return result, unreadable
-
-
 def _build_disk_entries(
     config: DaemonConfig,
 ) -> tuple[dict[str, dict], dict[str, str], set[str]]:
@@ -532,7 +504,7 @@ def _build_disk_entries(
     *unreadable*: ``set[str]``
         Paths that could not be read (excluded from cloud-only deletion).
 
-    This supersedes :func:`_build_disk_state` by producing both outputs from
+    This supersedes the previous two-walk approach by producing all outputs from
     a single walk, avoiding a double read+hash in the 3-way scan path.
     """
     entries: dict[str, dict] = {}
@@ -541,7 +513,10 @@ def _build_disk_entries(
     vault_root = config.vault_root.resolve()
     ignore_patterns = config.ignore_patterns
 
-    for dirpath_str, _dirnames, filenames in os.walk(str(vault_root)):
+    skip_dirs = _skip_dirs_from_patterns(ignore_patterns)
+
+    for dirpath_str, dirnames, filenames in os.walk(str(vault_root)):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
         dirpath = Path(dirpath_str)
 
         for fname in filenames:

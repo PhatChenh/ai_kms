@@ -372,27 +372,74 @@ class TestOnMoved:
         time.sleep(WAIT)
         assert calls == [("inbox/note.md", "Projects/Alpha/note.md")]
 
-    def test_skips_when_src_ignored(self, tmp_path: Path):
-        calls: list[tuple[str, str]] = []
+    def test_move_from_ignored_to_watched_fires_create(self, tmp_path: Path):
+        """Move from .git/file to Projects/file → on_create fires with dst path."""
+        create_calls: list[str] = []
+        delete_calls: list[str] = []
+        move_calls: list[tuple[str, str]] = []
         handler, cfg = _make_handler(
-            tmp_path, on_move=lambda s, d: calls.append((s, d))
+            tmp_path,
+            on_create=create_calls.append,
+            on_delete=delete_calls.append,
+            on_move=lambda s, d: move_calls.append((s, d)),
         )
-        src = cfg.vault_root / ".git" / "HEAD"
-        dst = cfg.vault_root / "inbox" / "HEAD"
+        src = cfg.vault_root / ".git" / "file.md"
+        dst = cfg.vault_root / "Projects" / "file.md"
         handler.on_moved(FileMovedEvent(str(src), str(dst)))
         time.sleep(WAIT)
-        assert calls == []
+        assert move_calls == []
+        assert delete_calls == []
+        assert create_calls == ["Projects/file.md"]
 
-    def test_skips_when_dst_ignored(self, tmp_path: Path):
+    def test_move_from_watched_to_ignored_fires_delete(self, tmp_path: Path):
+        """Move from Projects/file to .git/file → on_delete fires with src path."""
+        create_calls: list[str] = []
+        delete_calls: list[str] = []
+        move_calls: list[tuple[str, str]] = []
+        handler, cfg = _make_handler(
+            tmp_path,
+            on_create=create_calls.append,
+            on_delete=delete_calls.append,
+            on_move=lambda s, d: move_calls.append((s, d)),
+        )
+        src = cfg.vault_root / "Projects" / "file.md"
+        dst = cfg.vault_root / ".git" / "file.md"
+        handler.on_moved(FileMovedEvent(str(src), str(dst)))
+        time.sleep(WAIT)
+        assert move_calls == []
+        assert create_calls == []
+        assert delete_calls == ["Projects/file.md"]
+
+    def test_move_both_ignored_is_silent(self, tmp_path: Path):
+        """Move from .git/a to .obsidian/b → no callback fires."""
+        create_calls: list[str] = []
+        delete_calls: list[str] = []
+        move_calls: list[tuple[str, str]] = []
+        handler, cfg = _make_handler(
+            tmp_path,
+            on_create=create_calls.append,
+            on_delete=delete_calls.append,
+            on_move=lambda s, d: move_calls.append((s, d)),
+        )
+        src = cfg.vault_root / ".git" / "a.md"
+        dst = cfg.vault_root / ".obsidian" / "b.md"
+        handler.on_moved(FileMovedEvent(str(src), str(dst)))
+        time.sleep(WAIT)
+        assert move_calls == []
+        assert create_calls == []
+        assert delete_calls == []
+
+    def test_move_neither_ignored_fires_move(self, tmp_path: Path):
+        """Move from inbox/old.md to inbox/new.md → on_move fires."""
         calls: list[tuple[str, str]] = []
         handler, cfg = _make_handler(
             tmp_path, on_move=lambda s, d: calls.append((s, d))
         )
-        src = cfg.vault_root / "inbox" / "note.md"
-        dst = cfg.vault_root / ".git" / "note.md"
+        src = cfg.vault_root / "inbox" / "old.md"
+        dst = cfg.vault_root / "inbox" / "new.md"
         handler.on_moved(FileMovedEvent(str(src), str(dst)))
         time.sleep(WAIT)
-        assert calls == []
+        assert calls == [("inbox/old.md", "inbox/new.md")]
 
     def test_skips_dir_moved(self, tmp_path: Path):
         calls: list[tuple[str, str]] = []
