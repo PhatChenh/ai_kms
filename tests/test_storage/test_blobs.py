@@ -28,6 +28,21 @@ def test_put_then_get_returns_same_bytes(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# P7-CAP-BLOB-01b: get on non-existent key returns Failure
+# ---------------------------------------------------------------------------
+
+
+def test_get_nonexistent_key_returns_failure(tmp_path):
+    """get() on a key that was never written returns a Failure."""
+    store = LocalBlobStore(root=tmp_path)
+    key = "test/nonexistent.bin"
+
+    result = store.get(key)
+    assert result.is_failure()
+    assert "not found" in result.error
+
+
+# ---------------------------------------------------------------------------
 # P7-CAP-BLOB-02: put same key twice is idempotent
 # ---------------------------------------------------------------------------
 
@@ -103,6 +118,69 @@ def test_exists_missing_key_returns_success_false(tmp_path):
     result = store.exists(key)
     assert result.is_success()
     assert result.value is False
+
+
+# ---------------------------------------------------------------------------
+# P7-CAP-BLOB-05b: path traversal is rejected
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "/etc/passwd",           # absolute path
+        "../etc/passwd",         # parent traversal
+        "foo/../../../etc/passwd",  # deep traversal
+        "",                       # empty
+        "///",                    # separator-only
+    ],
+)
+def test_path_traversal_rejected(tmp_path, key):
+    """Keys that escape the blob root are rejected with Failure('invalid key')."""
+    store = LocalBlobStore(root=tmp_path)
+
+    for method_name, args in [
+        ("put", (key, b"data", "text/plain")),
+        ("get", (key,)),
+        ("exists", (key,)),
+        ("delete", (key,)),
+    ]:
+        method = getattr(store, method_name)
+        result = method(*args)
+        assert result.is_failure(), f"{method_name}({key!r}) should fail"
+        assert "invalid key" in result.error.lower(), (
+            f"{method_name}({key!r}): expected 'invalid key', got {result.error!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# P7-CAP-BLOB-05c: mime_type round-trips via sidecar
+# ---------------------------------------------------------------------------
+
+
+def test_mime_type_round_trip(tmp_path):
+    """put() persists mime_type; get_mime_type() retrieves it."""
+    store = LocalBlobStore(root=tmp_path)
+    key = "test/mime.bin"
+    data = b"mime test"
+    mime_type = "image/png"
+
+    r = store.put(key, data, mime_type=mime_type)
+    assert r.is_success()
+
+    r = store.get_mime_type(key)
+    assert r.is_success()
+    assert r.value == mime_type
+
+
+def test_get_mime_type_unknown_key_returns_none(tmp_path):
+    """get_mime_type() on a non-existent key returns Success(None)."""
+    store = LocalBlobStore(root=tmp_path)
+    key = "test/no-mime.bin"
+
+    r = store.get_mime_type(key)
+    assert r.is_success()
+    assert r.value is None
 
 
 # ---------------------------------------------------------------------------
