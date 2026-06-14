@@ -3447,12 +3447,10 @@
     model is NOT invoked (front-loaded dedup over raw bytes)
   spec_ref: docs/1_design/phase7/phase7b_visual_capture.md §Success criteria
   human_reviewed: false
-  last_tested: null
-  last_result: null
-  pytest_ref: null
-  status: planned
-  retired: null
-- id: P7-CAP-11
+  last_tested: 2026-06-14
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_capture_binary.py::test_describable_binary_upload_stores_blob_and_description, tests/test_pipelines/test_capture_binary.py::test_identical_reupload_skips_blob_and_ai
+  status: active
   behavior: A describable binary (image or text-less PDF) gets one vision-model description
     written to both the summary and the full text fields, making it findable by search;
     on vision failure the blob is kept, the failure is audited, and success is still
@@ -3477,12 +3475,10 @@
     returns success
   spec_ref: docs/1_design/phase7/phase7b_visual_capture.md §Success criteria
   human_reviewed: false
-  last_tested: null
-  last_result: null
-  pytest_ref: null
-  status: planned
-  retired: null
-- id: P7-CAP-12
+  last_tested: 2026-06-14
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_capture_binary.py::test_describable_binary_upload_stores_blob_and_description, tests/test_pipelines/test_capture_binary.py::test_vision_ai_failure_stores_blob_returns_success
+  status: active
   behavior: A binary that is over the size cap, or of a type the vision model cannot
     read (zip, video, etc.), is stored but not described — the description stays empty
     and an audit entry records the reason (too-big / unsupported-type)
@@ -3504,12 +3500,10 @@
   - The endpoint returns success
   spec_ref: docs/1_design/phase7/phase7b_visual_capture.md §Success criteria
   human_reviewed: false
-  last_tested: null
-  last_result: null
-  pytest_ref: null
-  status: planned
-  retired: null
-- id: P7-CAP-13
+  last_tested: 2026-06-14
+  last_result: passed
+  pytest_ref: tests/test_pipelines/test_capture_binary.py::test_unsupported_type_stores_blob_no_description, tests/test_pipelines/test_capture_binary.py::test_over_size_cap_stores_blob_no_description
+  status: active
   behavior: When a file delete is reported and its document row is removed, the stored
     blob is deleted only when no other document row still references it (delete-when-last-reference-gone);
     a blob shared by two rows survives the deletion of one
@@ -3531,12 +3525,10 @@
     no object storage
   spec_ref: docs/1_design/phase7/phase7b_visual_capture.md §Success criteria
   human_reviewed: false
-  last_tested: null
-  last_result: null
-  pytest_ref: null
-  status: planned
-  retired: null
-- id: P6-A2-01
+  last_tested: 2026-06-14
+  last_result: passed
+  pytest_ref: tests/test_mcp_server/test_api_blob_delete.py::TestLastRefDeleteRemovesBlob, tests/test_mcp_server/test_api_blob_delete.py::TestSharedRefDeleteKeepsBlob
+  status: active
   behavior: An unchanged file is recognised instantly from the local cache and is
     NOT re-extracted or re-uploaded — editing-then-saving a file with identical bytes,
     or restarting the daemon, skips work the cloud already has
