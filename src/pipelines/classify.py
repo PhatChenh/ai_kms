@@ -342,7 +342,7 @@ def context_loader(
 
     # Locate dimensions.yaml relative to this source file
     _classify_dir = Path(__file__).resolve().parent  # src/pipelines
-    _project_root = _classify_dir.parent  # src
+    _project_root = _classify_dir.parent.parent  # project root
     dimensions_path = _project_root / "config" / "dimensions.yaml"
 
     dims_result = load_dimensions(dimensions_path)
