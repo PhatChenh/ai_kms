@@ -38,7 +38,7 @@ def test_migration_007_sets_schema_version_7(tmp_path: Path) -> None:
     version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
     conn.close()
 
-    assert version == 9, f"Expected schema_version=9, got {version}"
+    assert version == 10, f"Expected schema_version=10, got {version}"
 
 
 def test_migration_007_is_idempotent(tmp_path: Path) -> None:
@@ -53,7 +53,7 @@ def test_migration_007_is_idempotent(tmp_path: Path) -> None:
     conn = sqlite3.connect(str(db_path))
     version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
     conn.close()
-    assert version == 9
+    assert version == 10
 
 
 def test_vec_version_succeeds(tmp_path: Path) -> None:
