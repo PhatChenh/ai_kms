@@ -97,9 +97,9 @@ async def upload_handler(request: Request) -> JSONResponse:
             vault_path        (required)
             content_hash      (required)
             original_filename (optional)
-            file_size_bytes   (optional)
-            mime_type         (optional, accepted and discarded)
-            file              (optional, accepted and discarded in A1)
+            file_size_bytes   (optional, integer ≥ 0)
+            mime_type         (optional, used for vision routing)
+            file              (required, raw file bytes)
 
         ``extracted_text`` is set to ``None`` — ``full_body`` will be NULL.
 
@@ -146,6 +146,11 @@ async def upload_handler(request: Request) -> JSONResponse:
                     {"status": "error", "detail": "file_size_bytes must be an integer"},
                     status_code=400,
                 )
+            if file_size_bytes < 0:
+                return JSONResponse(
+                    {"status": "error", "detail": "file_size_bytes must be non-negative"},
+                    status_code=400,
+                )
 
         raw_bytes: bytes | None = None
         mime_type_str: str | None = None
@@ -153,6 +158,13 @@ async def upload_handler(request: Request) -> JSONResponse:
         if file_upload is not None:
             raw_bytes = await file_upload.read()
             mime_type_str = form.get("mime_type") or file_upload.content_type or None
+
+        # No file field in multipart upload is a client error (400), not server
+        if raw_bytes is None:
+            return JSONResponse(
+                {"status": "error", "detail": "file field is required for multipart uploads"},
+                status_code=400,
+            )
 
         result = await capture_upload(
             vault_path=vault_path,
@@ -300,6 +312,15 @@ def _delete_with_blob_cleanup(
        connection.
     4. If count == 0 → ``blob_store.delete(key)`` best-effort.
        Failed blob delete is logged but does NOT fail the result.
+
+    **TOCTOU race window:** Between the ``delete_by_path`` commit and the
+    ref-count query, another request may insert a row with the same
+    ``blob_ref``, causing a false-positive on the count (0 even though a
+    surviving row references it).  In that scenario ``blob_store.delete``
+    removes the blob, but the surviving row still references it — the blob
+    is re-created on the next ``put`` (idempotent), so no permanent data
+    loss.  This is an accepted trade-off for not holding a DB lock during
+    the S3 call.
 
     Args:
         vault_path: POSIX-relative path for the document row to delete.

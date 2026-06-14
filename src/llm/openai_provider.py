@@ -103,17 +103,27 @@ class OpenAIProvider(LLMProvider):
             system:      Behavioural instructions.
             user:        User prompt text describing what to look for.
             image_bytes: Raw image bytes (PNG, JPEG, etc.).
-            mime_type:   MIME type string, e.g. "image/png".
+            mime_type:   MIME type string, e.g. "image/png".  Must match
+                         ``^[a-z]+/[a-z0-9.+-]+$`` (lowercase type/subtype).
 
         Returns:
             Success(LLMResponse) on a valid description,
-            Failure if vision_model is empty or on any API/network error.
+            Failure if vision_model is empty, mime_type is invalid,
+            or on any API/network error.
         """
+        import re
+
         if not self._vision_model:
             return Failure(
                 "no vision_model configured for OpenAI compat provider",
                 recoverable=False,
                 context={},
+            )
+        if not mime_type or not re.match(r"^[a-z]+/[a-z0-9.+-]+$", mime_type):
+            return Failure(
+                error="invalid mime_type",
+                recoverable=False,
+                context={"mime_type": mime_type},
             )
         b64 = base64.b64encode(image_bytes).decode("ascii")
         image_block = {

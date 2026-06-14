@@ -7,5 +7,9 @@ system: |
   - Be concrete and factual. Do not speculate beyond what is visible.
 
 user: |
-  Please describe this image in detail. First provide a one-line descriptive title, then a thorough description of everything visible.
+  Please describe this image in detail. Provide a thorough, searchable description of everything visible in the image.
+
+  After the description, on the VERY LAST line, provide a short descriptive title.  The title must be ONE line prefixed with exactly "Title: " and must be a concise, human-readable phrase.  Example:
+
+  Title: Dashboard showing Q2 revenue metrics
 variables: [mime_type]

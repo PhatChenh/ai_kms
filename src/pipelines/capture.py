@@ -7,14 +7,13 @@ Entry point: capture_upload(vault_path, extracted_text, content_hash, ...) -> Re
 
 from __future__ import annotations
 
-from __future__ import annotations
-
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
 
 from core.confidence import AIDecision
+from core.exceptions import ConfigError
 from core.result import Failure, Result, Success
 from llm.prompt_loader import PROMPTS
 from llm.provider import get_provider
@@ -400,9 +399,9 @@ async def _capture_binary(
         vision_cfg = CONFIG.main.capture.vision
         describable_prefixes = vision_cfg.describable_mime_prefixes
         max_bytes = vision_cfg.max_vision_bytes
-    except Exception:
+    except ConfigError:
         # If config can't be loaded, skip describing
-        logger.warning("capture.binary.config_load_failed — skipping vision")
+        logger.error("capture.binary.config_load_failed — skipping vision")
         _audit_skip(vault_path, "config_load_failed", db_path)
         return Success(row_id)
 
@@ -447,11 +446,12 @@ async def _capture_binary(
             if not title:
                 title = stem_title
 
-            # Attach summary
+            # Attach summary (with full_body so description is keyword-searchable)
             documents.attach_summary(
                 vault_path=vault_path,
                 summary=summary,
                 title=title,
+                full_body=summary,
                 db_path=db_path,
             )
 
@@ -463,7 +463,7 @@ async def _capture_binary(
                     vault_path=vault_path,
                     title=title,
                     summary=summary or "",
-                    body="",
+                    body=summary or "",
                     db_path=db_path,
                 )
             except Exception:
