@@ -21,11 +21,14 @@ import click
 import httpx
 import structlog
 
+import threading
+
 from core.result import Failure, Success
 from daemon.cache import DaemonSyncState, LocalCache
 from daemon.config import DaemonConfig, load_daemon_config
 from daemon.event_reporter import report_deleted, report_moved
 from daemon.extractor import BinaryContent, TextContent, extract
+from daemon.move_buffer import MoveBuffer
 from daemon.scanner import ScanResult, scan
 from daemon.uploader import upload_binary, upload_text
 from daemon.watcher import DaemonWatcher
@@ -163,8 +166,13 @@ def start(config_path: str) -> None:
     sync_state = DaemonSyncState()
     cache = LocalCache(sync_state)
     cache.load(Path(cfg.cache_path).expanduser())
+    move_buffer = MoveBuffer(sync_state)  # shares the same lock via sync_state
+
+    _move_timer: threading.Timer | None = None
+    _move_timer_lock = threading.Lock()
 
     async def _run() -> None:
+        nonlocal _move_timer
         async with httpx.AsyncClient(timeout=30) as client:
             # ── 1. Startup scan ──────────────────────────────────────────
             result: ScanResult = await scan(cfg, client)
@@ -188,6 +196,34 @@ def start(config_path: str) -> None:
             loop = asyncio.get_running_loop()
 
             # ── 2. Watcher callbacks ─────────────────────────────────────
+
+            def _refresh_move_timer() -> None:
+                """Start or refresh the move-correlation window timer."""
+                nonlocal _move_timer
+                with _move_timer_lock:
+                    if _move_timer is not None:
+                        _move_timer.cancel()
+                    _move_timer = threading.Timer(
+                        cfg.move_window_seconds,
+                        _on_move_window_expired,
+                    )
+                    _move_timer.daemon = True
+                    _move_timer.start()
+
+            def _on_move_window_expired() -> None:
+                """Called when the move-correlation window expires."""
+                expired = move_buffer.expire(cfg.move_window_seconds)
+                if not expired:
+                    return
+                async def _handle_expired() -> None:
+                    for fingerprint, old_vp in expired:
+                        match await report_deleted(client, cfg, old_vp):
+                            case Success():
+                                _log.info("reported deleted (move window expired)", vault_path=old_vp)
+                                cache.forget(old_vp)
+                            case Failure() as f:
+                                _log.warning("report_deleted failed (expired)", vault_path=old_vp, error=f.error)
+                asyncio.run_coroutine_threadsafe(_handle_expired(), loop)
 
             def _on_create_or_modify(vp: str) -> None:
                 """Schedule an extract + upload for a vault-relative path."""
@@ -220,25 +256,48 @@ def start(config_path: str) -> None:
                                     _log.debug("skipped (stat changed, content same)", vault_path=vp)
                                     return
 
-                    # ── Extract + upload ─────────────────────────────
+                    # ── Extract ───────────────────────────────────────
                     match extract(disk_path, cfg.vault_root, cfg.max_file_size_bytes):
-                        case Success(value=TextContent() as tc):
-                            match await upload_text(client, cfg, tc):
-                                case Success(value=doc_id):
-                                    _log.info("uploaded text", vault_path=vp, doc_id=doc_id)
-                                    # Cache-on-ack
-                                    if cache is not None and st is not None:
-                                        cache.set_after_ack(vp, tc.content_hash, st.st_size, st.st_mtime)
-                                case Failure() as f:
-                                    _log.warning("upload_text failed", vault_path=vp, error=f.error)
-                        case Success(value=BinaryContent() as bc):
-                            match await upload_binary(client, cfg, bc):
-                                case Success(value=doc_id):
-                                    _log.info("uploaded binary", vault_path=vp, doc_id=doc_id)
-                                    if cache is not None and st is not None:
-                                        cache.set_after_ack(vp, bc.content_hash, st.st_size, st.st_mtime)
-                                case Failure() as f:
-                                    _log.warning("upload_binary failed", vault_path=vp, error=f.error)
+                        case Success() as extracted:
+                            # ── After extract, before upload: check Move Detective ──
+                            if isinstance(extracted.value, TextContent):
+                                content_hash = extracted.value.content_hash
+                            else:
+                                content_hash = extracted.value.content_hash
+
+                            old_vp = move_buffer.match_create(content_hash)
+                            if old_vp is not None:
+                                # This is a move! Report instead of uploading.
+                                match await report_moved(client, cfg, old_vp, vp):
+                                    case Success():
+                                        _log.info("detected move via buffer", old_path=old_vp, new_path=vp)
+                                        cache.forget(old_vp)
+                                        if st is not None:
+                                            cache.set_after_ack(vp, content_hash, st.st_size, st.st_mtime)
+                                    case Failure() as f:
+                                        _log.warning("report_moved failed (via buffer)", old_path=old_vp, new_path=vp, error=f.error)
+                                return  # skip upload
+
+                            # ── Normal upload ─────────────────────────
+                            if isinstance(extracted.value, TextContent):
+                                tc = extracted.value
+                                match await upload_text(client, cfg, tc):
+                                    case Success(value=doc_id):
+                                        _log.info("uploaded text", vault_path=vp, doc_id=doc_id)
+                                        # Cache-on-ack
+                                        if cache is not None and st is not None:
+                                            cache.set_after_ack(vp, tc.content_hash, st.st_size, st.st_mtime)
+                                    case Failure() as f:
+                                        _log.warning("upload_text failed", vault_path=vp, error=f.error)
+                            else:
+                                bc = extracted.value
+                                match await upload_binary(client, cfg, bc):
+                                    case Success(value=doc_id):
+                                        _log.info("uploaded binary", vault_path=vp, doc_id=doc_id)
+                                        if cache is not None and st is not None:
+                                            cache.set_after_ack(vp, bc.content_hash, st.st_size, st.st_mtime)
+                                    case Failure() as f:
+                                        _log.warning("upload_binary failed", vault_path=vp, error=f.error)
                         case Failure() as f:
                             _log.warning("extract failed", vault_path=vp, error=f.error)
 
@@ -267,15 +326,21 @@ def start(config_path: str) -> None:
                 asyncio.run_coroutine_threadsafe(_handle(), loop)
 
             def _on_delete(vp: str) -> None:
-                """Schedule a delete event report."""
-                async def _handle() -> None:
-                    match await report_deleted(client, cfg, vp):
-                        case Success():
-                            _log.info("reported deleted", vault_path=vp)
-                        case Failure() as f:
-                            _log.warning("report_deleted failed", vault_path=vp, error=f.error)
-
-                asyncio.run_coroutine_threadsafe(_handle(), loop)
+                """Buffer the delete in Move Detective; report only after window expires with no match."""
+                fingerprint_entry = cache.get(vp)  # file is gone; cache is only hash source
+                if fingerprint_entry is not None:
+                    move_buffer.park_delete(fingerprint_entry["hash"], vp)
+                    # Start/refresh expiry timer
+                    _refresh_move_timer()
+                else:
+                    # Not in cache — can't match, report immediately
+                    async def _handle() -> None:
+                        match await report_deleted(client, cfg, vp):
+                            case Success():
+                                _log.info("reported deleted (no cache entry)", vault_path=vp)
+                            case Failure() as f:
+                                _log.warning("report_deleted failed", vault_path=vp, error=f.error)
+                    asyncio.run_coroutine_threadsafe(_handle(), loop)
 
             # ── 3. Start watcher ─────────────────────────────────────────
             watcher = DaemonWatcher(
@@ -294,6 +359,9 @@ def start(config_path: str) -> None:
                 while True:
                     await asyncio.sleep(1)
             finally:
+                with _move_timer_lock:
+                    if _move_timer is not None:
+                        _move_timer.cancel()
                 watcher.stop()
                 watcher.join()
                 _log.info("watcher stopped")
