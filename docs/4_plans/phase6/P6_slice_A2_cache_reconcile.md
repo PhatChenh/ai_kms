@@ -287,7 +287,9 @@ Implements spec component 3. Refer to the spec for Done-when criteria. Note the 
 
 **Extension point**: `[closed]` — pure in-memory buffer, no persistence needed, no planned variants.
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-06-14
+**Notes**: Created `src/daemon/move_buffer.py` (MoveBuffer class with park_delete, match_create, expire) and `tests/test_daemon/test_move_buffer.py` (7 tests). All 6 test criteria verified: match returns old path, expiry returns confirmed deletes, non-match returns None, thread safety, fingerprint collision keeps latest, second match after consumption returns None. No surprises. Shares DaemonSyncState lock from daemon.cache.
 
 ---
 
