@@ -100,7 +100,7 @@ def attempt_save(
 # ── Tkinter UI surface (manual-verify only) ─────────────────────────────
 
 
-def run_wizard() -> None:
+def run_wizard() -> bool:
     """Launch the Tkinter setup wizard window.
 
     Collects:
@@ -114,11 +114,17 @@ def run_wizard() -> None:
     - Runs ``attempt_save()`` with the REAL Phase 1 + Phase 2 functions
     - On success: closes the window
     - On failure: shows the error, window stays open
+
+    Returns:
+        ``True`` if setup completed successfully, ``False`` if the user
+        closed the window without completing setup.
     """
     # Late imports so the Tkinter dependency is only paid when the
     # wizard actually launches (imports are cheap but explicit).
     from daemon.connection_check import check_connection  # noqa: PLC0415
     from daemon.secret_vault import store_key  # noqa: PLC0415
+
+    setup_completed = False
 
     root = tk.Tk()
     root.title("AI-kms Setup")
@@ -205,6 +211,8 @@ def run_wizard() -> None:
         )
 
         if result.is_success():
+            nonlocal setup_completed
+            setup_completed = True
             root.destroy()
         else:
             status_var.set(f"Error: {result.error}")
@@ -224,3 +232,4 @@ def run_wizard() -> None:
     )
 
     root.mainloop()
+    return setup_completed

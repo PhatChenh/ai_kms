@@ -19,13 +19,33 @@ from pathlib import Path
 
 import yaml
 
+from core.result import Failure, Result, Success
 from daemon.cli import _run_with_stop
 from daemon.config import load_daemon_config
 from daemon.secret_vault import load_key_into_env, read_key
 
 
 def main() -> None:
-    """Entry point for the frozen daemon application."""
+    """Entry point for the frozen daemon application.
+
+    Checks ``sys.argv`` for special modes before launching the GUI:
+    - ``uninstall`` → run idempotent cleanup (Phase 6).
+    """
+    if len(sys.argv) > 1 and sys.argv[1] == "uninstall":
+        from daemon.cli import run_uninstall
+
+        result = run_uninstall()
+        if result.is_success():
+            removed = result.value.get("removed", [])
+            if removed:
+                print(f"Uninstall complete. Removed: {', '.join(removed)}")
+            else:
+                print("Nothing to remove — already clean.")
+        else:
+            print(f"Uninstall failed: {result.error}")
+            sys.exit(1)
+        return
+
     run_app()
 
 
@@ -65,7 +85,11 @@ def run_app() -> None:
         # Fresh machine — run wizard
         from daemon.wizard import run_wizard
 
-        run_wizard()
+        setup_completed = run_wizard()
+
+        # Wizard was cancelled (window X) → exit cleanly
+        if not setup_completed:
+            return
 
         # After wizard, register at login once
         try:
@@ -76,7 +100,12 @@ def run_app() -> None:
             pass  # non-fatal — user can manually start
 
     # ── 2. Load key into env ────────────────────────────────────────────
-    load_key_into_env()
+    match load_key_into_env():
+        case Failure() as f:
+            _show_error_tray(f"Failed to load API key from vault: {f.error}")
+            return
+        case _:
+            pass
 
     # ── 3. Validate config loads ────────────────────────────────────────
     try:

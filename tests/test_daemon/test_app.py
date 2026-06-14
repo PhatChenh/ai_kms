@@ -124,7 +124,7 @@ class TestFreshMachine:
         wizard_called = []
         monkeypatch.setattr(
             "daemon.wizard.run_wizard",
-            lambda: wizard_called.append(True),
+            lambda: wizard_called.append(True) or True,  # True = setup completed
         )
 
         app_module.run_app()
@@ -170,7 +170,7 @@ class TestFreshMachine:
         wizard_called = []
         monkeypatch.setattr(
             "daemon.wizard.run_wizard",
-            lambda: wizard_called.append(True),
+            lambda: wizard_called.append(True) or True,  # True = setup completed
         )
 
         app_module.run_app()
@@ -226,7 +226,7 @@ class TestAlreadySetUp:
         wizard_called = []
         monkeypatch.setattr(
             "daemon.wizard.run_wizard",
-            lambda: wizard_called.append(True),
+            lambda: wizard_called.append(True) or True,  # True = setup completed
         )
 
         app_module.run_app()
@@ -511,16 +511,13 @@ class TestWizardFailure:
         wizard_called = []
         monkeypatch.setattr(
             "daemon.wizard.run_wizard",
-            lambda: wizard_called.append(True),
-        )
-
-        monkeypatch.setattr(
-            app_module, "load_daemon_config",
-            lambda path: (_ for _ in ()).throw(ValueError("no config after cancel")),
+            lambda: wizard_called.append(True) or False,  # False = cancelled
         )
 
         app_module.run_app()
 
         assert len(wizard_called) == 1
-        assert len(engine_called) == 0
-        assert fake_adapter.tray_shown is True
+        assert len(engine_called) == 0, "Engine must not start if wizard was cancelled"
+        assert fake_adapter.tray_shown is False, (
+            "Tray must not be shown when wizard is cancelled"
+        )
