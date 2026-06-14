@@ -1,6 +1,6 @@
 # Plan: Phase 6 Slice A2 — Local Cache + Smart Reconcile
 _Last updated: 2026-06-14_
-_Status: [ ] pending_
+_Status: [~] in progress_
 
 ---
 
@@ -182,7 +182,9 @@ Implements spec components 1 (cache module). Refer to the spec for the full Buil
 
 **Extension point**: `[extensible: protocol]` — The 7-method interface is a real seam. JSON backend today; SQLite documented as upgrade path. Callers depend on the interface, not the JSON serialization.
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-06-14
+**Notes**: Created `src/daemon/cache.py` (DaemonSyncState + LocalCache with 7 methods) and `tests/test_daemon/test_cache.py` (11 tests). All test criteria verified — valid JSON load, garbled/absent/malformed handling, save roundtrip, atomic rename, parent dir creation, thread safety, snapshot isolation, rebuild. No surprises.
 
 ---
 
@@ -285,7 +287,9 @@ Implements spec component 3. Refer to the spec for Done-when criteria. Note the 
 
 **Extension point**: `[closed]` — pure in-memory buffer, no persistence needed, no planned variants.
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-06-14
+**Notes**: Created `src/daemon/move_buffer.py` (MoveBuffer class with park_delete, match_create, expire) and `tests/test_daemon/test_move_buffer.py` (7 tests). All 6 test criteria verified: match returns old path, expiry returns confirmed deletes, non-match returns None, thread safety, fingerprint collision keeps latest, second match after consumption returns None. No surprises. Shares DaemonSyncState lock from daemon.cache.
 
 ---
 
