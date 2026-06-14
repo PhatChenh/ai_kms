@@ -52,6 +52,8 @@ def build_app(db_path: Path | None = None) -> Starlette:
     3. Wire blob store from ``KMS_BLOB_*`` environment variables.
     4. Obtain the framework's Starlette web app from *mcp*.
     5. Mount Phase 3 REST routes (api_routes + health_route).
+    6. Wrap the app's lifespan with a composed outer lifespan that runs a
+       background classify worker + catch-up scan (Phase 7).
 
     Returns
     -------
@@ -80,7 +82,52 @@ def build_app(db_path: Path | None = None) -> Starlette:
     # 5. Mount Phase 3 REST routes + health check
     app.routes.extend(api_routes + health_route)
 
+    # 6. Phase 7 — Composed outer lifespan: classify worker + catch-up scan
+    _wrap_lifespan(app, db_path)
+
     return app
+
+
+# ---------------------------------------------------------------------------
+# Phase 7 — Composed outer lifespan
+# ---------------------------------------------------------------------------
+
+
+def _wrap_lifespan(app: Starlette, db_path: Path | None) -> None:
+    """Wrap *app*'s existing lifespan with a composed outer lifespan that
+    starts a background classify worker and runs a catch-up scan before
+    entering the inner FastMCP session-manager lifespan.
+
+    The wrapping happens **in place** inside ``build_app()`` — Starlette
+    reads ``app.router.lifespan_context`` at ASGI startup (after
+    ``build_app()`` returns), so reassigning it here takes effect.
+
+    ``on_startup`` is deliberately NOT used — it is a silent no-op when a
+    lifespan is set (Starlette ignores it).
+    """
+    import asyncio
+    from contextlib import asynccontextmanager
+
+    from core.config import CONFIG
+    from pipelines.classify import catch_up_scan, consumer
+
+    inner = app.router.lifespan_context  # session_manager.run()
+
+    @asynccontextmanager
+    async def _composed(app_ref):
+        queue: asyncio.Queue[int] = asyncio.Queue()
+        worker = asyncio.create_task(
+            consumer(queue, db_path, CONFIG.main)
+        )
+        await catch_up_scan(queue, db_path)
+        try:
+            async with inner(app_ref):
+                yield
+        finally:
+            worker.cancel()
+            _log.debug("classify_worker_task_cancelled")
+
+    app.router.lifespan_context = _composed  # reassign IN PLACE
 
 
 # ---------------------------------------------------------------------------
