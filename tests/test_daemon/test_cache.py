@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 from pathlib import Path
 from unittest.mock import patch
@@ -157,8 +156,6 @@ class TestSave:
         cache.set_after_ack("new.md", "newhash", 2, 1.0)
 
         # Now simulate a crash during write: patch os.replace to raise
-        original_replace = os.replace
-
         def crashing_replace(src, dst):
             # Before replace happens, old file should still be intact
             assert cache_file.read_text() == json.dumps(old_entries)
@@ -170,8 +167,7 @@ class TestSave:
         # After failed save, old file should still be intact
         assert cache_file.read_text() == json.dumps(old_entries)
 
-        # Restore and save properly
-        os.replace = original_replace
+        # Save properly (patch already restored os.replace)
         cache.save(cache_file)
         reloaded = LocalCache(DaemonSyncState())
         reloaded.load(cache_file)
@@ -244,6 +240,23 @@ class TestSnapshot:
         # Live cache should have changed
         assert cache.get("a.md") is None
         assert cache.get("b.md") == {"hash": "hash2", "size": 200, "mtime": 2.0}
+
+
+class TestForget:
+    """Tests for LocalCache.forget()."""
+
+    def test_forget_removes_entry_unknown_key_is_noop(self):
+        sync_state = DaemonSyncState()
+        cache = LocalCache(sync_state)
+        cache.set_after_ack("a.md", "hash1", 100, 1.0)
+        cache.set_after_ack("b.md", "hash2", 200, 2.0)
+
+        cache.forget("a.md")
+        assert cache.get("a.md") is None
+        assert cache.get("b.md") == {"hash": "hash2", "size": 200, "mtime": 2.0}
+
+        # Forgetting a non-existent key is a no-op (no error)
+        cache.forget("nonexistent")
 
 
 class TestRebuild:

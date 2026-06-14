@@ -54,7 +54,8 @@ def _validate_entry(vault_path: str, entry: object) -> dict | None:
         return None
     if not isinstance(entry.get("hash"), str):
         return None
-    if not isinstance(entry.get("size"), int):
+    size = entry.get("size")
+    if isinstance(size, bool) or not isinstance(size, int):
         return None
     if not isinstance(entry.get("mtime"), (int, float)):
         return None
@@ -153,27 +154,32 @@ class LocalCache:
         try:
             fd, tmp_name = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
             try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                with os.fdopen(fd, "w", encoding="utf-8", closefd=False) as f:
                     json.dump(self._entries, f, indent=2)
                     f.flush()
-                    os.fsync(f.fileno())
-            except Exception:
+                    os.fsync(fd)
                 os.close(fd)
+                os.replace(tmp_name, path)
+            except Exception:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
                 try:
                     os.unlink(tmp_name)
                 except OSError:
                     pass
                 raise
-            os.replace(tmp_name, path)
         except Exception:
             _log.warning("cache save failed, continuing  path=%s", path, exc_info=True)
 
     # ── get ─────────────────────────────────────────────────────────────────
 
     def get(self, vault_path: str) -> dict | None:
-        """Return the cached entry for *vault_path*, or ``None``."""
+        """Return a shallow copy of the cached entry for *vault_path*, or ``None``."""
         with self._lock:
-            return self._entries.get(vault_path)
+            entry = self._entries.get(vault_path)
+            return dict(entry) if entry is not None else None
 
     # ── set_after_ack ───────────────────────────────────────────────────────
 
@@ -194,13 +200,27 @@ class LocalCache:
     # ── snapshot ────────────────────────────────────────────────────────────
 
     def snapshot(self) -> dict[str, dict]:
-        """Return a frozen (shallow) copy of all entries."""
+        """Return a shallow copy of all entries (top-level dict is new, value dicts
+        are shared — the caller must not mutate them)."""
         with self._lock:
             return dict(self._entries)
 
     # ── rebuild ─────────────────────────────────────────────────────────────
 
     def rebuild(self, entries: dict[str, dict]) -> None:
-        """Replace the entire in-memory map with *entries*."""
+        """Replace the entire in-memory map with *entries*.
+
+        Each entry is validated via :func:`_validate_entry`; invalid entries are
+        skipped with a warning.
+        """
         with self._lock:
-            self._entries = dict(entries)
+            clean: dict[str, dict] = {}
+            for vp, entry in entries.items():
+                valid = _validate_entry(vp, entry)
+                if valid is None:
+                    _log.warning(
+                        "rebuild skipping malformed entry  vault_path=%s", vp
+                    )
+                    continue
+                clean[vp] = valid
+            self._entries = clean
