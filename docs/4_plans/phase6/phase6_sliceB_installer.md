@@ -379,13 +379,15 @@ src/daemon/cli.py     @cli.command()  def uninstall(): ...   ◄── self-regi
 - `tests/test_daemon/test_uninstall.py` (NEW) — removes-everything + idempotency tests.
 
 **Test criteria**:
-- [ ] `uv run pytest tests/test_daemon/test_uninstall.py` green.
-- [ ] After running on a set-up machine: no key in the vault, no config file, no auto-start registration.
-- [ ] Running it twice is safe (idempotent) and returns a `Result` describing what was removed.
+- [x] `uv run pytest tests/test_daemon/test_uninstall.py` green.
+- [x] After running on a set-up machine: no key in the vault, no config file, no auto-start registration.
+- [x] Running it twice is safe (idempotent) and returns a `Result` describing what was removed.
 
 **Notes / coupling**: none beyond reuse of Phases 1 and 3.
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-06-16
+**Notes**: Implemented `run_uninstall()` (Result-returning) and `@cli.command() def uninstall()` as the fourth Click command on the existing group. Uses lazy imports of `delete_key`/`read_key` from `daemon.secret_vault` and `get_os_adapter` from `daemon.os_glue`. Idempotent: checks key existence via `read_key()` before deleting, skips missing config, always calls `unregister_at_login()` (idempotent itself). 11 new tests, 292 total daemon tests pass with zero regressions.
 
 ---
 

@@ -1,11 +1,13 @@
 """
 daemon/cli.py
 
-Click CLI for the sync daemon: ``start``, ``scan``, ``status``.
+Click CLI for the sync daemon: ``start``, ``scan``, ``status``, ``uninstall``.
 
-All three commands load ``DaemonConfig`` from a YAML file (default:
+All four commands load ``DaemonConfig`` from a YAML file (default:
 ``~/.kms-daemon/config.yaml``) and use the ``KMS_DAEMON_API_KEY``
-environment variable for authentication.
+environment variable for authentication.  The ``uninstall`` command
+does not require the API key — it removes the key, config file, and
+auto-start registration.
 
 Structlog is configured independently — this module never imports from
 ``core/logging_setup.py``.
@@ -23,7 +25,7 @@ import structlog
 
 import threading
 
-from core.result import Failure, Success
+from core.result import Failure, Result, Success
 from daemon.cache import DaemonSyncState, LocalCache
 from daemon.config import DaemonConfig, load_daemon_config
 from daemon.event_reporter import report_deleted, report_moved
@@ -119,6 +121,85 @@ def status(config_path: str) -> None:
         asyncio.run(_run())
     except KeyboardInterrupt:
         raise click.Abort()
+
+
+# ── uninstall cleanup ────────────────────────────────────────────────────────
+
+
+def run_uninstall(config_path: Path | None = None) -> "Result[dict]":
+    """Remove key, config file, and auto-start registration.
+
+    Idempotent — safe to call multiple times.  Each step handles its
+    own absence: ``delete_key`` returns ``Success`` when the key is
+    already gone, ``unregister_at_login`` does the same for the
+    registration, and missing config files are simply skipped.
+
+    Args:
+        config_path: Path to the config file.  Defaults to
+            ``~/.kms-daemon/config.yaml``.
+
+    Returns:
+        ``Success({"removed": [...]})`` listing what was actually removed,
+        or ``Failure(...)`` if a step returned an unrecoverable error.
+    """
+    from daemon.os_glue import get_os_adapter  # lazy import (Phase 3)
+    from daemon.secret_vault import delete_key, read_key  # lazy import (Phase 1)
+
+    if config_path is None:
+        config_path = Path.home() / ".kms-daemon" / "config.yaml"
+
+    removed: list[str] = []
+
+    # 1. Delete the key from the OS vault (only if it exists)
+    match read_key():
+        case Success():
+            match delete_key():
+                case Success():
+                    removed.append("key")
+                case Failure() as f:
+                    return f
+        case Failure():
+            pass  # key already absent — nothing to remove
+
+    # 2. Remove the config file (skip if absent)
+    if config_path.exists():
+        try:
+            config_path.unlink()
+        except OSError as exc:
+            return Failure(
+                error=f"Failed to remove config file: {exc}",
+                recoverable=False,
+                context={"config_path": str(config_path)},
+            )
+        removed.append("config")
+
+    # 3. Unregister from auto-start at login
+    match get_os_adapter().unregister_at_login():
+        case Success():
+            removed.append("registration")
+        case Failure() as f:
+            return f
+
+    return Success({"removed": removed})
+
+
+@cli.command()
+@_CONFIG_OPTION
+def uninstall(config_path: str) -> None:
+    """Remove the daemon key, config, and auto-start registration.
+
+    Safe to run on a machine that is already partly or fully
+    uninstalled — every step is idempotent.
+    """
+    match run_uninstall(Path(config_path)):
+        case Success(value=result):
+            removed = result["removed"]
+            if removed:
+                click.echo(f"Uninstall complete. Removed: {', '.join(removed)}")
+            else:
+                click.echo("Nothing to remove — already clean.")
+        case Failure() as f:
+            raise click.ClickException(f.error)
 
 
 # ── scan command ─────────────────────────────────────────────────────────────
