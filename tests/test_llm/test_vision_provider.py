@@ -113,7 +113,7 @@ class TestOpenAIProviderDescribeImage:
         os.environ["FIREWORKS_API_KEY"] = "test-key"
         try:
             cfg = OpenAICompatConfig(api_key_env="FIREWORKS_API_KEY", vision_model="gpt-4-vision")
-            provider = OpenAIProvider(cfg, task="vision")
+            provider = OpenAIProvider(cfg, task="capture")
 
             # Mock the underlying OpenAI client
             mock_resp = MagicMock()
@@ -142,6 +142,7 @@ class TestOpenAIProviderDescribeImage:
             call_args = provider._client.chat.completions.create.call_args
             assert call_args is not None
             kwargs = call_args.kwargs
+            assert kwargs["model"] == "gpt-4-vision"  # must use _vision_model, not _model
             messages = kwargs["messages"]
             assert messages[0]["role"] == "system"
             assert messages[0]["content"] == "Describe images."

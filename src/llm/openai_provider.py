@@ -123,7 +123,7 @@ class OpenAIProvider(LLMProvider):
         text_block = {"type": "text", "text": user}
         try:
             resp = await self._client.chat.completions.create(
-                model=self._model,
+                model=self._vision_model,
                 max_tokens=self._max_tokens,
                 messages=[
                     {"role": "system", "content": system},
