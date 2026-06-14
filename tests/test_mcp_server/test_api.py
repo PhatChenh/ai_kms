@@ -809,7 +809,11 @@ class TestMultipartRoutesToCaptureUpload:
                 mock_upsert.assert_not_called()
 
     def test_multipart_without_file_calls_capture_upload_without_raw_bytes(self, db):
-        """Multipart upload without a file field → capture_upload(raw_bytes=None)."""
+        """Multipart upload without a file field → 400, not 500.
+
+        A missing file field is a client error — the server rejects it
+        before calling capture_upload.
+        """
         import mcp_server.api as api
 
         api._db_path = db
@@ -819,16 +823,13 @@ class TestMultipartRoutesToCaptureUpload:
 
         async def _fake_capture_upload(**kwargs):
             from core.result import Failure
-            # The guard "neither text nor bytes" will fire, which is fine
             return Failure(error="neither text nor bytes supplied", recoverable=False, context={})
 
         with patch.object(api, "capture_upload", side_effect=_fake_capture_upload) as mock_cap:
             app = Starlette(routes=api.api_routes)
             client = TestClient(app)
 
-            # Send multipart with data but no "file" field — use a dummy
-            # file field name to force multipart encoding without the
-            # actual "file" field being present.
+            # Send multipart with data but no "file" field
             resp = client.post(
                 "/api/upload",
                 data={
@@ -839,13 +840,13 @@ class TestMultipartRoutesToCaptureUpload:
                 headers={"Authorization": f"Bearer {API_KEY}"},
             )
 
-            # capture_upload is called, it returns Failure → 500
-            # (This is the expected behavior when neither text nor bytes provided)
-            mock_cap.assert_awaited_once()
-            call_kwargs = mock_cap.call_args.kwargs
-            assert call_kwargs["raw_bytes"] is None
-            assert call_kwargs["mime_type"] is None
-            assert call_kwargs["extracted_text"] is None
+            # Now returns 400 (client error), not 500
+            assert resp.status_code == 400
+            body = resp.json()
+            assert "file field is required" in body.get("detail", "")
+
+            # capture_upload is NOT called — the guard fires first
+            mock_cap.assert_not_awaited()
 
     def test_multipart_mime_type_from_form_field(self, db):
         """Explicit mime_type form field takes precedence over file content_type."""
