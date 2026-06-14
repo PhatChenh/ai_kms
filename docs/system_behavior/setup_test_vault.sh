@@ -969,6 +969,42 @@ setup_P7_CAP_12() {
 setup_P7_CAP_13() {
     echo "P7-CAP-13: No pre-created fixtures. Trigger: POST /api/event (type=deleted) for a path whose row references a blob"
 }
+# ─── Phase 8 (full) ────────────────────────────────────────────────────────
+
+# full | P8-CLS-A-01: The classify-work-discovery query finds every document that has never been classified (empty classify-fingerprint) or whose content changed since it was last classified (classify-fingerprint no longer matches the content fingerprint), and skips documents whose two fingerprints match
+setup_P8_CLS_A_01() {
+    echo "P8-CLS-A-01: No pre-created fixtures. Trigger: The work-discovery query runs against a database with mixed document states"
+}
+
+# full | P8-CLS-A-02: A successful classify stamps the document's classify-fingerprint to match its current content fingerprint, so the same document is not re-discovered as work on the next scan; a failed classify leaves the fingerprint untouched so the document is retried
+setup_P8_CLS_A_02() {
+    echo "P8-CLS-A-02: No pre-created fixtures. Trigger: The classify-fingerprint update routine runs after a classify attempt"
+}
+
+# full | P8-CLS-A-03: The content reader returns the document's full extracted text when it fits under the configured token budget, and falls back to the short summary when the full text is too large
+setup_P8_CLS_A_03() {
+    echo "P8-CLS-A-03: No pre-created fixtures. Trigger: The content reader runs on documents of different sizes"
+}
+
+# full | P8-CLS-A-04: The dimension config loads each dimension with its allowed tags and its guidance text, every tag set keeps its mandatory catch-all tag, and a misconfigured dimension is rejected
+setup_P8_CLS_A_04() {
+    echo "P8-CLS-A-04: No pre-created fixtures. Trigger: The dimension config loader runs against valid and invalid dimension config"
+}
+
+# full | P8-CLS-A-05: The context loader returns existing facts per dimension excluding retired ones, ranked by trust then confidence then recency, capped at the configured maximum per dimension, with each returned fact carrying its database id
+setup_P8_CLS_A_05() {
+    echo "P8-CLS-A-05: No pre-created fixtures. Trigger: The context loader runs against a dimension holding more facts than the cap"
+}
+
+# full | P8-CLS-A-06: The async work queue processes document ids through a single consumer one at a time in order (never two concurrently), and a startup catch-up scan enqueues all currently-discoverable work when the consumer starts
+setup_P8_CLS_A_06() {
+    echo "P8-CLS-A-06: No pre-created fixtures. Trigger: The queue consumer starts and processes a backlog of enqueued document ids"
+}
+
+# full | P8-CLS-A-07: The Slice A migration adds the classify-fingerprint column to documents, the trust-score and retrieval-count columns to knowledge entries with their default values, and the two supporting indexes, without disturbing existing rows
+setup_P8_CLS_A_07() {
+    echo "P8-CLS-A-07: No pre-created fixtures. Trigger: The new migration is applied to an existing database"
+}
 
 # ─── Tier runners ──────────────────────────────────────────────────────────────
 
@@ -1078,6 +1114,13 @@ run_all() {
     setup_P7_CAP_11
     setup_P7_CAP_12
     setup_P7_CAP_13
+    setup_P8_CLS_A_01
+    setup_P8_CLS_A_02
+    setup_P8_CLS_A_03
+    setup_P8_CLS_A_04
+    setup_P8_CLS_A_05
+    setup_P8_CLS_A_06
+    setup_P8_CLS_A_07
 }
 
 # ─── Main dispatch ─────────────────────────────────────────────────────────────
@@ -1200,6 +1243,13 @@ case "${1:-all}" in
     P7-CAP-11)  reset_db; clean_vault; setup_P7_CAP_11 ;;
     P7-CAP-12)  reset_db; clean_vault; setup_P7_CAP_12 ;;
     P7-CAP-13)  reset_db; clean_vault; setup_P7_CAP_13 ;;
+    P8-CLS-A-01)  reset_db; clean_vault; setup_P8_CLS_A_01 ;;
+    P8-CLS-A-02)  reset_db; clean_vault; setup_P8_CLS_A_02 ;;
+    P8-CLS-A-03)  reset_db; clean_vault; setup_P8_CLS_A_03 ;;
+    P8-CLS-A-04)  reset_db; clean_vault; setup_P8_CLS_A_04 ;;
+    P8-CLS-A-05)  reset_db; clean_vault; setup_P8_CLS_A_05 ;;
+    P8-CLS-A-06)  reset_db; clean_vault; setup_P8_CLS_A_06 ;;
+    P8-CLS-A-07)  reset_db; clean_vault; setup_P8_CLS_A_07 ;;
     *)
         echo "Unknown test ID: ${1}"
         echo "Usage: $0 [test-id|all|smoke|phase]"
