@@ -7,6 +7,8 @@ system: |
   - Be concrete and factual. Do not speculate beyond what is visible.
 
 user: |
+  This file is a {{mime_type}}.
+
   Please describe this image in detail. Provide a thorough, searchable description of everything visible in the image.
 
   After the description, on the VERY LAST line, provide a short descriptive title.  The title must be ONE line prefixed with exactly "Title: " and must be a concise, human-readable phrase.  Example:

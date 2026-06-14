@@ -107,6 +107,42 @@ async def _summarize_upload(
 # ---------------------------------------------------------------------------
 
 
+def _best_effort_index(
+    vault_path: str,
+    title: str,
+    summary: str,
+    body: str,
+    db_path: Path | None,
+) -> None:
+    """Index keywords and embeddings, logging but never propagating errors."""
+    try:
+        from retrieval.keyword import index_keywords
+
+        index_keywords(
+            vault_path=vault_path,
+            title=title,
+            summary=summary or "",
+            body=body,
+            db_path=db_path,
+        )
+    except Exception:
+        logger.exception("capture.index_keywords_failed")
+
+    try:
+        from retrieval.embeddings import index_embedding
+
+        index_embedding(
+            vault_path=vault_path,
+            title=title,
+            note_type=None,
+            tags=[],
+            summary=summary or "",
+            db_path=db_path,
+        )
+    except Exception:
+        logger.exception("capture.index_embedding_failed")
+
+
 async def capture_upload(
     vault_path: str,
     extracted_text: str | None = None,
@@ -214,40 +250,22 @@ async def capture_upload(
         case Success((summary, title)):
             # 4. AI SUCCESS path
             # Attach summary to the stored row
-            documents.attach_summary(
+            attach_result = documents.attach_summary(
                 vault_path=vault_path,
                 summary=summary,
                 title=title,
                 db_path=db_path,
             )
+            match attach_result:
+                case Failure() as af:
+                    logger.warning(
+                        "capture.attach_summary_failed vault_path=%s error=%s",
+                        vault_path,
+                        af.error,
+                    )
 
             # Best-effort indexing
-            try:
-                from retrieval.keyword import index_keywords
-
-                index_keywords(
-                    vault_path=vault_path,
-                    title=title,
-                    summary=summary or "",
-                    body=extracted_text,
-                    db_path=db_path,
-                )
-            except Exception:
-                logger.exception("capture.index_keywords_failed")
-
-            try:
-                from retrieval.embeddings import index_embedding
-
-                index_embedding(
-                    vault_path=vault_path,
-                    title=title,
-                    note_type=None,
-                    tags=[],
-                    summary=summary or "",
-                    db_path=db_path,
-                )
-            except Exception:
-                logger.exception("capture.index_embedding_failed")
+            _best_effort_index(vault_path, title, summary, extracted_text, db_path)
 
             # Audit: CAPTURED (after physical writes succeed)
             audit.write(
@@ -429,41 +447,23 @@ async def _capture_binary(
                 title = stem_title
 
             # Attach summary (with full_body so description is keyword-searchable)
-            documents.attach_summary(
+            attach_result = documents.attach_summary(
                 vault_path=vault_path,
                 summary=summary,
                 title=title,
                 full_body=summary,
                 db_path=db_path,
             )
+            match attach_result:
+                case Failure() as af:
+                    logger.warning(
+                        "capture.binary.attach_summary_failed vault_path=%s error=%s",
+                        vault_path,
+                        af.error,
+                    )
 
             # Best-effort indexing
-            try:
-                from retrieval.keyword import index_keywords
-
-                index_keywords(
-                    vault_path=vault_path,
-                    title=title,
-                    summary=summary or "",
-                    body=summary or "",
-                    db_path=db_path,
-                )
-            except Exception:
-                logger.exception("capture.binary.index_keywords_failed")
-
-            try:
-                from retrieval.embeddings import index_embedding
-
-                index_embedding(
-                    vault_path=vault_path,
-                    title=title,
-                    note_type=None,
-                    tags=[],
-                    summary=summary or "",
-                    db_path=db_path,
-                )
-            except Exception:
-                logger.exception("capture.binary.index_embedding_failed")
+            _best_effort_index(vault_path, title, summary, summary or "", db_path)
 
             # Audit: DESCRIBED
             audit.write(

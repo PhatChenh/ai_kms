@@ -8,11 +8,64 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
 from core.result import Failure, Result, Success
 from storage.db import init_db
+
+
+# ---------------------------------------------------------------------------
+# Stub vision provider (for binary path attach_summary tests)
+# ---------------------------------------------------------------------------
+
+
+class StubVisionProvider:
+    """Stub provider whose describe_image returns canned success."""
+
+    def __init__(self, *, fail: bool = False):
+        self._fail = fail
+        self.call_count = 0
+
+    async def describe_image(
+        self, system: str, user: str, image_bytes: bytes, mime_type: str
+    ) -> Result:
+        self.call_count += 1
+        if self._fail:
+            return Failure(
+                error="Vision AI timeout", recoverable=True, context={}
+            )
+        return Success(
+            _StubLLMResponse(
+                content=(
+                    "## Visual Description\n\nA screenshot.\n\n"
+                    "Title: Test Image"
+                ),
+                model="test-vision",
+            )
+        )
+
+
+@dataclass(frozen=True)
+class _StubLLMResponse:
+    content: str
+    model: str = "test-vision-model"
+    usage: dict = None
+
+    def __post_init__(self):
+        if self.usage is None:
+            object.__setattr__(self, "usage", {})
+
+
+class StubVisionProviderFactory:
+    """Factory that returns a pre-built StubVisionProvider instance."""
+
+    def __init__(self, provider: StubVisionProvider):
+        self._provider = provider
+
+    def __call__(self, task: str, config) -> StubVisionProvider:
+        return self._provider
 
 
 # ---------------------------------------------------------------------------
@@ -292,3 +345,152 @@ class TestCaptureUpload:
             f"Expected classify_ready in stdout, got: {captured.out[:500]}"
         )
         assert "vault_path=inbox/classify_log_test.md" in captured.out
+
+
+class TestBestEffortIndex:
+    """Tests for _best_effort_index — shared indexing helper."""
+
+    def test_best_effort_index_calls_both_indexers(self):
+        """_best_effort_index should call both index_keywords and index_embedding."""
+        from pipelines.capture import _best_effort_index
+
+        with (
+            mock.patch("retrieval.keyword.index_keywords") as mock_kw,
+            mock.patch("retrieval.embeddings.index_embedding") as mock_emb,
+        ):
+            _best_effort_index(
+                vault_path="inbox/test.md",
+                title="Test Title",
+                summary="A summary",
+                body="Full body text",
+                db_path=Path("/tmp/test.db"),
+            )
+
+        mock_kw.assert_called_once_with(
+            vault_path="inbox/test.md",
+            title="Test Title",
+            summary="A summary",
+            body="Full body text",
+            db_path=Path("/tmp/test.db"),
+        )
+        mock_emb.assert_called_once_with(
+            vault_path="inbox/test.md",
+            title="Test Title",
+            note_type=None,
+            tags=[],
+            summary="A summary",
+            db_path=Path("/tmp/test.db"),
+        )
+
+    def test_best_effort_index_logs_keyword_error_without_propagating(self):
+        """_best_effort_index should log keyword errors but not raise."""
+        from pipelines.capture import _best_effort_index
+
+        with mock.patch("retrieval.keyword.index_keywords") as mock_kw:
+            mock_kw.side_effect = RuntimeError("keyword index boom")
+            with mock.patch("retrieval.embeddings.index_embedding"):
+                with mock.patch("pipelines.capture.logger") as mock_logger:
+                    # Should not raise
+                    _best_effort_index(
+                        vault_path="inbox/test.md",
+                        title="T",
+                        summary="S",
+                        body="B",
+                        db_path=None,
+                    )
+
+        mock_logger.exception.assert_called_with(
+            "capture.index_keywords_failed"
+        )
+
+    def test_best_effort_index_logs_embedding_error_without_propagating(self):
+        """_best_effort_index should log embedding errors but not raise."""
+        from pipelines.capture import _best_effort_index
+
+        with mock.patch("retrieval.embeddings.index_embedding") as mock_emb:
+            mock_emb.side_effect = RuntimeError("embedding index boom")
+            with mock.patch("retrieval.keyword.index_keywords"):
+                with mock.patch("pipelines.capture.logger") as mock_logger:
+                    # Should not raise
+                    _best_effort_index(
+                        vault_path="inbox/test.md",
+                        title="T",
+                        summary="S",
+                        body="B",
+                        db_path=None,
+                    )
+
+        mock_logger.exception.assert_called_with(
+            "capture.index_embedding_failed"
+        )
+
+
+class TestAttachSummaryFailure:
+    """Tests for attach_summary failure logging (M11)."""
+
+    @pytest.mark.asyncio
+    async def test_attach_summary_failure_logged_text_path(self, db, monkeypatch):
+        """Text path: attach_summary Failure is logged at warning; capture still returns Success."""
+        monkeypatch.setattr(
+            "pipelines.capture._summarize_upload", _stub_summarize_success
+        )
+        from pipelines.capture import capture_upload
+
+        with mock.patch("pipelines.capture.documents.attach_summary") as mock_attach:
+            mock_attach.return_value = Failure(error="db locked", recoverable=True, context={})
+            with mock.patch("pipelines.capture.logger") as mock_logger:
+                result = await capture_upload(
+                    vault_path="inbox/attach_fail.md",
+                    extracted_text="Some text content.",
+                    content_hash="hash_attach_fail_001",
+                    db_path=db,
+                )
+
+        # Must still return Success — attach_summary failure is non-fatal
+        assert isinstance(result, Success)
+
+        # Warning must be logged
+        mock_logger.warning.assert_any_call(
+            "capture.attach_summary_failed vault_path=%s error=%s",
+            "inbox/attach_fail.md",
+            "db locked",
+        )
+
+    @pytest.mark.asyncio
+    async def test_attach_summary_failure_logged_binary_path(
+        self, db, monkeypatch, tmp_path
+    ):
+        """Binary path: attach_summary Failure is logged at warning; capture still returns Success."""
+        from storage.blobs import LocalBlobStore
+
+        blob_store = LocalBlobStore(tmp_path / "blob_root")
+
+        stub = StubVisionProvider(fail=False)
+        factory = StubVisionProviderFactory(stub)
+        monkeypatch.setattr("pipelines.capture.get_provider", factory)
+
+        from pipelines.capture import capture_upload
+
+        raw = b"\x89PNG\r\n\x1a\nfake png"
+
+        with mock.patch("pipelines.capture.documents.attach_summary") as mock_attach:
+            mock_attach.return_value = Failure(error="db locked", recoverable=True, context={})
+            with mock.patch("pipelines.capture.logger") as mock_logger:
+                result = await capture_upload(
+                    vault_path="Projects/A/attachment/bin_attach_fail.png",
+                    extracted_text=None,
+                    content_hash="hash_bin_attach_fail",
+                    raw_bytes=raw,
+                    mime_type="image/png",
+                    blob_store=blob_store,
+                    file_size_bytes=len(raw),
+                    db_path=db,
+                )
+
+        assert isinstance(result, Success)
+
+        mock_logger.warning.assert_any_call(
+            "capture.binary.attach_summary_failed vault_path=%s error=%s",
+            "Projects/A/attachment/bin_attach_fail.png",
+            "db locked",
+        )
