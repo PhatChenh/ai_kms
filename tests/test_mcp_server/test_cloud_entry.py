@@ -207,3 +207,176 @@ class TestImportDoesNotBreakStdio:
 
         # If we got here, the import succeeded
         assert True
+
+
+# ============================================================================
+# Phase 7 — Composed outer lifespan in build_app
+# ============================================================================
+
+
+class TestComposedLifespan:
+    """build_app() wraps app.router.lifespan_context with a composed lifespan
+    that runs a background worker + catch-up scan, then the inner FastMCP
+    session-manager lifespan.
+    """
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _mock_consumer_and_scan(monkeypatch):
+        """Install mocks for consumer + catch_up_scan; return Events to
+        observe worker lifecycle.
+        """
+        import asyncio
+
+        consumer_started = asyncio.Event()
+        consumer_cancelled = asyncio.Event()
+
+        async def _mock_consumer(queue, db_path_arg, config):
+            consumer_started.set()
+            try:
+                while True:
+                    await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                consumer_cancelled.set()
+                raise
+
+        catch_up_called = asyncio.Event()
+
+        async def _mock_catch_up_scan(queue, db_path_arg):
+            catch_up_called.set()
+
+        monkeypatch.setattr("pipelines.classify.consumer", _mock_consumer)
+        monkeypatch.setattr("pipelines.classify.catch_up_scan", _mock_catch_up_scan)
+
+        return consumer_started, consumer_cancelled, catch_up_called
+
+    @staticmethod
+    def _mock_inner_lifespan(monkeypatch):
+        """Replace the inner lifespan with a no-op so session_manager.run()
+        is never called.  This avoids 'can only be called once' errors
+        when multiple tests build the app.
+        """
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _fake_lifespan(app_ref):
+            yield None
+
+        # Patch streamable_http_app so it returns an app whose
+        # router.lifespan_context is the no-op fake instead of the
+        # real session manager.  When _wrap_lifespan captures
+        # inner = app.router.lifespan_context, it gets this no-op.
+        import mcp_server.server as server_mod
+
+        _original = server_mod.mcp.streamable_http_app
+
+        def _patched_streamable():
+            app = _original()
+            app.router.lifespan_context = _fake_lifespan
+            return app
+
+        monkeypatch.setattr(
+            server_mod.mcp, "streamable_http_app", _patched_streamable
+        )
+
+    # ------------------------------------------------------------------
+    # Tests
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_worker_lifecycle(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Worker is created on entry, catch-up scan runs, worker cancelled on exit."""
+        import asyncio
+
+        db_path = tmp_path / "test.db"
+        consumer_started, consumer_cancelled, catch_up_called = (
+            self._mock_consumer_and_scan(monkeypatch)
+        )
+        self._mock_inner_lifespan(monkeypatch)
+
+        from mcp_server.cloud_entry import build_app
+
+        app = build_app(db_path=db_path)
+        lifespan_fn = app.router.lifespan_context
+
+        async with lifespan_fn(app):
+            await asyncio.wait_for(consumer_started.wait(), timeout=5.0)
+            assert consumer_started.is_set(), "consumer should be started on entry"
+            await asyncio.wait_for(catch_up_called.wait(), timeout=5.0)
+            assert catch_up_called.is_set(), (
+                "catch_up_scan must be called during startup"
+            )
+
+        await asyncio.sleep(0.15)
+        assert consumer_cancelled.is_set(), (
+            "worker must be cancelled on lifespan exit"
+        )
+
+    @pytest.mark.asyncio
+    async def test_lifespan_returns_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The composed lifespan can be entered and exited without error."""
+        db_path = tmp_path / "test.db"
+        self._mock_consumer_and_scan(monkeypatch)
+        self._mock_inner_lifespan(monkeypatch)
+
+        from mcp_server.cloud_entry import build_app
+
+        app = build_app(db_path=db_path)
+        lifespan_fn = app.router.lifespan_context
+
+        async with lifespan_fn(app) as state:
+            pass  # no exception = success
+
+    @pytest.mark.asyncio
+    async def test_inner_lifespan_still_runs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The inner FastMCP session-manager lifespan still runs on entry.
+
+        NOTE: This test touches the REAL FastMCP session manager, which can
+        only be entered once.  It runs last so it doesn't break prior tests.
+        """
+        import asyncio
+
+        db_path = tmp_path / "test.db"
+        self._mock_consumer_and_scan(monkeypatch)
+
+        from mcp_server.cloud_entry import build_app
+
+        app = build_app(db_path=db_path)
+        lifespan_fn = app.router.lifespan_context
+
+        async with lifespan_fn(app):
+            from mcp_server.server import mcp
+
+            assert mcp._session_manager is not None, (
+                "session_manager should be created by streamable_http_app()"
+            )
+            assert mcp._session_manager._has_started is True, (
+                "inner lifespan (session_manager.run()) should set _has_started"
+            )
+            assert mcp._session_manager._task_group is not None, (
+                "inner lifespan should create task group"
+            )
+
+    def test_no_on_startup_in_build_app(
+        self, tmp_path: Path
+    ) -> None:
+        """build_app must NOT use Starlette on_startup — it is a silent no-op
+        when a lifespan is set.
+        """
+        import inspect
+
+        from mcp_server.cloud_entry import build_app
+
+        source = inspect.getsource(build_app)
+        assert "on_startup" not in source, (
+            "build_app must NOT use on_startup — it is a silent no-op with lifespan"
+        )

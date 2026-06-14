@@ -373,3 +373,96 @@ def context_loader(
         result[dim_name] = ranked.value
 
     return Success(result)
+
+
+# ===========================================================================
+# Phase 7 — Work Queue + Worker + catch-up scan
+# ===========================================================================
+
+import asyncio
+import logging
+
+_worker_log = logging.getLogger(__name__)
+
+
+async def consumer(
+    queue: asyncio.Queue[int],
+    db_path: Path | None,
+    config: MainConfig,
+) -> None:
+    """Single sequential consumer: pulls doc_ids from the queue, prepares
+    inputs via Content Reader → Dimension Loader → Context Loader, then
+    **stops** — this is the Slice B seam.  No AI call, no stamp on the
+    happy path.
+
+    Failures at any stage are logged and the doc is left un-stamped so it
+    will be retried on the next startup catch-up scan.
+    """
+    while True:
+        got_item = False
+        try:
+            doc_id = await queue.get()
+            got_item = True
+
+            # ---- Content Reader ----
+            cr = content_reader(doc_id, config=config, db_path=db_path)
+            if isinstance(cr, Failure):
+                _worker_log.warning(
+                    "classify_worker content_reader failed doc_id=%s error=%s",
+                    doc_id,
+                    cr.error,
+                )
+                continue
+
+            # ---- Dimension Loader (no-op: dimensions are loaded by context_loader) ----
+            # The design says "Dimension Loader → Context Loader".
+            # load_dimensions is called internally by context_loader.
+
+            # ---- Context Loader ----
+            cl = context_loader(config=config, db_path=db_path)
+            if isinstance(cl, Failure):
+                _worker_log.warning(
+                    "classify_worker context_loader failed doc_id=%s error=%s",
+                    doc_id,
+                    cl.error,
+                )
+                continue
+
+            # ---- Slice B seam ----
+            # Slice B will insert the AI classify() call here and, on
+            # success, call stamp_classified(doc_id, db_path=db_path).
+            # Until then we intentionally leave classify_content_hash
+            # untouched so every doc is retried on restart.
+
+        except Exception:
+            _worker_log.exception(
+                "classify_worker unexpected error doc_id=%s", doc_id
+            )
+        finally:
+            if got_item:
+                queue.task_done()
+
+
+async def catch_up_scan(
+    queue: asyncio.Queue[int],
+    db_path: Path | None,
+) -> None:
+    """One burst at startup: discover every doc that needs classification
+    and enqueue its id.
+
+    OQ-P8A-03 — catch-up scan.
+    """
+    from storage.documents import find_unclassified
+
+    result = find_unclassified(db_path=db_path)
+    if isinstance(result, Failure):
+        _worker_log.error(
+            "catch_up_scan find_unclassified failed error=%s",
+            result.error,
+        )
+        return
+
+    for doc_id in result.value:
+        queue.put_nowait(doc_id)
+
+    _worker_log.info("catch_up_scan enqueued=%d", len(result.value))
