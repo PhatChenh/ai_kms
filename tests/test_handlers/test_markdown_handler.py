@@ -77,3 +77,10 @@ def test_extract_missing_file_returns_failure(tmp_path: Path):
     result = MarkdownHandler().extract(missing)
     assert isinstance(result, Failure)
     assert result.recoverable is False
+
+
+def test_extract_with_explicit_max_size_parameter_accepted(md_file: Path):
+    """MarkdownHandler accepts max_file_size_bytes even though it ignores it."""
+    result = MarkdownHandler().extract(md_file, max_file_size_bytes=50_000_000)
+    assert isinstance(result, Success)
+    assert result.value.text == MD_BODY
