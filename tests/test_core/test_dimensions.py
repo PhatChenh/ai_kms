@@ -7,19 +7,30 @@ from pathlib import Path
 
 import yaml
 
-from core.result import Failure
+from core.result import Failure, Success
 from core.tags import (
     confidence_to_status,
     load_dimensions,
     validate_dimension_tag,
+    validate_dimensions,
 )
 from core.config import ConfidenceBand
 
 # Inline rulebook matching dimensions.yaml — no CONFIG import.
+# Phase 8 Slice A nests tags + guidance under each dimension.
 RULEBOOK = {
-    "people": ["role", "other"],
-    "projects": ["status", "timeline", "other"],
-    "domains": ["other"],
+    "people": {
+        "tags": ["role", "other"],
+        "guidance": "Look for who leads/owns the topic — name, title, org.",
+    },
+    "projects": {
+        "tags": ["status", "timeline", "other"],
+        "guidance": "Look for project status / timeline / milestones.",
+    },
+    "domains": {
+        "tags": ["other"],
+        "guidance": "Look for the domain / area of the knowledge.",
+    },
 }
 
 
@@ -54,16 +65,76 @@ class TestLoadDimensions:
             tmp_path = Path(f.name)
 
         try:
-            loaded = load_dimensions(tmp_path)
+            result = load_dimensions(tmp_path)
+            assert result.is_success()
+            loaded = result.unwrap()
             assert isinstance(loaded, dict)
             assert set(loaded.keys()) == {"people", "projects", "domains"}
-            assert "other" in loaded["people"]
-            assert "other" in loaded["projects"]
-            assert "other" in loaded["domains"]
-            assert "role" in loaded["people"]
-            assert "status" in loaded["projects"]
+            assert "other" in loaded["people"]["tags"]
+            assert "other" in loaded["projects"]["tags"]
+            assert "other" in loaded["domains"]["tags"]
+            assert "role" in loaded["people"]["tags"]
+            assert "status" in loaded["projects"]["tags"]
+            # guidance is present and non-empty
+            for dim in loaded:
+                assert isinstance(loaded[dim]["guidance"], str)
+                assert len(loaded[dim]["guidance"]) > 0
         finally:
             tmp_path.unlink()
+
+
+class TestValidateDimensions:
+    """P8-CLS-A-04: malformed dimension rulebooks are rejected loudly."""
+
+    def test_missing_other_tag_is_rejected(self) -> None:
+        bad = {
+            "people": {"tags": ["role"], "guidance": "..."},
+            "projects": {"tags": ["status", "timeline", "other"], "guidance": "..."},
+            "domains": {"tags": ["other"], "guidance": "..."},
+        }
+        result = validate_dimensions(bad)
+        assert result.is_failure()
+        assert isinstance(result, Failure)
+        assert "other" in result.error.lower()
+        assert "people" in result.error
+
+    def test_missing_guidance_is_rejected(self) -> None:
+        bad = {
+            "people": {"tags": ["role", "other"]},
+            "projects": {"tags": ["status", "timeline", "other"], "guidance": "..."},
+            "domains": {"tags": ["other"], "guidance": "..."},
+        }
+        result = validate_dimensions(bad)
+        assert result.is_failure()
+        assert isinstance(result, Failure)
+        assert "guidance" in result.error.lower()
+
+    def test_empty_guidance_is_rejected(self) -> None:
+        bad = {
+            "people": {"tags": ["role", "other"], "guidance": ""},
+            "projects": {"tags": ["status", "timeline", "other"], "guidance": "..."},
+            "domains": {"tags": ["other"], "guidance": "..."},
+        }
+        result = validate_dimensions(bad)
+        assert result.is_failure()
+        assert isinstance(result, Failure)
+        assert "guidance" in result.error.lower()
+
+    def test_missing_tags_key_is_rejected(self) -> None:
+        bad = {
+            "people": {"guidance": "..."},
+            "projects": {"tags": ["status", "timeline", "other"], "guidance": "..."},
+            "domains": {"tags": ["other"], "guidance": "..."},
+        }
+        result = validate_dimensions(bad)
+        assert result.is_failure()
+        assert isinstance(result, Failure)
+        assert "tags" in result.error.lower()
+
+    def test_valid_rulebook_passes_validation(self) -> None:
+        result = validate_dimensions(RULEBOOK)
+        assert result.is_success()
+        assert result.unwrap() == RULEBOOK
 
 
 class TestConfidenceToStatus:

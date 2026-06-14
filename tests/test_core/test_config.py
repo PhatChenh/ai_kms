@@ -57,6 +57,7 @@ from pydantic import ValidationError
 from core.config import (
     ApiKeys,
     ClaudeConfig,
+    ClassifyConfig,
     ConfidenceBand,
     MainConfig,
     MCPConfig,
@@ -826,6 +827,33 @@ class TestSearchConfig:
         assert s.max_results == 50
 
 
+class TestClassifyConfig:
+    """Phase 3 Slice A — ClassifyConfig model defaults and overrides."""
+
+    def test_default_max_content_tokens(self):
+        c = ClassifyConfig()
+        assert c.max_content_tokens == 10000
+
+    def test_default_max_entries_per_dimension(self):
+        c = ClassifyConfig()
+        assert c.max_entries_per_dimension == 50
+
+    def test_custom_max_content_tokens(self):
+        c = ClassifyConfig(max_content_tokens=5000)
+        assert c.max_content_tokens == 5000
+
+    def test_custom_max_entries_per_dimension(self):
+        c = ClassifyConfig(max_entries_per_dimension=25)
+        assert c.max_entries_per_dimension == 25
+
+    def test_accessible_from_main_config(self, vault_dir: Path):
+        """MainConfig.classify should be a ClassifyConfig with defaults."""
+        cfg = MainConfig(vault={"root": str(vault_dir)})
+        assert isinstance(cfg.classify, ClassifyConfig)
+        assert cfg.classify.max_content_tokens == 10000
+        assert cfg.classify.max_entries_per_dimension == 50
+
+
 class TestClaudeCliConfig:
     def test_default_cli_path_is_claude(self):
         from core.config import ClaudeCliConfig
@@ -1081,6 +1109,34 @@ class TestLoadConfig:
 
         cfg = cfg_module.load_config()
         assert cfg.keys.anthropic_api_key == "sk-ant-test-99"
+
+    # ── 8e  classify config block ────────────────────────────────────────────
+
+    def test_classify_config_defaults_from_loaded_config(self, loaded_config):
+        """When config.yaml has no classify: block, defaults apply."""
+        cfg = loaded_config
+        assert cfg.main.classify.max_content_tokens == 10000
+        assert cfg.main.classify.max_entries_per_dimension == 50
+
+    def test_classify_config_overrides_from_yaml(self, monkeypatch, config_dir):
+        """A classify: block in config.yaml overrides the defaults."""
+        import yaml as _yaml
+        import core.config as cfg_module
+
+        monkeypatch.setattr(cfg_module, "_CONFIG_DIR", config_dir)
+
+        # Read existing config, add classify block with overrides
+        with (config_dir / "config.yaml").open() as f:
+            data = _yaml.safe_load(f)
+        data["classify"] = {
+            "max_content_tokens": 5000,
+            "max_entries_per_dimension": 25,
+        }
+        (config_dir / "config.yaml").write_text(_yaml.dump(data))
+
+        cfg = cfg_module.load_config()
+        assert cfg.main.classify.max_content_tokens == 5000
+        assert cfg.main.classify.max_entries_per_dimension == 25
 
 
 # ===========================================================================

@@ -31,6 +31,8 @@ def test_migration_008_creates_knowledge_entries_table(tmp_path):
         "reasoning",
         "created_at",
         "updated_at",
+        "trust_score",
+        "retrieval_count",
     }
     assert columns == expected, f"Expected columns {expected}, got {columns}"
 
@@ -44,7 +46,7 @@ def test_migration_008_sets_schema_version_to_8(tmp_path):
 
     conn = sqlite3.connect(str(db_path))
     version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-    assert version == 9, f"Expected schema_version 9, got {version}"
+    assert version == 10, f"Expected schema_version 10, got {version}"
     conn.close()
 
 

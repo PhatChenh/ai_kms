@@ -1,15 +1,22 @@
 # PROVISIONAL — starter set, refined in Phase 8.
-# Every dimension MUST include "other" as a catch-all tag.
+# Every dimension MUST include "other" as a catch-all tag and a guidance string.
 # Dimension order matches the knowledge_entries extraction prompt.
+# Shape: dim → {tags: [...], guidance: "..."}  (Phase 8 Slice A nested shape)
 
 people:
-  - role
-  - other
+  tags:
+    - role
+    - other
+  guidance: "Look for who leads or owns the topic — name, title, org, or persona."
 
 projects:
-  - status
-  - timeline
-  - other
+  tags:
+    - status
+    - timeline
+    - other
+  guidance: "Look for project status, timeline, milestones, or deliverable references."
 
 domains:
-  - other
+  tags:
+    - other
+  guidance: "Look for the domain or functional area the knowledge belongs to."

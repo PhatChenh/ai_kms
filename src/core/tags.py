@@ -144,16 +144,81 @@ def load_taxonomy(tags_yaml_path: Path, valid_domains: frozenset[str]) -> TagTax
 # ---------------------------------------------------------------------------
 
 
-def load_dimensions(dimensions_yaml_path: Path) -> dict:
-    """Load the dimension rulebook from a dimensions.yaml file.
+def validate_dimensions(rulebook: dict) -> Result[dict]:
+    """Validate a dimension rulebook has the required nested shape.
+
+    Each dimension must be a dict with:
+      - "tags": a list that includes the mandatory "other" catch-all
+      - "guidance": a non-empty string
+
+    Args:
+        rulebook: Raw dict loaded from dimensions.yaml (or inline fixture).
+
+    Returns:
+        Success(rulebook) if valid, Failure describing what's missing otherwise.
+    """
+    if not isinstance(rulebook, dict):
+        return Failure(
+            error="dimensions rulebook must be a dict",
+            recoverable=False,
+            context={"type": type(rulebook).__name__},
+        )
+
+    for dim, spec in rulebook.items():
+        if not isinstance(spec, dict):
+            return Failure(
+                error=f"dimension {dim!r} must be a dict with 'tags' and 'guidance'",
+                recoverable=False,
+                context={"dimension": dim, "type": type(spec).__name__},
+            )
+
+        # Validate tags
+        tags = spec.get("tags")
+        if not isinstance(tags, list):
+            return Failure(
+                error=f"dimension {dim!r} missing 'tags' key or not a list",
+                recoverable=False,
+                context={"dimension": dim},
+            )
+        if "other" not in tags:
+            return Failure(
+                error=f"dimension {dim!r} missing mandatory 'other' tag in tags list",
+                recoverable=False,
+                context={"dimension": dim, "tags": tags},
+            )
+
+        # Validate guidance
+        guidance = spec.get("guidance")
+        if not isinstance(guidance, str) or not guidance.strip():
+            return Failure(
+                error=f"dimension {dim!r} missing 'guidance' or it is empty",
+                recoverable=False,
+                context={"dimension": dim},
+            )
+
+    return Success(value=rulebook)
+
+
+def load_dimensions(dimensions_yaml_path: Path) -> Result[dict]:
+    """Load and validate the dimension rulebook from a dimensions.yaml file.
 
     Args:
         dimensions_yaml_path: Path to config/dimensions.yaml.
 
     Returns:
-        Dict mapping dimension names to lists of allowed tags.
+        Success(dict) with nested {dim: {tags, guidance}} shape on valid config.
+        Failure if the YAML is malformed or fails validate_dimensions checks.
     """
-    return yaml.safe_load(dimensions_yaml_path.read_text())
+    try:
+        raw = yaml.safe_load(dimensions_yaml_path.read_text())
+    except (yaml.YAMLError, OSError) as exc:
+        return Failure(
+            error=f"failed to load dimensions YAML: {exc}",
+            recoverable=False,
+            context={"path": str(dimensions_yaml_path)},
+        )
+
+    return validate_dimensions(raw)
 
 
 def validate_dimension_tag(dimension: str, tag: str, rulebook: dict) -> Result[bool]:
@@ -162,7 +227,8 @@ def validate_dimension_tag(dimension: str, tag: str, rulebook: dict) -> Result[b
     Args:
         dimension: The dimension name (e.g. "people", "projects").
         tag: The tag value to check (e.g. "role", "other").
-        rulebook: Pre-loaded dict from load_dimensions().
+        rulebook: Pre-loaded dict from load_dimensions()
+                  (nested shape: {dim: {tags: [...], guidance: "..."}}).
 
     Returns:
         Success(True) if the pair is allowed.
@@ -175,7 +241,7 @@ def validate_dimension_tag(dimension: str, tag: str, rulebook: dict) -> Result[b
             context={"dimension": dimension, "known_dimensions": list(rulebook.keys())},
         )
 
-    allowed_tags = rulebook[dimension]
+    allowed_tags = rulebook[dimension]["tags"]
     if tag not in allowed_tags:
         return Failure(
             error=f"unknown tag {tag!r} for dimension {dimension!r}",
