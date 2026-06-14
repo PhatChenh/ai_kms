@@ -45,7 +45,7 @@ def _parse_summary_and_title(content: str) -> tuple[str, str]:
     for i in range(len(lines) - 1, -1, -1):
         line = lines[i]
         if not found_title and line.startswith("Title:"):
-            title = line[len("Title:"):].strip()
+            title = line[len("Title:") :].strip()
             found_title = True
             # Everything before this line is the summary
             summary_lines = lines[:i]
@@ -91,9 +91,7 @@ async def _summarize_upload(
         match facts_result:
             case Success(facts):
                 if facts:
-                    logger.debug(
-                        "summarize.context_facts count=%d", len(facts)
-                    )
+                    logger.debug("summarize.context_facts count=%d", len(facts))
                 # else: empty knowledge base → normal, proceed
             case Failure(error=err):
                 logger.debug("summarize.context_facts_failed error=%s", err)
@@ -101,6 +99,7 @@ async def _summarize_upload(
 
     # (b) Ask the AI via the provider factory (C-08).
     from core.config import CONFIG  # noqa: C0415  -- lazy import
+
     provider = get_provider("capture", CONFIG.main)
     system, user = PROMPTS["capture_summary"].render(text=text)
 
@@ -160,7 +159,8 @@ async def capture_upload(
         case Success(row) if row is not None and row.content_hash == content_hash:
             logger.info(
                 "capture.dedup_skip vault_path=%s content_hash=%s",
-                vault_path, content_hash,
+                vault_path,
+                content_hash,
             )
             return Success(row.id)
         case Failure(error=err):
@@ -189,9 +189,7 @@ async def capture_upload(
     # from get_provider, KeyError from PROMPTS) — the raw content is already
     # safely stored; an unhandled exception must not escape.
     try:
-        summary_result = await _summarize_upload(
-            text=extracted_text, db_path=db_path
-        )
+        summary_result = await _summarize_upload(text=extracted_text, db_path=db_path)
     except Exception as exc:
         summary_result = Failure(
             error=str(exc), recoverable=True, context={"stage": "summarize"}
@@ -211,6 +209,7 @@ async def capture_upload(
             # Best-effort indexing
             try:
                 from retrieval.keyword import index_keywords
+
                 index_keywords(
                     vault_path=vault_path,
                     title=title,
@@ -223,6 +222,7 @@ async def capture_upload(
 
             try:
                 from retrieval.embeddings import index_embedding
+
                 index_embedding(
                     vault_path=vault_path,
                     title=title,
@@ -249,9 +249,7 @@ async def capture_upload(
             )
 
             # Phase 5 — classify trigger log stub
-            logger.info(
-                "capture.classify_ready vault_path=%s", vault_path
-            )
+            logger.info("capture.classify_ready", vault_path=vault_path)
 
             return Success(row_id)
 
@@ -259,7 +257,8 @@ async def capture_upload(
             # 5. AI FAILURE — store-anyway (P7-CAP-04)
             logger.warning(
                 "capture.summarize_failed vault_path=%s error=%s",
-                vault_path, ai_failure.error,
+                vault_path,
+                ai_failure.error,
             )
 
             audit.write(
