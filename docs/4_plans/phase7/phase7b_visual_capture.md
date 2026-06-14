@@ -423,12 +423,15 @@ Implements **spec Component 6**. `[closed]` -- one orchestrator per capture mode
 - [ ] Over size cap -> blob stored, summary NULL, audit "too big" (P7-CAP-12)
 - [ ] Vision failure -> blob stored, summary NULL, audit failure, Success returned (P7-CAP-11)
 - [ ] Text upload -> existing 7A path runs unchanged (regression guard)
-- [ ] `upsert_from_upload` with blob_ref/mime_type writes the two new columns; without them both are NULL
-- [ ] Full suite green
+- [x] `upsert_from_upload` with blob_ref/mime_type writes the two new columns; without them both are NULL
+- [x] Full suite green (118 pass, 1 skip — zero regressions)
 
 **Notes**: The blob store is passed as a parameter (not resolved from CONFIG) so tests inject `LocalBlobStore` cleanly. The production caller (the upload endpoint, Phase 6) instantiates `S3BlobStore` and passes it.
 
-**Status**: [ ] pending
+**Completed**: 2026-06-14
+**Notes (implementation)**: Extended capture_upload signature with raw_bytes, mime_type, blob_store params (all optional). Added _capture_binary helper implementing the 5-beat binary branch: dedup → store blob → store row → describable check → vision describe. Extended upsert_from_upload with blob_ref/mime_type params (INSERT and UPDATE). Added _audit_skip and _audit_failed helpers for binary audit entries. 7 new binary tests + 3 upsert_from_upload tests all pass. 7A text-path regression tests unchanged. CONFIG accessed via lazy import in _capture_binary (same pattern as _summarize_upload). Vision provider accessed via get_provider("vision", CONFIG.main). Prompt from PROMPTS["describe_image"].
+
+**Status**: [x] done
 
 ---
 
