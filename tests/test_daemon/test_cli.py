@@ -1547,7 +1547,7 @@ periodic_interval_seconds: 1
         async def _fake_scan(cfg, client, cache=None, candidate_deletes=None, sweep_delete_confirmations=1):
             return fake_result
 
-        # Mock _periodic_reconcile to verify it's called with correct args
+        # Mock DaemonLoop._periodic_reconcile to verify it's called
         mock_reconcile = AsyncMock()
 
         sleep_count = [0]
@@ -1572,23 +1572,14 @@ periodic_interval_seconds: 1
             patch("daemon.cli.scan", side_effect=_fake_scan),
             patch("daemon.cli.DaemonWatcher", return_value=mock_watcher),
             patch("daemon.cli.asyncio.sleep", side_effect=_fake_sleep),
-            patch("daemon.cli._periodic_reconcile", mock_reconcile),
+            patch("daemon.cli.DaemonLoop._periodic_reconcile", mock_reconcile),
         ):
             runner = CliRunner()
             result = runner.invoke(cli, ["start", "--config", str(config_path)])
             assert result.exit_code == 0
 
-        # _periodic_reconcile must have been called
+        # DaemonLoop._periodic_reconcile must have been called
         mock_reconcile.assert_called_once()
-        call_args = mock_reconcile.call_args[0]
-        # First arg is cfg (DaemonConfig)
-        assert call_args[0].periodic_interval_seconds == 1
-        # cache is passed
-        assert isinstance(call_args[2], daemon.cli.LocalCache)
-        # candidate_deletes is an empty dict
-        assert call_args[3] == {}
-        # sweep_confirmations comes from config
-        assert call_args[4] == 2  # default sweep_delete_confirmations
 
     def test_periodic_reconcile_disabled_when_interval_zero(
         self, tmp_path: Path, monkeypatch
@@ -1632,13 +1623,13 @@ periodic_interval_seconds: 0
             patch("daemon.cli.scan", side_effect=_fake_scan),
             patch("daemon.cli.DaemonWatcher", return_value=mock_watcher),
             patch("daemon.cli.asyncio.sleep", side_effect=_fake_sleep),
-            patch("daemon.cli._periodic_reconcile", mock_reconcile),
+            patch("daemon.cli.DaemonLoop._periodic_reconcile", mock_reconcile),
         ):
             runner = CliRunner()
             result = runner.invoke(cli, ["start", "--config", str(config_path)])
             assert result.exit_code == 0
 
-        # _periodic_reconcile must NOT have been called
+        # DaemonLoop._periodic_reconcile must NOT have been called
         mock_reconcile.assert_not_called()
 
     def test_periodic_task_cancelled_on_shutdown(
@@ -1659,7 +1650,7 @@ periodic_interval_seconds: 1
         async def _fake_scan(cfg, client, cache=None, candidate_deletes=None, sweep_delete_confirmations=1):
             return fake_result
 
-        # Mock _periodic_reconcile with an AsyncMock that can be cancelled
+        # Mock DaemonLoop._periodic_reconcile with an AsyncMock that can be cancelled
         mock_reconcile = AsyncMock()
 
         sleep_count = [0]
@@ -1684,14 +1675,14 @@ periodic_interval_seconds: 1
             patch("daemon.cli.scan", side_effect=_fake_scan),
             patch("daemon.cli.DaemonWatcher", return_value=mock_watcher),
             patch("daemon.cli.asyncio.sleep", side_effect=_fake_sleep),
-            patch("daemon.cli._periodic_reconcile", mock_reconcile),
+            patch("daemon.cli.DaemonLoop._periodic_reconcile", mock_reconcile),
         ):
             runner = CliRunner()
             result = runner.invoke(cli, ["start", "--config", str(config_path)])
             # Must exit cleanly — cancellation should be handled without error
             assert result.exit_code == 0
 
-        # _periodic_reconcile was called (task was created)
+        # DaemonLoop._periodic_reconcile was called (task was created)
         mock_reconcile.assert_called_once()
 
     def test_periodic_reconcile_shares_cache(
@@ -1712,12 +1703,13 @@ periodic_interval_seconds: 1
         async def _fake_scan(cfg, client, cache=None, candidate_deletes=None, sweep_delete_confirmations=1):
             return fake_result
 
-        # Capture the cache argument passed to _periodic_reconcile
+        # Capture the cache passed to DaemonLoop._periodic_reconcile via self
         reconcile_cache: list = []
 
-        # Use a regular function (not async) so arguments are captured at call time
-        def _fake_reconcile(cfg, client, cache, candidate_deletes, sweep_confirmations):
-            reconcile_cache.append(cache)
+        # Use a regular function (not async) so arguments are captured at call time.
+        # The patched method receives self (the DaemonLoop instance).
+        def _fake_reconcile(self):
+            reconcile_cache.append(self._cache)
             async def _noop():
                 pass
             return _noop()
@@ -1744,13 +1736,13 @@ periodic_interval_seconds: 1
             patch("daemon.cli.scan", side_effect=_fake_scan),
             patch("daemon.cli.DaemonWatcher", return_value=mock_watcher),
             patch("daemon.cli.asyncio.sleep", side_effect=_fake_sleep),
-            patch("daemon.cli._periodic_reconcile", new=_fake_reconcile),
+            patch("daemon.cli.DaemonLoop._periodic_reconcile", new=_fake_reconcile),
         ):
             runner = CliRunner()
             result = runner.invoke(cli, ["start", "--config", str(config_path)])
             assert result.exit_code == 0
 
-        # _periodic_reconcile was called and received a cache instance
+        # DaemonLoop._periodic_reconcile was called and the instance had a cache
         assert len(reconcile_cache) == 1
         assert isinstance(reconcile_cache[0], daemon.cli.LocalCache)
 
@@ -1758,7 +1750,7 @@ periodic_interval_seconds: 1
     async def test_periodic_reconcile_calls_scan_repeatedly(
         self, tmp_path: Path, monkeypatch
     ):
-        """_periodic_reconcile calls scan() in a loop, once per interval."""
+        """DaemonLoop._periodic_reconcile calls scan() in a loop, once per interval."""
         monkeypatch.setenv("KMS_DAEMON_API_KEY", "test-key")
 
         # Create a minimal config and cache
@@ -1777,11 +1769,6 @@ periodic_interval_seconds: 1
             periodic_interval_seconds=1,  # short for testing
             cache_path=str(cache_path),
         )
-
-        sync_state = DaemonSyncState()
-        cache = LocalCache(sync_state)
-        cache.load(cache_path)
-        candidate_deletes: dict[str, int] = {}
 
         fake_result = ScanResult(uploaded=1, re_uploaded=0, deleted=0, skipped=0)
         scan_calls = [0]
@@ -1805,10 +1792,17 @@ periodic_interval_seconds: 1
             patch("daemon.cli.asyncio.sleep", side_effect=_fake_sleep),
             patch.object(daemon.cli.LocalCache, "save"),
         ):
+            # Create a DaemonLoop instance and wire it up
+            daemon_loop = daemon.cli.DaemonLoop(cfg, cache_path)
+            sync_state = DaemonSyncState()
+            daemon_loop._cache = LocalCache(sync_state)
+            daemon_loop._cache.load(cache_path)
+            daemon_loop._client = mock_client
+            daemon_loop._candidate_deletes = {}
+            daemon_loop._sweep_confirmations = 2
+
             try:
-                await daemon.cli._periodic_reconcile(
-                    cfg, mock_client, cache, candidate_deletes, sweep_confirmations=2,
-                )
+                await daemon_loop._periodic_reconcile()
             except asyncio.CancelledError:
                 pass
 
@@ -1985,5 +1979,118 @@ cloud_endpoint: http://fake:8080
                 pass
 
         # The finally block must still run
+        mock_watcher.stop.assert_called_once()
+        mock_watcher.join.assert_called_once()
+
+
+# ── DaemonLoop init tests ───────────────────────────────────────────────────
+
+
+class TestDaemonLoopInit:
+    """Tests for ``DaemonLoop.__init__`` and the ``_run_with_stop`` wrapper."""
+
+    def test_daemon_loop_stores_config(self, tmp_path):
+        """``DaemonLoop.__init__`` stores cfg, config_path, and stop_event."""
+        from daemon.config import DaemonConfig
+        import asyncio
+
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        cfg = DaemonConfig(
+            vault_root=vault,
+            cloud_endpoint="http://example.com",
+            api_key="fake-key",
+        )
+        config_path = tmp_path / "config.yaml"
+        stop_event = asyncio.Event()
+
+        loop = daemon.cli.DaemonLoop(cfg, config_path, stop_event)
+
+        assert loop._cfg is cfg
+        assert loop._config_path is config_path
+        assert loop._stop_event is stop_event
+
+    def test_daemon_loop_init_defaults(self, tmp_path):
+        """``DaemonLoop.__init__`` initialises mutable state to safe defaults."""
+        from daemon.config import DaemonConfig
+
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        cfg = DaemonConfig(
+            vault_root=vault,
+            cloud_endpoint="http://example.com",
+            api_key="fake-key",
+        )
+        config_path = tmp_path / "config.yaml"
+
+        loop = daemon.cli.DaemonLoop(cfg, config_path)
+
+        # State that is set up in run() starts as None / empty
+        assert loop._client is None
+        assert loop._cache is None
+        assert loop._move_buffer is None
+        assert loop._loop is None
+        assert loop._candidate_deletes == {}
+        assert loop._sweep_confirmations == 0
+        assert loop._watcher is None
+
+        # Move timer state
+        assert loop._move_timer is None
+        assert loop._move_timer_lock is not None
+        assert loop._periodic_task is None
+
+    @pytest.mark.asyncio
+    async def test_run_with_stop_wrapper_constructs_and_runs(self, tmp_path, monkeypatch):
+        """``_run_with_stop`` constructs a ``DaemonLoop`` and calls ``run()``."""
+        monkeypatch.setenv("KMS_DAEMON_API_KEY", "test-key")
+
+        from daemon.config import DaemonConfig
+
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(f"""vault_root: {vault}
+cloud_endpoint: http://fake:8080
+""")
+
+        cfg = DaemonConfig(
+            vault_root=vault,
+            cloud_endpoint="http://fake:8080",
+            api_key="test-key",
+            cache_path=str(tmp_path / "cache.json"),
+        )
+
+        # Provide a stop_event that is set immediately so the main loop exits
+        stop_event = asyncio.Event()
+        stop_event.set()
+
+        fake_result = ScanResult(uploaded=0, re_uploaded=0, deleted=0, skipped=0)
+
+        async def _fake_scan(cfg, client, cache=None, candidate_deletes=None, sweep_delete_confirmations=1):
+            return fake_result
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        mock_watcher = MagicMock()
+        mock_watcher.start = MagicMock()
+        mock_watcher.stop = MagicMock()
+        mock_watcher.join = MagicMock()
+
+        with (
+            patch("daemon.cli.httpx.AsyncClient", return_value=mock_client),
+            patch("daemon.cli.scan", side_effect=_fake_scan),
+            patch("daemon.cli.DaemonWatcher", return_value=mock_watcher),
+        ):
+            # Run through the thin wrapper
+            await daemon.cli._run_with_stop(
+                cfg=cfg,
+                config_path=config_path,
+                stop_event=stop_event,
+            )
+
+        # The wrapper should have started the watcher and then shut it down
+        mock_watcher.start.assert_called_once()
         mock_watcher.stop.assert_called_once()
         mock_watcher.join.assert_called_once()

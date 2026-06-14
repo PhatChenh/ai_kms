@@ -226,43 +226,304 @@ def scan_cmd(config_path: str) -> None:
         raise click.Abort()
 
 
-# ── periodic reconcile ───────────────────────────────────────────────────────
+# ── DaemonLoop class ──────────────────────────────────────────────────────────
 
 
-async def _periodic_reconcile(
-    cfg: DaemonConfig,
-    client: httpx.AsyncClient,
-    cache: LocalCache,
-    candidate_deletes: dict[str, int],
-    sweep_confirmations: int,
-) -> None:
-    """Re-run the 3-way reconcile on a timer while the daemon is running."""
-    _log.info("periodic reconcile started", interval_seconds=cfg.periodic_interval_seconds)
-    while True:
-        await asyncio.sleep(cfg.periodic_interval_seconds)
-        _log.debug("periodic reconcile running")
-        try:
-            result = await scan(
-                cfg,
-                client,
-                cache=cache,
-                candidate_deletes=candidate_deletes,
-                sweep_delete_confirmations=sweep_confirmations,
+class DaemonLoop:
+    """Sync engine core: scan, watch, reconcile loop.
+
+    Extracted from ``_run_with_stop`` to make each callback independently
+    testable and eliminate the ``nonlocal`` variable pattern (Phase 7.5).
+    """
+
+    def __init__(
+        self,
+        cfg: DaemonConfig,
+        config_path: Path,
+        stop_event: asyncio.Event | None = None,
+    ) -> None:
+        self._cfg = cfg
+        self._config_path = config_path
+        self._stop_event = stop_event
+
+        # These are set up in run()
+        self._client: httpx.AsyncClient | None = None
+        self._cache: LocalCache | None = None
+        self._move_buffer: MoveBuffer | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._candidate_deletes: dict[str, int] = {}
+        self._sweep_confirmations: int = 0
+        self._watcher: DaemonWatcher | None = None
+
+        # Move timer state
+        self._move_timer: threading.Timer | None = None
+        self._move_timer_lock = threading.Lock()
+        self._periodic_task: asyncio.Task[None] | None = None
+
+    # ── run ────────────────────────────────────────────────────────────
+
+    async def run(self) -> None:
+        """Run the sync engine: scan, watch, reconcile loop."""
+        # ── Cache wiring ─────────────────────────────────────────────────
+        sync_state = DaemonSyncState()
+        self._cache = LocalCache(sync_state)
+        self._cache.load(Path(self._cfg.cache_path).expanduser())
+        self._move_buffer = MoveBuffer(sync_state)
+
+        self._move_timer = None
+        self._periodic_task = None
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            self._client = client
+
+            # ── 1. Startup scan ──────────────────────────────────────
+            self._candidate_deletes = {}
+            self._sweep_confirmations = self._cfg.sweep_delete_confirmations
+
+            result: ScanResult = await scan(
+                self._cfg, client,
+                cache=self._cache,
+                candidate_deletes=self._candidate_deletes,
+                sweep_delete_confirmations=self._sweep_confirmations,
             )
             _log.info(
-                "periodic reconcile complete",
+                "startup scan complete",
                 uploaded=result.uploaded,
                 re_uploaded=result.re_uploaded,
                 deleted=result.deleted,
                 skipped=result.skipped,
-                moved=result.moved,
             )
-            cache.save(Path(cfg.cache_path).expanduser())
-        except Exception:
-            _log.exception("periodic reconcile failed, will retry on next interval")
+            click.echo(
+                f"Scan complete: {result.uploaded} uploaded, "
+                f"{result.re_uploaded} re-uploaded, "
+                f"{result.deleted} deleted, "
+                f"{result.skipped} skipped"
+            )
+
+            # ── Persist cache after startup scan ─────────────────────
+            self._cache.save(Path(self._cfg.cache_path).expanduser())
+
+            self._loop = asyncio.get_running_loop()
+
+            # ── 2. Start watcher ─────────────────────────────────────
+            self._watcher = DaemonWatcher(
+                self._cfg,
+                on_create=self._on_create_or_modify,
+                on_modify=self._on_create_or_modify,
+                on_move=self._on_move,
+                on_delete=self._on_delete,
+            )
+            self._watcher.start()
+            _log.info("watcher started", vault_root=str(self._cfg.vault_root))
+            click.echo(f"Watching {self._cfg.vault_root} — Ctrl+C to stop")
+
+            # ── Periodic reconcile timer ─────────────────────────────
+            if self._cfg.periodic_interval_seconds > 0:
+                self._periodic_task = asyncio.create_task(
+                    self._periodic_reconcile()
+                )
+            else:
+                self._periodic_task = None
+
+            # ── 3. Main loop ─────────────────────────────────────────
+            try:
+                while True:
+                    if self._stop_event is not None and self._stop_event.is_set():
+                        break
+                    await asyncio.sleep(1)
+            finally:
+                # Cancel periodic reconcile
+                if self._periodic_task is not None:
+                    self._periodic_task.cancel()
+                    try:
+                        await self._periodic_task
+                    except asyncio.CancelledError:
+                        pass
+
+                with self._move_timer_lock:
+                    if self._move_timer is not None:
+                        self._move_timer.cancel()
+                self._cache.save(Path(self._cfg.cache_path).expanduser())
+                self._watcher.stop()
+                self._watcher.join()
+                _log.info("watcher stopped")
+
+    # ── watcher callbacks ──────────────────────────────────────────────
+
+    def _refresh_move_timer(self) -> None:
+        """Start or refresh the move-correlation window timer."""
+        with self._move_timer_lock:
+            if self._move_timer is not None:
+                self._move_timer.cancel()
+            self._move_timer = threading.Timer(
+                self._cfg.move_window_seconds,
+                self._on_move_window_expired,
+            )
+            self._move_timer.daemon = True
+            self._move_timer.start()
+
+    def _on_move_window_expired(self) -> None:
+        """Called when the move-correlation window expires."""
+        expired = self._move_buffer.expire(self._cfg.move_window_seconds)
+        if not expired:
+            return
+
+        async def _handle_expired() -> None:
+            for fingerprint, old_vp in expired:
+                match await report_deleted(self._client, self._cfg, old_vp):
+                    case Success():
+                        _log.info("reported deleted (move window expired)", vault_path=old_vp)
+                        self._cache.forget(old_vp)
+                    case Failure() as f:
+                        _log.warning("report_deleted failed (expired)", vault_path=old_vp, error=f.error)
+
+        asyncio.run_coroutine_threadsafe(_handle_expired(), self._loop)
+
+    def _on_create_or_modify(self, vp: str) -> None:
+        """Schedule an extract + upload for a vault-relative path."""
+        async def _handle() -> None:
+            disk_path = self._cfg.vault_root / vp
+            st = None
+
+            # ── Bail-early: stat-then-hash pre-filter ──
+            try:
+                st = disk_path.stat()
+            except OSError:
+                pass  # can't stat, proceed with extract
+            else:
+                cached = self._cache.get(vp) if self._cache is not None else None
+                if cached is not None:
+                    if st.st_size == cached["size"] and st.st_mtime == cached["mtime"]:
+                        _log.debug("skipped (unchanged)", vault_path=vp)
+                        return  # bail-early — stat matches
+                    # Stat differs → hash the file
+                    try:
+                        raw = disk_path.read_bytes()
+                    except OSError:
+                        pass  # can't read, fall through to extract
+                    else:
+                        content_hash = hashlib.sha256(raw).hexdigest()
+                        if content_hash == cached["hash"]:
+                            # Content same, just update stat in cache
+                            if self._cache is not None:
+                                self._cache.touch(vp, st.st_size, st.st_mtime)
+                            _log.debug("skipped (stat changed, content same)", vault_path=vp)
+                            return
+
+            # ── Extract ───────────────────────────────────
+            match extract(disk_path, self._cfg.vault_root, self._cfg.max_file_size_bytes):
+                case Success() as extracted:
+                    # ── After extract, before upload: check Move Detective ──
+                    content_hash = extracted.value.content_hash
+
+                    old_vp = self._move_buffer.match_create(content_hash)
+                    if old_vp is not None:
+                        # This is a move! Report instead of uploading.
+                        match await report_moved(self._client, self._cfg, old_vp, vp):
+                            case Success():
+                                _log.info("detected move via buffer", old_path=old_vp, new_path=vp)
+                                self._cache.forget(old_vp)
+                                if st is not None:
+                                    self._cache.set_after_ack(vp, content_hash, st.st_size, st.st_mtime)
+                            case Failure() as f:
+                                _log.warning("report_moved failed (via buffer)", old_path=old_vp, new_path=vp, error=f.error)
+                        return  # skip upload
+
+                    # ── Normal upload ─────────────────────
+                    if isinstance(extracted.value, TextContent):
+                        tc = extracted.value
+                        match await upload_text(self._client, self._cfg, tc):
+                            case Success(value=doc_id):
+                                _log.info("uploaded text", vault_path=vp, doc_id=doc_id)
+                                # Cache-on-ack
+                                if self._cache is not None and st is not None:
+                                    self._cache.set_after_ack(vp, tc.content_hash, st.st_size, st.st_mtime)
+                            case Failure() as f:
+                                _log.warning("upload_text failed", vault_path=vp, error=f.error)
+                    else:
+                        bc = extracted.value
+                        match await upload_binary(self._client, self._cfg, bc):
+                            case Success(value=doc_id):
+                                _log.info("uploaded binary", vault_path=vp, doc_id=doc_id)
+                                if self._cache is not None and st is not None:
+                                    self._cache.set_after_ack(vp, bc.content_hash, st.st_size, st.st_mtime)
+                            case Failure() as f:
+                                _log.warning("upload_binary failed", vault_path=vp, error=f.error)
+                case Failure() as f:
+                    _log.warning("extract failed", vault_path=vp, error=f.error)
+
+        asyncio.run_coroutine_threadsafe(_handle(), self._loop)
+
+    def _on_move(self, old_vp: str, new_vp: str) -> None:
+        """Schedule a move event report."""
+        async def _handle() -> None:
+            match await report_moved(self._client, self._cfg, old_vp, new_vp):
+                case Success():
+                    _log.info("reported moved", old_path=old_vp, new_path=new_vp)
+                    # Update cache
+                    if self._cache is not None:
+                        new_disk_path = self._cfg.vault_root / new_vp
+                        try:
+                            st = new_disk_path.stat()
+                            raw = new_disk_path.read_bytes()
+                            content_hash = hashlib.sha256(raw).hexdigest()
+                            self._cache.forget(old_vp)
+                            self._cache.set_after_ack(new_vp, content_hash, st.st_size, st.st_mtime)
+                        except OSError:
+                            _log.warning("cannot fingerprint moved file for cache", new_path=new_vp)
+                case Failure() as f:
+                    _log.warning("report_moved failed", old_path=old_vp, new_path=new_vp, error=f.error)
+
+        asyncio.run_coroutine_threadsafe(_handle(), self._loop)
+
+    def _on_delete(self, vp: str) -> None:
+        """Buffer the delete in Move Detective; report only after window expires with no match."""
+        fingerprint_entry = self._cache.get(vp)  # file is gone; cache is only hash source
+        if fingerprint_entry is not None:
+            self._move_buffer.park_delete(fingerprint_entry["hash"], vp)
+            # Start/refresh expiry timer
+            self._refresh_move_timer()
+        else:
+            # Not in cache — can't match, report immediately
+            async def _handle() -> None:
+                match await report_deleted(self._client, self._cfg, vp):
+                    case Success():
+                        _log.info("reported deleted (no cache entry)", vault_path=vp)
+                    case Failure() as f:
+                        _log.warning("report_deleted failed", vault_path=vp, error=f.error)
+
+            asyncio.run_coroutine_threadsafe(_handle(), self._loop)
+
+    # ── periodic reconcile ────────────────────────────────────────────
+
+    async def _periodic_reconcile(self) -> None:
+        """Re-run the 3-way reconcile on a timer while the daemon is running."""
+        _log.info("periodic reconcile started", interval_seconds=self._cfg.periodic_interval_seconds)
+        while True:
+            await asyncio.sleep(self._cfg.periodic_interval_seconds)
+            _log.debug("periodic reconcile running")
+            try:
+                result = await scan(
+                    self._cfg,
+                    self._client,
+                    cache=self._cache,
+                    candidate_deletes=self._candidate_deletes,
+                    sweep_delete_confirmations=self._sweep_confirmations,
+                )
+                _log.info(
+                    "periodic reconcile complete",
+                    uploaded=result.uploaded,
+                    re_uploaded=result.re_uploaded,
+                    deleted=result.deleted,
+                    skipped=result.skipped,
+                    moved=result.moved,
+                )
+                self._cache.save(Path(self._cfg.cache_path).expanduser())
+            except Exception:
+                _log.exception("periodic reconcile failed, will retry on next interval")
 
 
-# ── _run_with_stop (extracted from start for Phase 5 Supervisor) ────────────
+# ── _run_with_stop (thin wrapper for backward compatibility) ─────────────────
 
 
 async def _run_with_stop(
@@ -281,232 +542,8 @@ async def _run_with_stop(
         stop_event: Optional event — when set, the main loop breaks and the
             function returns cleanly after watcher.stop()/join().
     """
-    # ── Cache wiring ─────────────────────────────────────────────────────
-    sync_state = DaemonSyncState()
-    cache = LocalCache(sync_state)
-    cache.load(Path(cfg.cache_path).expanduser())
-    move_buffer = MoveBuffer(sync_state)  # shares the same lock via sync_state
-
-    _move_timer: threading.Timer | None = None
-    _move_timer_lock = threading.Lock()
-    periodic_task: asyncio.Task[None] | None = None
-
-    async with httpx.AsyncClient(timeout=30) as client:
-        # ── 1. Startup scan ──────────────────────────────────────────
-        candidate_deletes: dict[str, int] = {}
-        sweep_confirmations = cfg.sweep_delete_confirmations
-
-        result: ScanResult = await scan(
-            cfg, client,
-            cache=cache,
-            candidate_deletes=candidate_deletes,
-            sweep_delete_confirmations=sweep_confirmations,
-        )
-        _log.info(
-            "startup scan complete",
-            uploaded=result.uploaded,
-            re_uploaded=result.re_uploaded,
-            deleted=result.deleted,
-            skipped=result.skipped,
-        )
-        click.echo(
-            f"Scan complete: {result.uploaded} uploaded, "
-            f"{result.re_uploaded} re-uploaded, "
-            f"{result.deleted} deleted, "
-            f"{result.skipped} skipped"
-        )
-
-        # ── Persist cache after startup scan ─────────────────────────
-        cache.save(Path(cfg.cache_path).expanduser())
-
-        loop = asyncio.get_running_loop()
-
-        # ── 2. Watcher callbacks ─────────────────────────────────────
-
-        def _refresh_move_timer() -> None:
-            """Start or refresh the move-correlation window timer."""
-            nonlocal _move_timer
-            with _move_timer_lock:
-                if _move_timer is not None:
-                    _move_timer.cancel()
-                _move_timer = threading.Timer(
-                    cfg.move_window_seconds,
-                    _on_move_window_expired,
-                )
-                _move_timer.daemon = True
-                _move_timer.start()
-
-        def _on_move_window_expired() -> None:
-            """Called when the move-correlation window expires."""
-            expired = move_buffer.expire(cfg.move_window_seconds)
-            if not expired:
-                return
-            async def _handle_expired() -> None:
-                for fingerprint, old_vp in expired:
-                    match await report_deleted(client, cfg, old_vp):
-                        case Success():
-                            _log.info("reported deleted (move window expired)", vault_path=old_vp)
-                            cache.forget(old_vp)
-                        case Failure() as f:
-                            _log.warning("report_deleted failed (expired)", vault_path=old_vp, error=f.error)
-            asyncio.run_coroutine_threadsafe(_handle_expired(), loop)
-
-        def _on_create_or_modify(vp: str) -> None:
-            """Schedule an extract + upload for a vault-relative path."""
-            async def _handle() -> None:
-                disk_path = cfg.vault_root / vp
-                st = None
-
-                # ── Bail-early: stat-then-hash pre-filter ──
-                try:
-                    st = disk_path.stat()
-                except OSError:
-                    pass  # can't stat, proceed with extract
-                else:
-                    cached = cache.get(vp) if cache is not None else None
-                    if cached is not None:
-                        if st.st_size == cached["size"] and st.st_mtime == cached["mtime"]:
-                            _log.debug("skipped (unchanged)", vault_path=vp)
-                            return  # bail-early — stat matches
-                        # Stat differs → hash the file
-                        try:
-                            raw = disk_path.read_bytes()
-                        except OSError:
-                            pass  # can't read, fall through to extract
-                        else:
-                            content_hash = hashlib.sha256(raw).hexdigest()
-                            if content_hash == cached["hash"]:
-                                # Content same, just update stat in cache
-                                if cache is not None:
-                                    cache.touch(vp, st.st_size, st.st_mtime)
-                                _log.debug("skipped (stat changed, content same)", vault_path=vp)
-                                return
-
-                # ── Extract ───────────────────────────────────────
-                match extract(disk_path, cfg.vault_root, cfg.max_file_size_bytes):
-                    case Success() as extracted:
-                        # ── After extract, before upload: check Move Detective ──
-                        content_hash = extracted.value.content_hash
-
-                        old_vp = move_buffer.match_create(content_hash)
-                        if old_vp is not None:
-                            # This is a move! Report instead of uploading.
-                            match await report_moved(client, cfg, old_vp, vp):
-                                case Success():
-                                    _log.info("detected move via buffer", old_path=old_vp, new_path=vp)
-                                    cache.forget(old_vp)
-                                    if st is not None:
-                                        cache.set_after_ack(vp, content_hash, st.st_size, st.st_mtime)
-                                case Failure() as f:
-                                    _log.warning("report_moved failed (via buffer)", old_path=old_vp, new_path=vp, error=f.error)
-                            return  # skip upload
-
-                        # ── Normal upload ─────────────────────────
-                        if isinstance(extracted.value, TextContent):
-                            tc = extracted.value
-                            match await upload_text(client, cfg, tc):
-                                case Success(value=doc_id):
-                                    _log.info("uploaded text", vault_path=vp, doc_id=doc_id)
-                                    # Cache-on-ack
-                                    if cache is not None and st is not None:
-                                        cache.set_after_ack(vp, tc.content_hash, st.st_size, st.st_mtime)
-                                case Failure() as f:
-                                    _log.warning("upload_text failed", vault_path=vp, error=f.error)
-                        else:
-                            bc = extracted.value
-                            match await upload_binary(client, cfg, bc):
-                                case Success(value=doc_id):
-                                    _log.info("uploaded binary", vault_path=vp, doc_id=doc_id)
-                                    if cache is not None and st is not None:
-                                        cache.set_after_ack(vp, bc.content_hash, st.st_size, st.st_mtime)
-                                case Failure() as f:
-                                    _log.warning("upload_binary failed", vault_path=vp, error=f.error)
-                    case Failure() as f:
-                        _log.warning("extract failed", vault_path=vp, error=f.error)
-
-            asyncio.run_coroutine_threadsafe(_handle(), loop)
-
-        def _on_move(old_vp: str, new_vp: str) -> None:
-            """Schedule a move event report."""
-            async def _handle() -> None:
-                match await report_moved(client, cfg, old_vp, new_vp):
-                    case Success():
-                        _log.info("reported moved", old_path=old_vp, new_path=new_vp)
-                        # Update cache
-                        if cache is not None:
-                            new_disk_path = cfg.vault_root / new_vp
-                            try:
-                                st = new_disk_path.stat()
-                                raw = new_disk_path.read_bytes()
-                                content_hash = hashlib.sha256(raw).hexdigest()
-                                cache.forget(old_vp)
-                                cache.set_after_ack(new_vp, content_hash, st.st_size, st.st_mtime)
-                            except OSError:
-                                _log.warning("cannot fingerprint moved file for cache", new_path=new_vp)
-                    case Failure() as f:
-                        _log.warning("report_moved failed", old_path=old_vp, new_path=new_vp, error=f.error)
-
-            asyncio.run_coroutine_threadsafe(_handle(), loop)
-
-        def _on_delete(vp: str) -> None:
-            """Buffer the delete in Move Detective; report only after window expires with no match."""
-            fingerprint_entry = cache.get(vp)  # file is gone; cache is only hash source
-            if fingerprint_entry is not None:
-                move_buffer.park_delete(fingerprint_entry["hash"], vp)
-                # Start/refresh expiry timer
-                _refresh_move_timer()
-            else:
-                # Not in cache — can't match, report immediately
-                async def _handle() -> None:
-                    match await report_deleted(client, cfg, vp):
-                        case Success():
-                            _log.info("reported deleted (no cache entry)", vault_path=vp)
-                        case Failure() as f:
-                            _log.warning("report_deleted failed", vault_path=vp, error=f.error)
-                asyncio.run_coroutine_threadsafe(_handle(), loop)
-
-        # ── 3. Start watcher ─────────────────────────────────────────
-        watcher = DaemonWatcher(
-            cfg,
-            on_create=_on_create_or_modify,
-            on_modify=_on_create_or_modify,
-            on_move=_on_move,
-            on_delete=_on_delete,
-        )
-        watcher.start()
-        _log.info("watcher started", vault_root=str(cfg.vault_root))
-        click.echo(f"Watching {cfg.vault_root} — Ctrl+C to stop")
-
-        # ── Periodic reconcile timer ─────────────────────────────────
-        if cfg.periodic_interval_seconds > 0:
-            periodic_task = asyncio.create_task(
-                _periodic_reconcile(cfg, client, cache, candidate_deletes, sweep_confirmations)
-            )
-        else:
-            periodic_task = None
-
-        # ── 4. Main loop ─────────────────────────────────────────────
-        try:
-            while True:
-                if stop_event is not None and stop_event.is_set():
-                    break
-                await asyncio.sleep(1)
-        finally:
-            # Cancel periodic reconcile
-            if periodic_task is not None:
-                periodic_task.cancel()
-                try:
-                    await periodic_task
-                except asyncio.CancelledError:
-                    pass
-
-            with _move_timer_lock:
-                if _move_timer is not None:
-                    _move_timer.cancel()
-            cache.save(Path(cfg.cache_path).expanduser())
-            watcher.stop()
-            watcher.join()
-            _log.info("watcher stopped")
+    daemon_loop = DaemonLoop(cfg, config_path, stop_event)
+    await daemon_loop.run()
 
 
 # ── start command ────────────────────────────────────────────────────────────
