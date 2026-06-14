@@ -76,3 +76,20 @@ class TestCaptureSummaryPrompt:
             f"User prompt must contain the passed text. "
             f"User (first 500 chars):\n{user[:500]}..."
         )
+
+
+class TestDescribeImagePrompt:
+    """Verify the describe_image (vision) prompt."""
+
+    def test_describe_image_prompt_includes_mime_type(self):
+        """The rendered user prompt must contain the mime_type variable value."""
+        prompt = PROMPTS["describe_image"]
+        _system, user = prompt.render(mime_type="image/png")
+        assert "image/png" in user, (
+            f"User prompt must contain mime_type. "
+            f"User (first 500 chars):\n{user[:500]}..."
+        )
+        assert user.startswith("This file is a image/png."), (
+            f"User prompt must start with the mime_type sentence. "
+            f"Got: {user[:100]!r}"
+        )
