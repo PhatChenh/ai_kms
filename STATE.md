@@ -1,19 +1,19 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-06-14 (Phase 6 Slice B installable-app — build-pipeline COMPLETE, plan-only)_
+_Last updated: 2026-06-15 (Phase 6 Slice B — Phase 1 complete, 261 daemon tests pass)_
 
 ## Current Position
 **Phase**: Phase 6 (Daemon). Slice A1 (core sync pipe) built + merged to cloud-native; Slice A2 (cache + smart reconcile) is docs-only (spec/research/plan written, NOT implemented); **Slice B (installable desktop app) — build-pipeline COMPLETE (design→spec→research→plan), plan-only, NO code.** Slice B implementation is gated on A2 landing. (Prior: Phase 5 Slice 2 Deployment Foundation ✅ COMPLETE 2026-06-13, 450+ tests, Docker verified.)
 
-**[Phase 6 Slice B — Installable Daemon App — Plan written 2026-06-14]** _(PENDING implementation — gated on Slice A2 landing)_:
-- [ ] Phase 1 — Secret Vault wrapper (`keyring`: Keychain / Credential Manager) [P6-SLICEB-01]
+**[Phase 6 Slice B — Installable Daemon App — Plan written 2026-06-14]** _(IN PROGRESS — Phase 1 complete)_:
+- [x] Phase 1 — Secret Vault wrapper (`keyring`: Keychain / Credential Manager) [P6-SLICEB-01]
 - [ ] Phase 2 — Cloud Connection Check (live authed test → `GET /api/state`, not `/health`) [P6-SLICEB-02]
 - [ ] Phase 3 — OS-Glue Seam + 2 adapters (launch-on-login + tray, `pystray`) [P6-SLICEB-03/04]
 - [ ] Phase 4 — Setup Wizard (Tkinter, hard-block on connection test) [P6-SLICEB-05]
 - [ ] Phase 5 — App Supervisor (setup-vs-run, sync-engine on worker thread, clean stop) [P6-SLICEB-06/09]
 - [ ] Phase 6 — Uninstall Cleanup (`daemon uninstall` CLI: wipe key + config + startup reg) [P6-SLICEB-10]
 - [ ] Phase 7 — Packager (PyInstaller + DMG/Inno, baked default endpoint, 8 extractor hidden-imports) [P6-SLICEB-07/08]
-- **Decisions:** native app NOT Docker (ADR-0016); cross-platform Mac+Windows; unsigned + one-time Gatekeeper/SmartScreen override; one generic build per OS + baked editable default endpoint; manual update (auto-update deferred); launch-on-login default ON. New deps planned (not installed): `keyring`, `pystray`, `pyinstaller`.
+- **Decisions:** native app NOT Docker (ADR-0016); cross-platform Mac+Windows; unsigned + one-time Gatekeeper/SmartScreen override; one generic build per OS + baked editable default endpoint; manual update (auto-update deferred); launch-on-login default ON. New deps: `keyring` (installed), `pystray` (planned), `pyinstaller` (planned).
 - **Artifacts:** grill `docs/0_draft/phase6/phase6_sliceB_grill.md` · design `docs/1_design/phase6/phase6_sliceB_installer.md` · spec `docs/2_specs/phase6/phase6_sliceB_installer.md` · research `docs/3_research/phase6/phase6_sliceB_installer.md` (0 invalidated) · plan `docs/4_plans/phase6/phase6_sliceB_installer.md` · ADR-0016
 - **Open (non-blocking):** OQ-SB1 (pystray ↔ asyncio main-thread per OS), OQ-SB2 (wizard-skip condition), OQ-SB3 (`daemon uninstall` CLI vs internal helper); plus external field-verify risks (PyInstaller freezing of keyring/watchdog/pystray, macOS quarantine clearing for LaunchAgent relaunch).
 
