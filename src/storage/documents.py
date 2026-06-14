@@ -45,6 +45,8 @@ class DocumentRow:
     full_body: str | None = None
     original_filename: str | None = None
     file_size_bytes: int | None = None
+    blob_ref: str | None = None
+    mime_type: str | None = None
 
 
 def _row_from_sqlite(row: sqlite3.Row) -> DocumentRow:
@@ -74,6 +76,8 @@ def _row_from_sqlite(row: sqlite3.Row) -> DocumentRow:
         file_size_bytes=row["file_size_bytes"]
         if "file_size_bytes" in row.keys()
         else None,
+        blob_ref=row["blob_ref"] if "blob_ref" in row.keys() else None,
+        mime_type=row["mime_type"] if "mime_type" in row.keys() else None,
     )
 
 
