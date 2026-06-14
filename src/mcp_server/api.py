@@ -7,6 +7,7 @@ scoped to /api/* only.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -15,18 +16,27 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from core.result import Failure, Success
+from core.result import Failure, Result, Success
 from pipelines.capture import capture_upload
+from storage.blobs import BlobStore
+from storage.db import get_connection
 from storage.documents import (
     all_paths,
     delete_by_path,
+    get_by_path,
     rename,
     upsert_from_upload,
 )
 
+_log = logging.getLogger(__name__)
+
 # Testability injection point — set this to an explicit Path in tests to
 # override the default CONFIG-derived database path.  None = use CONFIG.
 _db_path: Path | None = None
+
+# Blob store injection point — set this in tests to a LocalBlobStore, or
+# in production to an S3BlobStore.  None = no blob cleanup (text-only).
+_blob_store: BlobStore | None = None
 
 
 # ============================================================================
@@ -267,6 +277,82 @@ async def state_handler(request: Request) -> JSONResponse:
             )
 
 
+def _delete_with_blob_cleanup(
+    vault_path: str,
+    *,
+    db_path: Path | None = None,
+    blob_store: BlobStore | None = None,
+) -> Result[int]:
+    """Delete a document row and clean up its blob if this was the last reference.
+
+    Reference-counted blob delete (Phase 5 / P7-CAP-13):
+
+    1. Pre-read the row to capture ``blob_ref``.
+    2. Delete the row (search entries cleaned in same transaction).
+    3. If ``blob_ref`` was not NULL and ``blob_store`` is not None, run
+       ``SELECT COUNT(*) FROM documents WHERE blob_ref = ?`` inside its own
+       connection.
+    4. If count == 0 → ``blob_store.delete(key)`` best-effort.
+       Failed blob delete is logged but does NOT fail the result.
+
+    Args:
+        vault_path: POSIX-relative path for the document row to delete.
+        db_path:    Override DB path.
+        blob_store: Optional blob store for cleanup.  None → skip.
+
+    Returns:
+        ``Success(rowcount)`` or ``Failure(recoverable=False)``.
+    """
+    # 1. Pre-read the row to capture blob_ref
+    pre_read = get_by_path(vault_path, db_path=db_path)
+    blob_ref: str | None = None
+    match pre_read:
+        case Success(row) if row is not None:
+            blob_ref = row.blob_ref
+        case Failure():
+            return pre_read
+        case _:
+            pass  # row is None → treat as no blob
+
+    # 2. Delete the row (existing behavior)
+    del_result = delete_by_path(vault_path=vault_path, db_path=db_path)
+    if del_result.is_failure():
+        return del_result
+
+    rowcount: int = del_result.value  # type: ignore[union-attr]
+
+    # 3-4. Reference-count check + best-effort blob delete
+    if blob_ref is not None and blob_store is not None and rowcount > 0:
+        try:
+            with get_connection(db_path) as conn:
+                cur = conn.execute(
+                    "SELECT COUNT(*) FROM documents WHERE blob_ref = ?",
+                    (blob_ref,),
+                )
+                count: int = cur.fetchone()[0]
+        except Exception as exc:
+            _log.warning(
+                "blob ref-count query failed vault_path=%s blob_ref=%s err=%s",
+                vault_path,
+                blob_ref,
+                exc,
+            )
+            return Success(rowcount)
+
+        if count == 0:
+            # Last reference — delete the blob best-effort
+            del_blob = blob_store.delete(blob_ref)
+            if del_blob.is_failure():
+                _log.error(
+                    "blob delete failed vault_path=%s blob_ref=%s err=%s",
+                    vault_path,
+                    blob_ref,
+                    del_blob.error,
+                )
+
+    return Success(rowcount)
+
+
 async def event_handler(request: Request) -> JSONResponse:
     """Handle document events (moved / deleted).
 
@@ -331,7 +417,11 @@ async def event_handler(request: Request) -> JSONResponse:
                 {"status": "error", "detail": "path is required for deleted"},
                 status_code=400,
             )
-        result = delete_by_path(vault_path=path, db_path=_db_path)
+        result = _delete_with_blob_cleanup(
+            vault_path=path,
+            db_path=_db_path,
+            blob_store=_blob_store,
+        )
 
     match result:
         case Success(rowcount):
