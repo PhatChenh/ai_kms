@@ -574,11 +574,13 @@ class TestMultipartUpload:
     def _set_key(self, monkeypatch):
         monkeypatch.setenv("KMS_DAEMON_API_KEY", API_KEY)
 
-    def test_multipart_upload_creates_row_with_null_full_body(self, db):
+    def test_multipart_upload_creates_row_with_null_full_body(self, db, tmp_path):
         """Multipart upload creates a documents row with NULL full_body."""
         import mcp_server.api as api
+        from storage.blobs import LocalBlobStore
 
         api._db_path = db
+        api._blob_store = LocalBlobStore(tmp_path)
 
         app = Starlette(routes=api.api_routes)
         client = TestClient(app)
@@ -613,11 +615,13 @@ class TestMultipartUpload:
         assert doc.original_filename == "report.pdf"
         assert doc.file_size_bytes == 2048
 
-    def test_multipart_upload_same_hash_is_noop(self, db):
+    def test_multipart_upload_same_hash_is_noop(self, db, tmp_path):
         """Re-upload with same content_hash → no-op, returns existing id."""
         import mcp_server.api as api
+        from storage.blobs import LocalBlobStore
 
         api._db_path = db
+        api._blob_store = LocalBlobStore(tmp_path)
 
         app = Starlette(routes=api.api_routes)
         client = TestClient(app)
@@ -627,11 +631,11 @@ class TestMultipartUpload:
             "content_hash": "same-hash-123",
         }
 
-        # First upload
+        # First upload (use proper filename so Starlette returns UploadFile)
         resp1 = client.post(
             "/api/upload",
             data=form_data,
-            files={"file": ("", b"")},
+            files={"file": ("data.bin", b"hello", "application/octet-stream")},
             headers={"Authorization": f"Bearer {API_KEY}"},
         )
         assert resp1.status_code == 200
@@ -641,7 +645,7 @@ class TestMultipartUpload:
         resp2 = client.post(
             "/api/upload",
             data=form_data,
-            files={"file": ("", b"")},
+            files={"file": ("data.bin", b"hello", "application/octet-stream")},
             headers={"Authorization": f"Bearer {API_KEY}"},
         )
         assert resp2.status_code == 200
@@ -664,7 +668,7 @@ class TestMultipartUpload:
                 "vault_path": "uploads/nope.bin",
                 "content_hash": "hash-nope",
             },
-            files={"file": ("", b"")},
+            files={"file": ("nope.bin", b"")},
         )
 
         assert resp.status_code == 401
@@ -682,7 +686,7 @@ class TestMultipartUpload:
         resp = client.post(
             "/api/upload",
             data={"content_hash": "hash"},
-            files={"file": ("", b"")},
+            files={"file": ("file.bin", b"")},
             headers={"Authorization": f"Bearer {API_KEY}"},
         )
 
@@ -701,7 +705,7 @@ class TestMultipartUpload:
         resp = client.post(
             "/api/upload",
             data={"vault_path": "path.bin"},
-            files={"file": ("", b"")},
+            files={"file": ("file.bin", b"")},
             headers={"Authorization": f"Bearer {API_KEY}"},
         )
 
@@ -724,7 +728,7 @@ class TestMultipartUpload:
                 "content_hash": "hash",
                 "file_size_bytes": "not-a-number",
             },
-            files={"file": ("", b"")},
+            files={"file": ("file.bin", b"")},
             headers={"Authorization": f"Bearer {API_KEY}"},
         )
 
@@ -735,6 +739,145 @@ class TestMultipartUpload:
 # ============================================================================
 # P6-A1-02 — upsert_from_upload with extracted_text=None
 # ============================================================================
+
+
+# ============================================================================
+# Phase 6 — Upload endpoint re-point (binary capture branch)
+# ============================================================================
+
+
+class TestMultipartRoutesToCaptureUpload:
+    """Multipart uploads must call capture_upload, not upsert_from_upload directly."""
+
+    @pytest.fixture(autouse=True)
+    def _set_key(self, monkeypatch):
+        monkeypatch.setenv("KMS_DAEMON_API_KEY", API_KEY)
+
+    def test_multipart_with_file_calls_capture_upload_with_raw_bytes(self, db, tmp_path):
+        """Sending a file in multipart → capture_upload receives raw_bytes + mime_type."""
+        import mcp_server.api as api
+
+        api._db_path = db
+        api._blob_store = None  # blob_store is None for this test (mock short-circuits)
+
+        from unittest.mock import AsyncMock, patch
+
+        # Mock capture_upload to return a known document id
+        async def _fake_capture_upload(**kwargs):
+            from core.result import Success
+            return Success(99)
+
+        with patch.object(api, "capture_upload", side_effect=_fake_capture_upload) as mock_cap:
+            # Also patch upsert_from_upload (create=True since it may not be
+            # imported) to detect if it's called directly
+            with patch.object(api, "upsert_from_upload", create=True) as mock_upsert:
+                app = Starlette(routes=api.api_routes)
+                client = TestClient(app)
+
+                resp = client.post(
+                    "/api/upload",
+                    data={
+                        "vault_path": "uploads/photo.png",
+                        "content_hash": "abc-photo",
+                        "original_filename": "photo.png",
+                        "file_size_bytes": "4096",
+                    },
+                    files={"file": ("photo.png", b"\x89PNG\r\n\x1a\n...fake...", "image/png")},
+                    headers={"Authorization": f"Bearer {API_KEY}"},
+                )
+
+                assert resp.status_code == 200
+                data = resp.json()
+                assert data["status"] == "ok"
+                assert data["document_id"] == 99
+
+                # capture_upload must have been called exactly once
+                mock_cap.assert_awaited_once()
+                call_kwargs = mock_cap.call_args.kwargs
+
+                assert call_kwargs["vault_path"] == "uploads/photo.png"
+                assert call_kwargs["extracted_text"] is None
+                assert call_kwargs["content_hash"] == "abc-photo"
+                assert call_kwargs["raw_bytes"] == b"\x89PNG\r\n\x1a\n...fake..."
+                assert call_kwargs["mime_type"] == "image/png"
+                assert call_kwargs["blob_store"] is None  # _blob_store untouched
+                assert call_kwargs["original_filename"] == "photo.png"
+                assert call_kwargs["file_size_bytes"] == 4096
+                assert call_kwargs["db_path"] == db
+
+                # upsert_from_upload must NOT be called by the multipart handler
+                mock_upsert.assert_not_called()
+
+    def test_multipart_without_file_calls_capture_upload_without_raw_bytes(self, db):
+        """Multipart upload without a file field → capture_upload(raw_bytes=None)."""
+        import mcp_server.api as api
+
+        api._db_path = db
+        api._blob_store = None
+
+        from unittest.mock import patch
+
+        async def _fake_capture_upload(**kwargs):
+            from core.result import Failure
+            # The guard "neither text nor bytes" will fire, which is fine
+            return Failure(error="neither text nor bytes supplied", recoverable=False, context={})
+
+        with patch.object(api, "capture_upload", side_effect=_fake_capture_upload) as mock_cap:
+            app = Starlette(routes=api.api_routes)
+            client = TestClient(app)
+
+            # Send multipart with data but no "file" field — use a dummy
+            # file field name to force multipart encoding without the
+            # actual "file" field being present.
+            resp = client.post(
+                "/api/upload",
+                data={
+                    "vault_path": "uploads/metadata_only.bin",
+                    "content_hash": "hash-no-file",
+                },
+                files={"dummy": ("", b"")},
+                headers={"Authorization": f"Bearer {API_KEY}"},
+            )
+
+            # capture_upload is called, it returns Failure → 500
+            # (This is the expected behavior when neither text nor bytes provided)
+            mock_cap.assert_awaited_once()
+            call_kwargs = mock_cap.call_args.kwargs
+            assert call_kwargs["raw_bytes"] is None
+            assert call_kwargs["mime_type"] is None
+            assert call_kwargs["extracted_text"] is None
+
+    def test_multipart_mime_type_from_form_field(self, db):
+        """Explicit mime_type form field takes precedence over file content_type."""
+        import mcp_server.api as api
+
+        api._db_path = db
+
+        from unittest.mock import patch
+
+        async def _fake_capture_upload(**kwargs):
+            from core.result import Success
+            return Success(1)
+
+        with patch.object(api, "capture_upload", side_effect=_fake_capture_upload) as mock_cap:
+            app = Starlette(routes=api.api_routes)
+            client = TestClient(app)
+
+            resp = client.post(
+                "/api/upload",
+                data={
+                    "vault_path": "uploads/explicit.bin",
+                    "content_hash": "hash-exp",
+                    "mime_type": "application/octet-stream",
+                },
+                files={"file": ("data.bin", b"binary", "text/plain")},
+                headers={"Authorization": f"Bearer {API_KEY}"},
+            )
+
+            assert resp.status_code == 200
+            call_kwargs = mock_cap.call_args.kwargs
+            # mime_type from form field wins over file.content_type
+            assert call_kwargs["mime_type"] == "application/octet-stream"
 
 
 class TestUpsertFromUploadNullExtractedText:
