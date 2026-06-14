@@ -558,6 +558,8 @@ On daemon start, walk entire vault and diff against cloud DB state to catch chan
 
 **DAEMON INSTALLER** *(build last)*
 
+> **🔪 SCOPED AS "SLICE B" + build-pipeline COMPLETE (2026-06-14).** This component is the Phase 6 **Slice B** (installable app), planned end-to-end via build-pipeline: grill → design → spec → research → plan. **Plan-only, no code; implementation gated on Slice A2 landing.** Key decisions overriding/refining the bullets below: ships as a **NATIVE app, NOT Docker** (ADR-0016 — Docker Desktop can't deliver live FS-watching across the Mac/Win VM boundary); **cross-platform Mac + Windows** (not Mac-only); **unsigned** + one-time guided Gatekeeper/SmartScreen override (no paid signing this slice); API key in **OS secure store via `keyring`** (not launchd env — that's Mac-only); **one generic build per OS + baked editable default endpoint** (supports multiple testers + separate vaults); first-run **Tkinter** wizard hard-blocks on a live **authed** test (`GET /api/state`, not `/health`); **manual re-download** updates (auto-update deferred); **minimal `pystray` tray**; **installer per OS** (DMG + Inno/NSIS) with clean uninstall (removes app + startup reg + config + keyring entry); **launch-on-login default ON**. 7 implementation phases, behavior IDs `P6-SLICEB-01…10`. New deps planned: `keyring`, `pystray`, `pyinstaller`. Artifacts: `docs/{0_draft,1_design,2_specs,3_research,4_plans}/phase6/phase6_sliceB_*` + ADR-0016.
+
 Package daemon as a single installable app for Mac.
 
 - **Input:** Daemon source code + handlers + dependencies

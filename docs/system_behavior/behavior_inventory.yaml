@@ -3769,3 +3769,261 @@
   pytest_ref: null
   status: planned
   retired: null
+- id: P6-SLICEB-01
+  behavior: The daemon's cloud key lives in the operating system's encrypted secret
+    store (Keychain on Mac, Credential Manager on Windows) instead of a hand-set
+    environment variable, and the daemon picks it up at startup with no plaintext
+    file holding the secret
+  tier: full
+  phase: 6
+  origin: design
+  granularity: outcome
+  trigger: The setup wizard stores a key, then the daemon process starts
+  fixtures: []
+  steps:
+  - Store a key via the secret-store wrapper, then start a fresh daemon process.
+  - Inspect that the key is read back and that no plaintext config file contains it.
+  expected:
+  - A key written to the OS secret store is readable back in a fresh process
+  - The daemon's existing config loader receives the key without edits to its loader
+  - No plaintext file (YAML config or dotenv) contains the secret
+  spec_ref: docs/1_design/phase6/phase6_sliceB_installer.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P6-SLICEB-02
+  behavior: The first-run setup hard-blocks on a live, authenticated connection test
+    to the cloud before saving — a wrong key or unreachable address fails loudly at
+    setup with a clear, named reason instead of saving a broken config that silently
+    syncs nothing
+  tier: full
+  phase: 6
+  origin: design
+  granularity: outcome
+  trigger: A user enters a key + cloud address in the wizard and tries to finish
+  fixtures: []
+  steps:
+  - Enter a correct key + reachable address and attempt to finish setup.
+  - Repeat with a wrong key, then with an unreachable address.
+  expected:
+  - A correct key + reachable address passes and setup completes
+  - A wrong key blocks completion with an error naming authentication
+  - An unreachable address blocks completion with an error naming reachability
+  - The test calls an authenticated endpoint, not the open health check, so a bad
+    key cannot pass
+  spec_ref: docs/1_design/phase6/phase6_sliceB_installer.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P6-SLICEB-03
+  behavior: The two per-operating-system behaviours (start-at-login registration and
+    tray registration) sit behind one shared interface with exactly one Mac and one
+    Windows implementation; the correct one is selected automatically, and registering
+    at login makes the app relaunch after a logout/login cycle
+  tier: full
+  phase: 6
+  origin: design
+  granularity: outcome
+  trigger: The app runs on macOS or on Windows and registers itself to start at login
+  fixtures: []
+  steps:
+  - Launch the app on each OS and let it register start-at-login.
+  - Log out and back in; observe whether the app relaunches.
+  expected:
+  - The correct per-OS adapter is selected automatically with no manual switch
+  - After a logout/login cycle the app relaunches on its own
+  - Start-at-login is registered once on first successful setup, not on every launch
+  spec_ref: docs/1_design/phase6/phase6_sliceB_installer.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P6-SLICEB-04
+  behavior: A status tray icon is the user's only window into a headless background
+    app — it shows whether the daemon is running, syncing, or in error, and offers
+    Quit and Open-setup actions, without growing into a dashboard
+  tier: full
+  phase: 6
+  origin: design
+  granularity: outcome
+  trigger: The app is running and the daemon's state changes (idle, syncing, error)
+  fixtures: []
+  steps:
+  - Run the app and observe the tray icon while the daemon is idle, syncing, and in
+    an error state.
+  - Use the tray's Quit and Open-setup menu items.
+  expected:
+  - The tray icon appears and reflects running / syncing / error states
+  - Quit and Open-setup menu items are present and wired
+  - The tray shows status only — it is not a knowledge/dashboard view
+  spec_ref: docs/1_design/phase6/phase6_sliceB_installer.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P6-SLICEB-05
+  behavior: A non-technical user can complete first-run setup in a simple window with
+    no terminal — choosing the notes folder, accepting or editing a pre-filled cloud
+    address, and pasting the key; a failed connection test keeps the window open with
+    a clear error and never writes settings
+  tier: full
+  phase: 6
+  origin: design
+  granularity: outcome
+  trigger: A user opens the app for the first time on a machine with no saved settings
+  fixtures: []
+  steps:
+  - Open the app on an unconfigured machine and complete the wizard with valid input.
+  - Repeat with a wrong key and observe the window and whether settings are written.
+  expected:
+  - Setup completes with no terminal use
+  - The cloud-address field shows the baked default but accepts an edit
+  - On success the config file exists in the shape the loader reads and the key is
+    in the OS secret store
+  - On a failed test the window stays open with a clear error and writes nothing
+  spec_ref: docs/1_design/phase6/phase6_sliceB_installer.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P6-SLICEB-06
+  behavior: One supervisor entry point decides setup-versus-run on launch, runs the
+    existing sync engine on a background thread, shows the tray, and shuts down cleanly
+    on Quit — a fresh machine shows the wizard then runs, an already-set-up machine
+    runs with no window
+  tier: full
+  phase: 6
+  origin: design
+  granularity: outcome
+  trigger: The app launches on a fresh machine and, separately, on an already-set-up
+    machine
+  fixtures: []
+  steps:
+  - Launch on an unconfigured machine, then on a configured one.
+  - Choose Quit and confirm the engine stops and the process exits.
+  expected:
+  - A fresh machine shows the wizard then enters run mode
+  - An already-set-up machine starts running with no window
+  - The sync engine runs through the existing async run path (no new bare event loop)
+  - Quit stops the engine cleanly and the process exits
+  spec_ref: docs/1_design/phase6/phase6_sliceB_installer.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P6-SLICEB-07
+  behavior: One generic installable file per operating system serves every user —
+    the same binary supports different users with separate vaults and separate cloud
+    runtimes, because vault path, key, and (editable) endpoint are all per-machine
+    config, not baked per user
+  tier: full
+  phase: 6
+  origin: design
+  granularity: outcome
+  trigger: The same downloaded installer is set up by two different users on two
+    machines
+  fixtures: []
+  steps:
+  - Install the same build on two machines and configure each with a different vault,
+    key, and endpoint.
+  - Confirm each runs independently against its own cloud runtime.
+  expected:
+  - Only the binary file is shared; vault path, key, and endpoint are per-machine
+  - Two users with separate vaults and runtimes both run from the identical build
+  - The baked endpoint is a pre-filled default, overridable per machine
+  spec_ref: docs/1_design/phase6/phase6_sliceB_installer.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P6-SLICEB-08
+  behavior: The packaged app is self-contained — it installs and runs on a clean Mac
+    or Windows machine with no Python install, extracts PDF/DOCX/XLSX text inside the
+    frozen bundle, loads the secret-store backend when frozen, and bundles no embedding
+    model (those stay cloud-side, keeping the download small)
+  tier: full
+  phase: 6
+  origin: design
+  granularity: outcome
+  trigger: The packaged installer is run on a clean machine with no developer tools
+  fixtures: []
+  steps:
+  - Install from the DMG on a clean Mac and from the installer on a clean Windows box.
+  - Drop PDF/DOCX/XLSX files and confirm text extraction and secret-store access work.
+  expected:
+  - The app installs and runs with no separate Python install
+  - The frozen app extracts PDF/DOCX/XLSX (no raw-bytes fallback for these)
+  - The secret-store backend loads in the frozen app
+  - No embedding model ships in the bundle (confirmed — daemon imports no embedding
+    library)
+  spec_ref: docs/1_design/phase6/phase6_sliceB_installer.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P6-SLICEB-09
+  behavior: Slice B adds zero sync or cache logic — the supervisor only starts the
+    existing daemon and never reaches into its watch/extract/upload/reconcile/cache
+    path, preserving the cache-advisory / cloud-authority contract
+  tier: full
+  phase: 6
+  origin: design
+  granularity: outcome
+  trigger: The Slice B packaging/supervisor code is reviewed against the daemon's
+    sync path
+  fixtures: []
+  steps:
+  - Review the Slice B code for any watch, extract, upload, reconcile, or cache logic.
+  expected:
+  - The supervisor starts the daemon but contains no sync or cache logic of its own
+  - The daemon's existing sync/cache behaviour is unchanged by Slice B
+  - The cache-advisory / cloud-authority contract is not touched
+  spec_ref: docs/1_design/phase6/phase6_sliceB_installer.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P6-SLICEB-10
+  behavior: Uninstall leaves no trace — a dedicated cleanup step removes the key from
+    the OS secret store, the config file, and the start-at-login registration; running
+    it twice is safe
+  tier: full
+  phase: 6
+  origin: design
+  granularity: outcome
+  trigger: The user uninstalls the app on a set-up machine
+  fixtures: []
+  steps:
+  - Run the uninstall cleanup on a fully set-up machine.
+  - Run it a second time and confirm no error.
+  expected:
+  - No key remains in the OS secret store after uninstall
+  - No config file and no start-at-login registration remain
+  - Running the cleanup twice is safe (idempotent) and reports what it removed
+  spec_ref: docs/1_design/phase6/phase6_sliceB_installer.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null

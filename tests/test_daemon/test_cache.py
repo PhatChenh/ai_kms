@@ -283,3 +283,39 @@ class TestRebuild:
         assert cache.get("new2.md") == {"hash": "nh2", "size": 40, "mtime": 4.0}
         # Snapshot matches
         assert cache.snapshot() == new_entries
+
+
+# ── touch ────────────────────────────────────────────────────────────────────
+
+
+class TestTouch:
+    """Tests for LocalCache.touch()."""
+
+    def test_touch_updates_size_and_mtime_preserves_hash(self):
+        sync_state = DaemonSyncState()
+        cache = LocalCache(sync_state)
+        cache.set_after_ack("a.md", "abc", 100, 1.0)
+
+        cache.touch("a.md", 200, 3.0)
+
+        entry = cache.get("a.md")
+        assert entry == {"hash": "abc", "size": 200, "mtime": 3.0}
+
+    def test_touch_on_unknown_key_is_noop(self):
+        sync_state = DaemonSyncState()
+        cache = LocalCache(sync_state)
+
+        cache.touch("nonexistent.md", 500, 5.0)
+
+        assert cache.get("nonexistent.md") is None
+        assert cache.snapshot() == {}
+
+    def test_touch_does_not_affect_other_entries(self):
+        sync_state = DaemonSyncState()
+        cache = LocalCache(sync_state)
+        cache.set_after_ack("a.md", "aaa", 10, 1.0)
+        cache.set_after_ack("b.md", "bbb", 20, 2.0)
+
+        cache.touch("a.md", 99, 9.0)
+
+        assert cache.get("b.md") == {"hash": "bbb", "size": 20, "mtime": 2.0}
