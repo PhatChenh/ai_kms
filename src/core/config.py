@@ -333,6 +333,17 @@ class SearchConfig(BaseModel):
     max_results: int = 10
 
 
+class ClassifyConfig(BaseModel):
+    """Classify pipeline configuration. Read from config.yaml classify: section.
+
+    Tunables for Slice A — content-token cap and per-dimension fact cap.
+    Adjust in config/config.yaml under `classify:`.
+    """
+
+    max_content_tokens: int = Field(10000, ge=1)
+    max_entries_per_dimension: int = Field(50, ge=1)
+
+
 class TestingConfig(BaseModel):
     """Isolated vault used for manual testing-guide runs.
 
@@ -364,6 +375,7 @@ class MainConfig(BaseModel):
     handlers: HandlersConfig = Field(default_factory=HandlersConfig)  # type: ignore[arg-type]
     capture: CaptureConfig = Field(default_factory=CaptureConfig)  # type: ignore[arg-type]
     search: SearchConfig = Field(default_factory=SearchConfig)
+    classify: ClassifyConfig = Field(default_factory=ClassifyConfig)
     env: Env = "dev"
 
     @model_validator(mode="after")
