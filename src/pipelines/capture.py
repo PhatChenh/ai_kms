@@ -79,30 +79,12 @@ async def _summarize_upload(
 
     Args:
         text:    Bare document text (do NOT pre-wrap in context builders).
-        db_path: Override DB path for knowledge-facts lookups.
+        db_path: Override DB path (unused currently, reserved for future context injection).
 
     Returns:
         ``Success((summary, title))`` or ``Failure`` if the AI call fails.
     """
-    # (a) Dormant context injection — consult knowledge facts, degrade
-    #     gracefully on empty.
-    try:
-        from storage.knowledge_entries import get_confident_and_pending as _get_facts
-    except ImportError:
-        _get_facts = None  # type: ignore[assignment]
-
-    if _get_facts is not None:
-        facts_result = _get_facts(db_path=db_path)
-        match facts_result:
-            case Success(facts):
-                if facts:
-                    logger.debug("summarize.context_facts count=%d", len(facts))
-                # else: empty knowledge base → normal, proceed
-            case Failure(error=err):
-                logger.debug("summarize.context_facts_failed error=%s", err)
-                # Non-fatal — proceed without context
-
-    # (b) Ask the AI via the provider factory (C-08).
+    # Ask the AI via the provider factory (C-08).
     from core.config import CONFIG  # noqa: C0415  -- lazy import
 
     provider = get_provider("capture", CONFIG.main)
@@ -507,7 +489,9 @@ async def _capture_binary(
                 vault_path,
                 ai_failure.error,
             )
-            _audit_failed(vault_path, f"vision describe failed: {ai_failure.error}", db_path)
+            _audit_failed(
+                vault_path, f"vision describe failed: {ai_failure.error}", db_path
+            )
             return Success(row_id)
 
 

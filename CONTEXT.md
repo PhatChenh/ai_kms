@@ -196,8 +196,40 @@ The three states a knowledge entry's status can hold. **Confident** = a high-con
 _Avoid_: "active/inactive", "verified/unverified", "archived" (retired rows are not archived elsewhere — they stay in the same table)
 
 **sources (on a knowledge entry):**
-The list of documents a fact was extracted from, stored inside the knowledge entry row itself as a list of document references. Every entry MUST have at least one source — no fact without traceability back to where it was learned.
+The list of documents a fact was extracted from, stored inside the knowledge entry row itself as a list of document references. Every entry MUST have at least one source — no fact without traceability back to where it was learned. As of Phase 8 these references are document IDs (stable integers), not vault paths, so they survive file moves without rewriting.
 _Avoid_: "citations", "links", "provenance" (acceptable but plainer is preferred)
+
+### Cloud-Native — Classify Infrastructure (Phase 8 Slice A)
+
+> Introduced by Phase 8 Slice A (`docs/1_design/phase8_sliceA_classify_infra.md`). Slice A is the plumbing that finds work, prepares inputs, and runs a queue — the actual AI fact-extraction is Slice B. These terms describe how a document gets queued and prepared for classification.
+
+**guidance (field on a dimension):**
+A block of plain-English prompt text the user can write for each dimension, telling the AI what to look for in that dimension (e.g. "track who leads what, who reports to whom"). Stored alongside the dimension's allowed tags in `config/dimensions.yaml`. It is the user-injectable steering seam for extraction quality — present from Phase 8 onward, fed to the AI in Slice B.
+_Avoid_: "instructions", "prompt" (it is one piece of a larger prompt, not the whole prompt)
+
+**classify-fingerprint (`classify_content_hash`):**
+A per-document marker recording the content fingerprint the document had the last time it was successfully classified. Empty means never classified; differing from the document's current content fingerprint means the content changed and needs re-classifying; matching means the work is already done and is skipped. This is how classify finds its own work with a single query — no separate queue table or flag.
+_Avoid_: "classify flag", "dirty bit" (it is a hash comparison, not a boolean)
+
+**work discovery:**
+The single database query that finds documents needing classification — those whose classify-fingerprint is empty or no longer matches their content fingerprint. Run on container startup (catch-up scan) and conceptually each time capture finishes a document.
+_Avoid_: "scan" alone (ambiguous with the daemon's vault scan)
+
+**trust_score:**
+A separate quality axis on each knowledge entry measuring user-validated quality, distinct from the AI's own confidence. Ships in Phase 8 as an inert flat default (0.5) and is only moved by user corrections in a later phase; Phase 8 uses it as the top sort key when ranking which existing facts to show the AI.
+_Avoid_: conflating with "confidence" (confidence = AI certainty; trust = user validation — two independent loops)
+
+**retrieval_count:**
+A per-entry counter of how often a knowledge entry has been surfaced to the user-facing AI. Ships inert (default 0) in Phase 8 and is populated by a later retrieval phase; reserved as a future demand signal for ranking.
+_Avoid_: "view count", "hits"
+
+**content reader:**
+The Slice A step that reads a document's stored text and chooses what to feed the classifier: the full extracted text when it fits under a configured token budget, otherwise the shorter summary. A pure size-based switch — no AI involved.
+_Avoid_: "extractor" (that is the daemon's text-extraction step, a different thing)
+
+**context loader / fact ranker:**
+The Slice A step that gathers the existing facts already known for a dimension (confident and pending only, never retired), ranks them by trust then confidence then recency, and keeps only the top N per dimension (a configured budget cap) so the prompt does not bloat. Each surviving fact carries its database ID so a later step can reference it for update or retirement.
+_Avoid_: "memory loader", "history loader"
 
 ### Cloud-Native — Deployment Foundation (P5 Slice 2)
 

@@ -20,7 +20,7 @@ from daemon.config import DaemonConfig
 # ── retry configuration ──────────────────────────────────────────────────────
 
 # HTTP status codes that trigger a retry (transient server errors + rate limit).
-_TRANSIENT_STATUSES = frozenset({429, 500, 502, 503})
+_TRANSIENT_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 # Connection-level exceptions that trigger a retry.
 _TRANSIENT_EXCEPTIONS = (

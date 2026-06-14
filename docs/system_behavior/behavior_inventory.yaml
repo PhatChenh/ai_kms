@@ -4035,3 +4035,453 @@
   pytest_ref: null
   status: planned
   retired: null
+- id: P8-CLS-A-01
+  behavior: The classify-work-discovery query finds every document that has never been
+    classified (empty classify-fingerprint) or whose content changed since it was last
+    classified (classify-fingerprint no longer matches the content fingerprint), and
+    skips documents whose two fingerprints match
+  tier: full
+  phase: 8
+  origin: design
+  granularity: outcome
+  trigger: The work-discovery query runs against a database with mixed document states
+  fixtures: []
+  steps:
+  - Seed three documents — one with a NULL classify_content_hash, one whose
+    classify_content_hash differs from its content_hash, and one whose two hashes match.
+  - Run the work-discovery query.
+  expected:
+  - The NULL-hash document is returned (never classified)
+  - The mismatched-hash document is returned (content changed)
+  - The matched-hash document is NOT returned (already classified)
+  spec_ref: docs/1_design/phase8_sliceA_classify_infra.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P8-CLS-A-02
+  behavior: A successful classify stamps the document's classify-fingerprint to match
+    its current content fingerprint, so the same document is not re-discovered as work
+    on the next scan; a failed classify leaves the fingerprint untouched so the document
+    is retried
+  tier: full
+  phase: 8
+  origin: design
+  granularity: outcome
+  trigger: The classify-fingerprint update routine runs after a classify attempt
+  fixtures: []
+  steps:
+  - Stamp a document's classify_content_hash to its content_hash, then re-run work
+    discovery.
+  - Leave a second document's classify_content_hash unstamped, then re-run work discovery.
+  expected:
+  - The stamped document is no longer returned by work discovery
+  - The unstamped document is still returned by work discovery (retry path)
+  spec_ref: docs/1_design/phase8_sliceA_classify_infra.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P8-CLS-A-03
+  behavior: The content reader returns the document's full extracted text when it fits
+    under the configured token budget, and falls back to the short summary when the
+    full text is too large
+  tier: full
+  phase: 8
+  origin: design
+  granularity: outcome
+  trigger: The content reader runs on documents of different sizes
+  fixtures: []
+  steps:
+  - Read a document whose full_body is comfortably under the configured token budget.
+  - Read a document whose full_body exceeds the budget but has a summary.
+  expected:
+  - The small document yields its full_body
+  - The large document yields its summary instead of its full_body
+  spec_ref: docs/1_design/phase8_sliceA_classify_infra.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P8-CLS-A-04
+  behavior: The dimension config loads each dimension with its allowed tags and its
+    guidance text, every tag set keeps its mandatory catch-all tag, and a misconfigured
+    dimension is rejected
+  tier: full
+  phase: 8
+  origin: design
+  granularity: outcome
+  trigger: The dimension config loader runs against valid and invalid dimension config
+  fixtures: []
+  steps:
+  - Load the expanded dimension config and read back one dimension's tags and guidance.
+  - Load a config where a dimension is missing its catch-all tag (or is otherwise
+    malformed).
+  expected:
+  - Each loaded dimension exposes its allowed tags and its guidance text
+  - Every dimension still includes the mandatory catch-all tag
+  - The malformed config is rejected with a clear failure, not silently accepted
+  spec_ref: docs/1_design/phase8_sliceA_classify_infra.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P8-CLS-A-05
+  behavior: The context loader returns existing facts per dimension excluding retired
+    ones, ranked by trust then confidence then recency, capped at the configured maximum
+    per dimension, with each returned fact carrying its database id
+  tier: full
+  phase: 8
+  origin: design
+  granularity: outcome
+  trigger: The context loader runs against a dimension holding more facts than the cap
+  fixtures: []
+  steps:
+  - Seed a dimension with confident, pending, and retired facts totalling more than
+    the configured per-dimension cap, with varied trust/confidence/updated_at.
+  - Run the context loader for that dimension.
+  expected:
+  - No retired fact is returned
+  - The returned facts are ordered by trust, then confidence, then recency
+  - The count returned does not exceed the configured per-dimension cap
+  - Each returned fact carries its database id
+  spec_ref: docs/1_design/phase8_sliceA_classify_infra.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P8-CLS-A-06
+  behavior: The async work queue processes document ids through a single consumer one
+    at a time in order (never two concurrently), and a startup catch-up scan enqueues
+    all currently-discoverable work when the consumer starts
+  tier: full
+  phase: 8
+  origin: design
+  granularity: outcome
+  trigger: The queue consumer starts and processes a backlog of enqueued document ids
+  fixtures: []
+  steps:
+  - Pre-seed several discoverable documents, start the consumer, and let the catch-up
+    scan enqueue them.
+  - Observe the order and concurrency of processing.
+  expected:
+  - The catch-up scan enqueues all currently-discoverable documents at startup
+  - The consumer processes ids sequentially — never two at the same time
+  - The queue drains to empty once all enqueued ids are processed
+  spec_ref: docs/1_design/phase8_sliceA_classify_infra.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P8-CLS-A-07
+  behavior: The Slice A migration adds the classify-fingerprint column to documents,
+    the trust-score and retrieval-count columns to knowledge entries with their default
+    values, and the two supporting indexes, without disturbing existing rows
+  tier: full
+  phase: 8
+  origin: design
+  granularity: outcome
+  trigger: The new migration is applied to an existing database
+  fixtures: []
+  steps:
+  - Apply migrations to a database that already holds documents and knowledge entries.
+  - Inspect the new columns, their defaults, and the new indexes.
+  expected:
+  - documents has a nullable classify_content_hash column
+  - knowledge_entries has trust_score defaulting to 0.5 and retrieval_count defaulting
+    to 0
+  - The trust-score index and the classify-hash index both exist
+  - Existing rows are preserved and readable after the migration
+  spec_ref: docs/1_design/phase8_sliceA_classify_infra.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P7H-FIX-01
+  behavior: Daemon startup scan aborts cleanly when the cloud endpoint is unreachable,
+    instead of re-uploading the entire vault
+  tier: full
+  phase: 7.5
+  origin: design
+  granularity: outcome
+  trigger: daemon scan when cloud endpoint returns 500 or is unreachable
+  fixtures: []
+  steps:
+  - Start the daemon with the cloud endpoint down or returning 500.
+  - Observe that the scan does NOT upload any files.
+  expected:
+  - Scan aborts with a warning log, uploads zero files
+  - No cache entries are written
+  - The daemon retries on the next periodic interval
+  spec_ref: docs/1_design/phase7_5_issue_resolve.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P7H-FIX-02
+  behavior: Daemon directory walk skips ignored directories entirely instead of
+    descending into them and filtering individual files
+  tier: full
+  phase: 7.5
+  origin: design
+  granularity: outcome
+  trigger: daemon scan on a vault containing a .git directory
+  fixtures: []
+  steps:
+  - Run daemon scan on a vault with a .git directory.
+  - Verify that no files inside .git are visited.
+  expected:
+  - The .git directory tree is never descended into
+  - The .obsidian directory tree is never descended into
+  - Files in those directories never appear in scan results
+  spec_ref: docs/1_design/phase7_5_issue_resolve.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P7H-FIX-03
+  behavior: Exceptions in watcher async callbacks are logged instead of silently
+    swallowed
+  tier: full
+  phase: 7.5
+  origin: design
+  granularity: outcome
+  trigger: A watcher callback coroutine raises an unexpected exception
+  fixtures: []
+  steps:
+  - Simulate a watcher callback that raises RuntimeError.
+  - Check that the error appears in the daemon log.
+  expected:
+  - The exception message and type appear in the log at error level
+  - The daemon continues running (does not crash)
+  spec_ref: docs/1_design/phase7_5_issue_resolve.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P7H-FIX-04
+  behavior: Move events where only the source path is ignored are still processed
+    (file moved FROM an ignored dir TO a watched dir)
+  tier: full
+  phase: 7.5
+  origin: design
+  granularity: outcome
+  trigger: A file is moved from .git/ to a watched folder
+  fixtures: []
+  steps:
+  - Move a file from an ignored directory to a watched directory.
+  - Verify the create/modify callback fires for the destination.
+  expected:
+  - The move event is NOT skipped when only the source is in an ignored directory
+  - The event IS skipped when the destination is in an ignored directory
+  spec_ref: docs/1_design/phase7_5_issue_resolve.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P7H-FIX-05
+  behavior: Vision describe prompt includes the file's mime type so the AI knows
+    what kind of file it is describing
+  tier: full
+  phase: 7.5
+  origin: design
+  granularity: outcome
+  trigger: capture_upload is called with an image file
+  fixtures: []
+  steps:
+  - Upload an image file through the capture pipeline.
+  - Inspect the prompt sent to the vision model.
+  expected:
+  - The prompt text contains the file's mime type (e.g. image/png)
+  - The variables list in describe_image.yaml still declares mime_type
+  spec_ref: docs/1_design/phase7_5_issue_resolve.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P7H-FIX-06
+  behavior: attach_summary failures in the capture pipeline are logged instead of
+    silently discarded
+  tier: full
+  phase: 7.5
+  origin: design
+  granularity: outcome
+  trigger: attach_summary returns a Failure result during capture
+  fixtures: []
+  steps:
+  - Simulate attach_summary returning Failure during a text capture.
+  - Check that the failure is logged at warning level.
+  expected:
+  - A warning log line appears with the attach_summary error message
+  - The capture still returns Success (content is safe regardless)
+  spec_ref: docs/1_design/phase7_5_issue_resolve.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P7H-FIX-07
+  behavior: Daemon sync engine is encapsulated in a DaemonLoop class instead of a
+    243-line function with nested closures
+  tier: full
+  phase: 7.5
+  origin: design
+  granularity: outcome
+  trigger: daemon start or app.py launch
+  fixtures: []
+  steps:
+  - Start the daemon via CLI or app.py.
+  - Verify that _run_with_stop is replaced by DaemonLoop.
+  - Verify app.py imports and uses DaemonLoop instead of _run_with_stop.
+  expected:
+  - DaemonLoop class exists in daemon/cli.py with on_create_or_modify, on_move,
+    on_delete, start, and stop methods
+  - app.py imports DaemonLoop (not _run_with_stop)
+  - Daemon starts and syncs files correctly (no behavioral change)
+  spec_ref: docs/1_design/phase7_5_issue_resolve.md §Fix inventory #1
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P7H-FIX-08
+  behavior: Auth header is set once on the httpx.AsyncClient default headers instead
+    of being duplicated at each HTTP call site
+  tier: full
+  phase: 7.5
+  origin: design
+  granularity: outcome
+  trigger: Any daemon HTTP call (upload, event report, cloud state fetch)
+  fixtures: []
+  steps:
+  - Grep for per-call headers={"Authorization"} in daemon code.
+  - Verify that httpx.AsyncClient is constructed with default headers.
+  expected:
+  - Zero occurrences of per-call Authorization header construction in daemon code
+  - httpx.AsyncClient constructed with headers={"Authorization": ...} in one place
+  - All HTTP calls still authenticate successfully
+  spec_ref: docs/1_design/phase7_5_issue_resolve.md §Fix inventory #5
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P7H-FIX-09
+  behavior: Best-effort indexing (keyword + embedding) is a single helper function
+    called from both text and binary capture paths
+  tier: full
+  phase: 7.5
+  origin: design
+  granularity: outcome
+  trigger: capture_upload processes a text or binary file
+  fixtures: []
+  steps:
+  - Inspect capture.py for duplicate indexing blocks.
+  - Verify a _best_effort_index helper exists and is called from both paths.
+  expected:
+  - A single _best_effort_index function exists in capture.py
+  - Both text and binary success paths call it (no inline duplicate)
+  - Indexing failures are still caught and logged without blocking capture
+  spec_ref: docs/1_design/phase7_5_issue_resolve.md §Fix inventory #6
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P7H-FIX-10
+  behavior: The dead _build_disk_state function is removed and the A1 backward-compat
+    path reuses _build_disk_entries
+  tier: full
+  phase: 7.5
+  origin: design
+  granularity: outcome
+  trigger: daemon scan with cache=None (A1 path)
+  fixtures: []
+  steps:
+  - Grep for _build_disk_state in scanner.py.
+  - Verify the A1 path calls _build_disk_entries instead.
+  expected:
+  - _build_disk_state function does not exist in scanner.py
+  - The cache=None path calls _build_disk_entries and discards the entries dict
+  - Scan produces identical results to before (no behavioral change)
+  spec_ref: docs/1_design/phase7_5_issue_resolve.md §Fix inventory #7
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P7H-FIX-11
+  behavior: The dead scan_batch_size config field is removed from DaemonConfig
+  tier: full
+  phase: 7.5
+  origin: design
+  granularity: outcome
+  trigger: DaemonConfig construction
+  fixtures: []
+  steps:
+  - Inspect daemon/config.py for scan_batch_size.
+  - Verify it is no longer defined.
+  expected:
+  - scan_batch_size field does not exist in DaemonConfig
+  - No code references scan_batch_size anywhere in the daemon package
+  - Existing config YAML files with scan_batch_size are rejected by extra=forbid
+    (or the field is silently absent if not in YAML)
+  spec_ref: docs/1_design/phase7_5_issue_resolve.md §Fix inventory M1
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P7H-FIX-12
+  behavior: periodic_interval_seconds accepts float values for sub-second or fractional
+    intervals
+  tier: full
+  phase: 7.5
+  origin: design
+  granularity: outcome
+  trigger: DaemonConfig construction with a float periodic_interval_seconds
+  fixtures: []
+  steps:
+  - Construct DaemonConfig with periodic_interval_seconds=300.5.
+  - Verify it validates without error.
+  expected:
+  - periodic_interval_seconds field type is float (not int)
+  - Fractional values like 300.5 are accepted without validation error
+  - asyncio.sleep receives the float value correctly
+  spec_ref: docs/1_design/phase7_5_issue_resolve.md §Fix inventory M8
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null

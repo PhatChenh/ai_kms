@@ -247,7 +247,9 @@ src/daemon/os_glue/__init__.py     get_os_adapter()  ── platform.system() �
 
 **Notes / coupling**: `# COUPLING:` the `platform.system()` branch is the deliberate, honest 2-case dispatch (Option C registry rejected). A third OS = one new adapter file + one branch — flag in the file with a `# COUPLING:` comment noting the Linux-deferred decision.
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-06-16
+**Notes**: Implemented `src/daemon/os_glue/__init__.py` with `OsAdapter` Protocol (runtime_checkable, three methods: `register_at_login`, `unregister_at_login`, `show_tray`) and `get_os_adapter()` dispatch via `platform.system()`. Implemented `src/daemon/os_glue/macos.py` (LaunchAgent plist + pystray tray) and `src/daemon/os_glue/windows.py` (Registry Run key + pystray tray). 5 new tests: Darwin→MacOSAdapter, Windows→WindowsAdapter, unsupported OS→RuntimeError, and Protocol conformance via `isinstance` for both adapters. Tray icon generated programmatically via PIL (64×64 solid colour with "K" letter) — no icon file dependency. Tray state_provider called every 5s via threading.Timer. Lazy imports for platform-specific modules (pystray inside show_tray, winreg inside register/unregister). Full daemon suite: 275 tests pass (5 new + 270 baseline). No deviations from plan. pystray was already in pyproject.toml (no dependency change needed).
 
 ---
 
@@ -452,7 +454,10 @@ PyInstaller spec(s) + DMG (Mac) + Inno Setup (Windows)
 
 **Notes / coupling**: `# COUPLING:` the eight-lib hidden-import list is coupled to the handler set in `handlers/__init__.py`. If a new file-handler/extractor lib is added later, this list must grow — add a `# COUPLING:` comment in the spec file pointing at `handlers/__init__.py` so the link isn't lost.
 
-**Status**: [ ] pending
+**Status**: [x] done
+
+**Completed**: 2026-06-16
+**Notes**: Added `main()` entry point to `src/daemon/app.py`; added `daemon-app` script entry to `pyproject.toml`; created `packaging/daemon.spec` (PyInstaller spec with 8 extractor hidden-imports + tray/keyring/watchdog backends + PIL), `packaging/build_dmg.sh` (macOS DMG build script), and `packaging/installer.iss` (Windows Inno Setup script). No unit tests — verification by building + launching on real hardware per the task brief. All 303 existing daemon tests pass.
 
 ---
 

@@ -1,9 +1,23 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-06-16 (Phase 6 Slice B — Phases 1–3 + Phase 7 complete, 303 daemon tests pass)_
+_Last updated: 2026-06-14 (Phase 6 Slice B — Phases 1–3 + Phase 7 complete, 303 daemon tests pass) · 2026-06-14 added Phase 8 Slice A plan_
 
 ## Current Position
-**Phase**: Phase 6 (Daemon). Slice A1 (core sync pipe) built + merged to cloud-native; Slice A2 (cache + smart reconcile) is docs-only (spec/research/plan written, NOT implemented); **Slice B (installable desktop app) — build-pipeline COMPLETE (design→spec→research→plan), plan-only, NO code.** Slice B implementation is gated on A2 landing. (Prior: Phase 5 Slice 2 Deployment Foundation ✅ COMPLETE 2026-06-13, 450+ tests, Docker verified.)
+**Phase**: Phase 6 (Daemon). Slice A1 (core sync pipe) built + merged to cloud-native; Slice A2 (cache + smart reconcile) is docs-only (spec/research/plan written, NOT implemented); **Slice B (installable desktop app) — build-pipeline COMPLETE (design→spec→research→plan), plan-only, NO code.** Slice B implementation is gated on A2 landing. (Prior: Phase 5 Slice 2 Deployment Foundation ✅ COMPLETE 2026-06-13, 450+ tests, Docker verified.) **Also plan-ready: Phase 8 Slice A (Classify Infrastructure) — see block below.**
+
+**[Phase 8 Slice A — Classify Infrastructure (no LLM) — Plan written 2026-06-14]** _(PENDING implementation — plan-only, no code)_:
+- [ ] Phase 1 — Migration 010 (`documents.classify_content_hash`; `knowledge_entries.trust_score` DEFAULT 0.5, `retrieval_count` DEFAULT 0; 2 indexes) + version-pin cascade 9→10 (`test_migration_007/008/009`) [P8-CLS-A-01]
+- [ ] Phase 2 — Nested `dimensions.yaml` `{tags, guidance}` + `core/tags.py` loader/validator (`rulebook[dim]["tags"]`) + `test_dimensions.py` (P5-DATA-07/08) cascade + loud-reject malformed [P8-CLS-A-04]
+- [ ] Phase 3 — `ClassifyConfig` sub-model (`max_content_tokens`=10000, `max_entries_per_dimension`=50) in `core/config.py` + `classify:` block in `config.yaml` [P8-CLS-A-05/06]
+- [ ] Phase 4 — `KnowledgeEntry`+`_row_to_entry` gain `trust_score`/`retrieval_count`; NEW ranked+capped query (not extending `get_confident_and_pending`) [P8-CLS-A-03]
+- [ ] Phase 5 — Work-discovery query + classify-stamp function in `storage/documents.py` [P8-CLS-A-01/07]
+- [ ] Phase 6 — Content Reader (full_body vs summary by token threshold) + Context Loader in `pipelines/classify.py` [P8-CLS-A-02/03]
+- [ ] Phase 7 — `asyncio.Queue` + single sequential consumer (skeleton, stops before Slice B AI call) + one-burst startup catch-up scan, started via composed outer lifespan in `mcp_server/cloud_entry.py::build_app` [P8-CLS-A-07]
+- **Decisions:** in-memory queue + `classify_content_hash` work discovery (ADR-0017); reuse Phase 5 Slice 1 `core/tags.py` loader (extend, not duplicate); worker via composed outer lifespan, NOT `on_startup` (proven no-op) nor per-chat MCP lifespan; thresholds as config ints; Slice B (LLM extraction, entry writer, audit, capture-push wiring, source cleanup) OUT OF SCOPE.
+- **Research:** 11/11 assumptions validated; 1 invalidation found+resolved via loop-back (A7 worker-start mechanism). 0 blocking.
+- **Artifacts:** grill `docs/0_draft/phase8/phase8_classify_redesign_grill.md` · design `docs/1_design/phase8_sliceA_classify_infra.md` · spec `docs/2_specs/phase8_sliceA_classify_infra.md` · research `docs/3_research/phase8_sliceA_classify_infra.md` · plan `docs/4_plans/phase8_sliceA_classify_infra.md` · ADR-0017
+- **Open (non-blocking):** OQ-P8A-01 (worker hook — resolved: composed lifespan), OQ-P8A-02 (new ranked query — resolved), OQ-P8A-03 (catch-up one-burst — resolved + TD to page later), OQ-P8A-04 (periodic synthesis fact-sheet — DEFERRED to P9/P10), OQ-P8A-05 (guidance mandatory / fail-loud on load).
+- **Dependency:** Phase 7A (populates `documents.full_body`) must land before Slice B; Slice A reads full_body but builds/tests stand alone.
 
 **[Phase 6 Slice B — Installable Daemon App — Plan written 2026-06-14]** _(IN PROGRESS — Phases 1–3 + Phase 7 complete)_:
 - [x] Phase 1 — Secret Vault wrapper (`keyring`: Keychain / Credential Manager) [P6-SLICEB-01]

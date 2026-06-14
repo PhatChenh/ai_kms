@@ -115,6 +115,47 @@
 
 ---
 
+### OQ-P8A-01 · Where does the classify worker start so it survives container boot?
+**Blocks:** Phase 8 Slice A (classify worker wiring)
+**Status:** 🔴 Open — `[UNVERIFIED]` (routed to research)
+**Question:** Right now the cloud container builds its web app in one place at startup, but the system that handles live chat connections starts up separately, later, only when someone connects. The question: do we start the classify worker at container build/startup, or piggyback on the chat-connection startup? **If we start it at container build/startup:** the worker and its catch-up scan run as soon as the container is healthy, even with no chat clients connected — correct for a background housekeeper. **If we piggyback on chat-connection startup:** classification would not run until a human first connects a chat client — wrong; capture would pile up unclassified.
+**Recommendation (Phase 8 Slice A design):** start at container build/startup — a background housekeeper must not wait for a human to open a chat. **`[UNVERIFIED]` — research must confirm against `mcp_server/cloud_entry.py` / `server.py` lifecycle** (CLAUDE.md notes the MCP lifespan fires per-chat-session, not at uvicorn boot, so the worker must NOT be hooked there). Routed to the research phase. (Not a blocker — resolvable by reading the startup code.)
+**Context:** Raised by the Phase 8 Slice A design (`docs/1_design/phase8_sliceA_classify_infra.md`, OQ-P8A-01 + Risks). See ADR-0017 (in-memory queue + `classify_content_hash` work discovery), whose load-bearing consequence is that the worker must start at container boot.
+
+---
+
+### OQ-P8A-02 · One ranked query function, or extend the existing fact-loader?
+**Blocks:** Phase 8 Slice A (Context Loader ranked+capped query)
+**Status:** 🔴 Open
+**Question:** Right now there is a function that loads non-retired facts (`knowledge_entries.get_confident_and_pending`) but does not rank or cap them. The question: add a new ranked+capped query function, or add sort/limit parameters to the existing one? **If new function:** the existing 5-function fact-store contract stays stable; ranking is isolated and separately testable. **If extend existing:** one fewer function, but the existing callers and tests now carry optional ranking params they don't use.
+**Recommendation (Phase 8 Slice A design):** new function — the ranking concern is distinct from "give me the live facts," and isolating it keeps both simple. (Not a blocker.)
+**Context:** Raised by the Phase 8 Slice A design (`docs/1_design/phase8_sliceA_classify_infra.md`, OQ-P8A-02). The new query would be `... WHERE status != 'retired' AND dimension = ? ORDER BY trust_score DESC, confidence DESC, updated_at DESC LIMIT ?`.
+
+---
+
+### OQ-P8A-03 · Catch-up scan — enqueue in one burst, or paged?
+**Blocks:** Phase 8 Slice A (startup catch-up scan)
+**Status:** 🔴 Open
+**Question:** Right now there is no scan; Slice A introduces it. The question: on startup, `put` every discoverable id onto the queue at once, or page through them? **If one burst:** simplest; fine for a personal vault of hundreds of docs. **If paged:** safer for a huge backlog, but more code for a case that may never occur in the target (single-user) deployment.
+**Recommendation (Phase 8 Slice A design):** one burst for Slice A, with a tech-debt note to page if backlog size becomes a problem — matches the grill's "watch vault size" tech-debt entry. (Not a blocker.)
+**Context:** Raised by the Phase 8 Slice A design (`docs/1_design/phase8_sliceA_classify_infra.md`, OQ-P8A-03 + Risks "Sequential-consumer back-pressure"). See ADR-0017 (in-memory queue + catch-up scan).
+
+### OQ-P8A-04 · Periodic synthesis "fact sheet" per dimension vs dynamic scattered-fact injection (retrieval path)
+**Blocks:** Phase 9 (context injection) / Phase 10 — NOT Slice A or B
+**Status:** 🔴 Open (deferred)
+**Question:** For the RETRIEVAL path (user-facing AI answering "what do I know about X?"), should a periodic background session pre-synthesize a coherent per-dimension "fact sheet" (CLAUDE.md-style) instead of dynamically assembling ranked+capped scattered facts on each call? **Dynamic (grill #5, current):** always current, no extra LLM cost, keeps per-fact source/trust/status, but assembles every call. **Periodic sheet:** cheaper + more coherent at injection time, but stale between runs, extra synthesis LLM cost, flattens granularity.
+**Decision (2026-06-14):** Keep grill #5 dynamic model. The EXTRACTION loop (Slice A/B Context Loader) must ALWAYS stay scattered structured facts — the extractor references entry `id` for update/retire (grill #9), which a prose sheet cannot carry. Synthesis only ever applies to the retrieval consumer, which does not exist until Phase 9. Revisit pre-computed sheets ONLY if measured token cost bites — already the logged P10 optimization ("dynamic → pre-computed", grill tech-debt + Phase 10 line 243). Structured `knowledge_entries` remain source of truth regardless; any sheet is a derived cache.
+**Context:** Raised by user during Phase 8 Slice A design review. Confirms, does not change, Slice A scope.
+
+### OQ-P8A-05 · Is `guidance` mandatory per dimension, and should missing `other`/`guidance` fail loudly at config load?
+**Blocks:** Phase 8 Slice A (dimension loader/validator extension)
+**Status:** 🔴 Open
+**Question:** When the nested `dimensions.yaml` loads, should a dimension missing its `guidance` block — or missing the mandatory `other` tag — be rejected loudly at load time, or tolerated? **Leaning:** validate-on-load and reject (P8-CLS-A-04 expects malformed config to be rejected; matches the config-enforced philosophy in rearch §7 "validation rejects unknown values").
+**Recommendation (Phase 8 Slice A spec):** fail loud on load. Confirm the exact validation surface (where in `core/tags.py` the check lives) in research.
+**Context:** Raised by the Phase 8 Slice A spec (`docs/2_specs/phase8_sliceA_classify_infra.md`, open questions). Research resolves the validation surface.
+
+---
+
 ## ✅ Closed
 
 ### OQ-001 · Move/rename detection when note is edited AND moved simultaneously

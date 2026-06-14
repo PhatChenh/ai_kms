@@ -691,7 +691,28 @@ class TestMultipartUpload:
         )
 
         assert resp.status_code == 400
-        assert resp.json()["detail"] == "vault_path is required"
+        assert resp.json()["detail"] == "vault_path is required or invalid"
+
+    def test_upload_rejects_path_traversal_vault_path(self, db):
+        """vault_path containing '..' is rejected as 400."""
+        import mcp_server.api as api
+
+        api._db_path = db
+
+        app = Starlette(routes=api.api_routes)
+        client = TestClient(app)
+
+        for bad_path in ["../../etc/passwd", "/absolute/path", "ok/../sneaky"]:
+            resp = client.post(
+                "/api/upload",
+                json={
+                    "vault_path": bad_path,
+                    "extracted_text": "text",
+                    "content_hash": "abc123",
+                },
+                headers={"Authorization": f"Bearer {API_KEY}"},
+            )
+            assert resp.status_code == 400, f"Expected 400 for {bad_path}"
 
     def test_multipart_upload_missing_content_hash_returns_400(self, db):
         """Multipart upload without content_hash → 400."""
@@ -753,7 +774,9 @@ class TestMultipartRoutesToCaptureUpload:
     def _set_key(self, monkeypatch):
         monkeypatch.setenv("KMS_DAEMON_API_KEY", API_KEY)
 
-    def test_multipart_with_file_calls_capture_upload_with_raw_bytes(self, db, tmp_path):
+    def test_multipart_with_file_calls_capture_upload_with_raw_bytes(
+        self, db, tmp_path
+    ):
         """Sending a file in multipart → capture_upload receives raw_bytes + mime_type."""
         import mcp_server.api as api
 
@@ -765,9 +788,12 @@ class TestMultipartRoutesToCaptureUpload:
         # Mock capture_upload to return a known document id
         async def _fake_capture_upload(**kwargs):
             from core.result import Success
+
             return Success(99)
 
-        with patch.object(api, "capture_upload", side_effect=_fake_capture_upload) as mock_cap:
+        with patch.object(
+            api, "capture_upload", side_effect=_fake_capture_upload
+        ) as mock_cap:
             # Also patch upsert_from_upload (create=True since it may not be
             # imported) to detect if it's called directly
             with patch.object(api, "upsert_from_upload", create=True) as mock_upsert:
@@ -782,7 +808,13 @@ class TestMultipartRoutesToCaptureUpload:
                         "original_filename": "photo.png",
                         "file_size_bytes": "4096",
                     },
-                    files={"file": ("photo.png", b"\x89PNG\r\n\x1a\n...fake...", "image/png")},
+                    files={
+                        "file": (
+                            "photo.png",
+                            b"\x89PNG\r\n\x1a\n...fake...",
+                            "image/png",
+                        )
+                    },
                     headers={"Authorization": f"Bearer {API_KEY}"},
                 )
 
@@ -823,9 +855,14 @@ class TestMultipartRoutesToCaptureUpload:
 
         async def _fake_capture_upload(**kwargs):
             from core.result import Failure
-            return Failure(error="neither text nor bytes supplied", recoverable=False, context={})
 
-        with patch.object(api, "capture_upload", side_effect=_fake_capture_upload) as mock_cap:
+            return Failure(
+                error="neither text nor bytes supplied", recoverable=False, context={}
+            )
+
+        with patch.object(
+            api, "capture_upload", side_effect=_fake_capture_upload
+        ) as mock_cap:
             app = Starlette(routes=api.api_routes)
             client = TestClient(app)
 
@@ -858,9 +895,12 @@ class TestMultipartRoutesToCaptureUpload:
 
         async def _fake_capture_upload(**kwargs):
             from core.result import Success
+
             return Success(1)
 
-        with patch.object(api, "capture_upload", side_effect=_fake_capture_upload) as mock_cap:
+        with patch.object(
+            api, "capture_upload", side_effect=_fake_capture_upload
+        ) as mock_cap:
             app = Starlette(routes=api.api_routes)
             client = TestClient(app)
 
