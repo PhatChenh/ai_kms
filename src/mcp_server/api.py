@@ -16,10 +16,10 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from core.result import Failure, Success
+from pipelines.capture import capture_upload
 from storage.documents import (
     delete_by_path,
     rename,
-    upsert_from_upload,
 )
 
 # Testability injection point — set this to an explicit Path in tests to
@@ -121,13 +121,12 @@ async def upload_handler(request: Request) -> JSONResponse:
             status_code=400,
         )
 
-    result = upsert_from_upload(
+    result = await capture_upload(
         vault_path=vault_path,
         extracted_text=extracted_text,
         content_hash=content_hash,
         original_filename=body.get("original_filename"),
         file_size_bytes=body.get("file_size_bytes"),
-        title=body.get("title"),
         db_path=_db_path,
     )
 

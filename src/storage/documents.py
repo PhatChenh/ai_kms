@@ -97,62 +97,6 @@ def _derive_key_topics(tags: list[str]) -> str:
     )
 
 
-def upsert(
-    outcome: WriteOutcome,
-    db_path: Path | None = None,
-    batch_id: int | None = None,
-) -> Result[int]:
-    """
-    Insert or replace a documents row from a WriteOutcome.
-
-    Args:
-        outcome:  Result of write_note or move_note.
-        db_path:  Override DB path; defaults to CONFIG.main.database.path.
-        batch_id: FK to batches.batch_id for folder-batch tracking. None → column stays NULL.
-
-    Returns:
-        Success(rowid) or Failure(recoverable=False) on sqlite3.Error.
-    """
-    title = _derive_title(outcome)
-    meta = outcome.metadata
-    created_at = str(meta.created) if meta.created else None
-
-    try:
-        with get_connection(db_path) as conn:
-            cur = conn.execute(
-                """
-                INSERT OR REPLACE INTO documents
-                    (vault_path, title, summary, note_type, confidence,
-                     updated_at, updated_by_human, content_hash, created_at,
-                     batch_id, project, status, key_topics)
-                VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?, COALESCE(?, datetime('now')),
-                        ?, ?, ?, ?)
-                """,
-                (
-                    outcome.vault_path,
-                    title,
-                    meta.summary,
-                    meta.type,
-                    meta.confidence,
-                    1 if meta.updated_by_human else 0,
-                    outcome.content_hash,
-                    created_at,
-                    batch_id,
-                    meta.project,
-                    meta.status,
-                    _derive_key_topics(meta.tags),
-                ),
-            )
-            rowid: int = cur.lastrowid  # type: ignore[assignment]
-        return Success(rowid)
-    except sqlite3.Error as exc:
-        return Failure(
-            error=str(exc),
-            recoverable=False,
-            context={"vault_path": outcome.vault_path, "op": "upsert"},
-        )
-
-
 def upsert_from_upload(
     vault_path: str,
     extracted_text: str,
@@ -494,6 +438,50 @@ def update_batch_id(
             error=str(exc),
             recoverable=False,
             context={"vault_path": vault_path, "op": "update_batch_id"},
+        )
+
+
+def attach_summary(
+    vault_path: str,
+    summary: str,
+    title: str,
+    db_path: Path | None = None,
+) -> Result[int]:
+    """Attach an AI-generated summary and title to an existing document row.
+
+    This is the *second beat* of the two-beat store-then-summarize contract:
+    the raw store (``upsert_from_upload``) saves full_body + content_hash +
+    filename + size first; this routine fills in the AI output columns without
+    disturbing the raw columns.
+
+    Args:
+        vault_path: POSIX-relative path identifying the document row.
+        summary:    Structured Markdown summary from the Housekeeping AI.
+        title:      Descriptive title from the Housekeeping AI.
+        db_path:    Override DB path.
+
+    Returns:
+        ``Success(rowcount)`` — 1 if the row was updated, 0 if no row matched.
+        ``Failure(recoverable=False)`` on ``sqlite3.Error``.
+    """
+    try:
+        with get_connection(db_path) as conn:
+            cur = conn.execute(
+                """
+                UPDATE documents
+                SET summary = ?,
+                    title = ?,
+                    updated_at = datetime('now')
+                WHERE vault_path = ?
+                """,
+                (summary, title, vault_path),
+            )
+            return Success(cur.rowcount)
+    except sqlite3.Error as exc:
+        return Failure(
+            error=str(exc),
+            recoverable=False,
+            context={"vault_path": vault_path, "op": "attach_summary"},
         )
 
 

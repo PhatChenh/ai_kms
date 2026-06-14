@@ -12,8 +12,7 @@ from pathlib import Path
 import pytest
 
 from storage.db import get_connection, init_db
-from vault.frontmatter import NoteMetadata
-from vault.writer import WriteOutcome
+from storage.documents import upsert_from_upload
 
 
 # ---------------------------------------------------------------------------
@@ -26,17 +25,22 @@ def _fake_embedding() -> bytes:
     return struct.pack("f" * 384, *([0.1] * 384))
 
 
-def _outcome(
+def _seed(
     vault_path: str = "inbox/foo.md",
     content_hash: str = "abc123",
-    **meta_kwargs,
-) -> WriteOutcome:
-    return WriteOutcome(
+    db_path: Path | None = None,
+) -> int:
+    """Seed a documents row via upsert_from_upload. Returns the row id."""
+    from core.result import Success
+
+    result = upsert_from_upload(
         vault_path=vault_path,
-        absolute_path=Path(f"/fake/vault/{vault_path}"),
+        extracted_text="dummy text",
         content_hash=content_hash,
-        metadata=NoteMetadata(**meta_kwargs),
+        db_path=db_path,
     )
+    assert isinstance(result, Success), f"Seed failed: {result}"
+    return result.value
 
 
 def _insert_search_rows(db_path: Path, vault_path: str) -> None:
@@ -99,9 +103,9 @@ def db(tmp_path: Path) -> Path:
 
 def test_delete_by_path_cleans_up_embeddings_vec(db):
     """After delete_by_path(), embeddings_vec has zero rows for that vault_path."""
-    from storage.documents import delete_by_path, upsert
+    from storage.documents import delete_by_path
 
-    upsert(_outcome("inbox/foo.md"), db_path=db)
+    _seed("inbox/foo.md", db_path=db)
     _insert_search_rows(db, "inbox/foo.md")
 
     assert _count_embeddings(db, "inbox/foo.md") == 1
@@ -116,9 +120,9 @@ def test_delete_by_path_cleans_up_embeddings_vec(db):
 
 def test_delete_by_path_search_tables_empty_no_error(db):
     """delete_by_path when search tables have no row for that path — no error."""
-    from storage.documents import delete_by_path, upsert
+    from storage.documents import delete_by_path
 
-    upsert(_outcome("inbox/bar.md"), db_path=db)
+    _seed("inbox/bar.md", db_path=db)
     # Do NOT insert into search tables — they are empty for this path.
 
     r = delete_by_path("inbox/bar.md", db_path=db)
@@ -137,9 +141,9 @@ def test_delete_by_path_search_tables_empty_no_error(db):
 
 def test_rename_preserves_embedding_and_copies_fts(db):
     """After rename(), old path empty, new path has embedding + FTS row, bytes match."""
-    from storage.documents import rename, upsert
+    from storage.documents import rename
 
-    upsert(_outcome("inbox/old.md"), db_path=db)
+    _seed("inbox/old.md", db_path=db)
     _insert_search_rows(db, "inbox/old.md")
 
     # Snapshot the embedding before rename.
@@ -165,9 +169,9 @@ def test_rename_preserves_embedding_and_copies_fts(db):
 
 def test_rename_search_tables_empty_no_error(db):
     """rename when search tables have no row for that path — no error."""
-    from storage.documents import rename, upsert
+    from storage.documents import rename
 
-    upsert(_outcome("inbox/noseek.md"), db_path=db)
+    _seed("inbox/noseek.md", db_path=db)
     # Do NOT insert into search tables.
 
     r = rename("inbox/noseek.md", "Projects/B/noseek.md", db_path=db)
@@ -187,15 +191,23 @@ def test_rename_search_tables_empty_no_error(db):
 
 def test_replace_path_cleans_up_search_tables(db):
     """After replace_path(), old path search entries are deleted."""
-    from storage.documents import replace_path, upsert
+    from pathlib import Path
+    from storage.documents import replace_path
+    from vault.frontmatter import NoteMetadata
+    from vault.writer import WriteOutcome
 
-    upsert(_outcome("inbox/old.md", content_hash="h1"), db_path=db)
+    _seed("inbox/old.md", content_hash="h1", db_path=db)
     _insert_search_rows(db, "inbox/old.md")
 
     assert _count_embeddings(db, "inbox/old.md") == 1
     assert _count_fts(db, "inbox/old.md") == 1
 
-    new_outcome = _outcome("inbox/new.md", content_hash="h2")
+    new_outcome = WriteOutcome(
+        vault_path="inbox/new.md",
+        absolute_path=Path("/fake/vault/inbox/new.md"),
+        content_hash="h2",
+        metadata=NoteMetadata(),
+    )
     r = replace_path("inbox/old.md", new_outcome, db_path=db)
     assert r.is_success()
 

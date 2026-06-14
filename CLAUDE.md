@@ -445,7 +445,7 @@ The following were moved out of active guidance because hooks in `.claude/settin
 
 ## Constraint Index
 <!-- guardrail-check skill writes here when new constraint groups are added -->
-- [Write Safety](CONSTRAINTS.md#write-safety) (3 rules) — vault-only writes, updated_by_human gate, write_note merge rule
+- [Write Safety](CONSTRAINTS.md#write-safety) (3 rules) — DB source of truth, updated_by_human gate, write_note scoped to retained consumers
 - [DB Integrity](CONSTRAINTS.md#db-integrity) (2 rules) — FK pragma, migration-only schema changes
 - [LLM & Providers](CONSTRAINTS.md#llm--providers) (4 rules) — factory dispatch, config thresholds, prompt YAML only, provider fields
 - [Async & CLI](CONSTRAINTS.md#async--cli) (2 rules) — asyncio.run pattern, load_dotenv placement
