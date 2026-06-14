@@ -3424,3 +3424,356 @@
   pytest_ref: tests/test_mcp_server/test_cloud_entry.py::test_server_main_unchanged_after_cloud_entry_import
   status: active
   retired: null
+- id: P7-CAP-10
+  behavior: A binary/visual upload (raw bytes, no extracted text) stores the raw bytes
+    in object storage and saves a document row that references the blob, BEFORE any
+    AI runs — the file is safe the moment it is stored
+  tier: full
+  phase: 7
+  origin: design
+  granularity: outcome
+  trigger: POST /api/upload (multipart, raw file bytes + mime + raw-byte fingerprint + size, no extracted_text)
+  fixtures: []
+  steps:
+  - Upload one image file as raw bytes with a content fingerprint and no extracted text.
+  - Inspect the object store and the document row for that path.
+  expected:
+  - The raw bytes are present in object storage under a content-addressed key (the
+    object name is derived from the raw-byte fingerprint)
+  - The document row holds a blob reference (object key) and the file type (mime), not
+    the bytes themselves
+  - The store-blob step completes before the vision model is invoked (store-first)
+  - On a re-upload of identical bytes the blob is NOT stored again and the vision
+    model is NOT invoked (front-loaded dedup over raw bytes)
+  spec_ref: docs/1_design/phase7/phase7b_visual_capture.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P7-CAP-11
+  behavior: A describable binary (image or text-less PDF) gets one vision-model description
+    written to both the summary and the full text fields, making it findable by search;
+    on vision failure the blob is kept, the failure is audited, and success is still
+    returned (store-anyway)
+  tier: full
+  phase: 7
+  origin: design
+  granularity: outcome
+  trigger: POST /api/upload (multipart, describable image bytes)
+  fixtures: []
+  steps:
+  - Upload one chart/image as raw bytes.
+  - With the vision model healthy, confirm the description landed; then force a vision
+    failure and confirm the blob and row survive.
+  expected:
+  - On success the document's summary and full-text fields hold the vision description
+    and the title is descriptive (not the filename); the file is findable by keyword
+    and meaning search
+  - A success audit entry is written for the describe decision
+  - On a forced vision failure the document row and the stored blob both survive, the
+    description stays empty, a failure audit entry states why, and the endpoint still
+    returns success
+  spec_ref: docs/1_design/phase7/phase7b_visual_capture.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P7-CAP-12
+  behavior: A binary that is over the size cap, or of a type the vision model cannot
+    read (zip, video, etc.), is stored but not described — the description stays empty
+    and an audit entry records the reason (too-big / unsupported-type)
+  tier: full
+  phase: 7
+  origin: design
+  granularity: outcome
+  trigger: POST /api/upload (multipart, oversized file OR unsupported binary type)
+  fixtures: []
+  steps:
+  - Upload one file larger than the configured size cap, and separately one unsupported
+    binary type (e.g. a zip).
+  - Inspect the document row and the audit log.
+  expected:
+  - The blob is stored (the file is never lost) and the document row references it
+  - The vision model is NOT invoked; the description stays empty (the same "needs-description"
+    state as a vision failure — no new flag column)
+  - An audit entry records the reason the description is missing (too-big or unsupported-type)
+  - The endpoint returns success
+  spec_ref: docs/1_design/phase7/phase7b_visual_capture.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P7-CAP-13
+  behavior: When a file delete is reported and its document row is removed, the stored
+    blob is deleted only when no other document row still references it (delete-when-last-reference-gone);
+    a blob shared by two rows survives the deletion of one
+  tier: full
+  phase: 7
+  origin: design
+  granularity: outcome
+  trigger: POST /api/event (type=deleted) for a path whose row references a blob
+  fixtures: []
+  steps:
+  - Capture two binary rows that point at the SAME content-addressed blob (identical
+    bytes, two paths); delete one of them via the event endpoint.
+  - Then delete the surviving row and re-check the object store.
+  expected:
+  - After deleting the first row, the blob is still present in object storage (a
+    surviving row still references it)
+  - After deleting the last referencing row, the blob is removed from object storage
+  - Deleting a text row (no blob reference) removes only the document row and touches
+    no object storage
+  spec_ref: docs/1_design/phase7/phase7b_visual_capture.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P6-A2-01
+  behavior: An unchanged file is recognised instantly from the local cache and is
+    NOT re-extracted or re-uploaded — editing-then-saving a file with identical bytes,
+    or restarting the daemon, skips work the cloud already has
+  tier: full
+  phase: 6
+  origin: design
+  granularity: outcome
+  trigger: Save a watched file with no byte change, or restart the daemon over an
+    already-synced vault
+  fixtures: []
+  steps:
+  - Sync a vault, then touch/re-save a file so its bytes are unchanged, OR stop and
+    restart the daemon.
+  - Inspect the daemon logs and the cloud upload count for that file.
+  expected:
+  - The file's fingerprint in the local cache matches the file on disk, so the live
+    path bails early (no extract, no upload) and the startup scan counts it as skipped
+  - No new upload request is sent to the cloud for that file
+  - The cloud document row for that file is untouched (same content_hash, same row)
+  spec_ref: docs/1_design/phase6/P6_slice_A2_cache_reconcile.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P6-A2-02
+  behavior: A fingerprint is written to the local cache ONLY after the cloud confirms
+    receipt (cache-on-ack) — a failed or timed-out upload leaves the file uncached
+    so the next reconcile re-detects and re-sends it
+  tier: full
+  phase: 6
+  origin: design
+  granularity: outcome
+  trigger: Upload a changed file while the cloud returns an error/timeout, then let
+    a reconcile run
+  fixtures: []
+  steps:
+  - Force the cloud upload endpoint to fail (or time out) for one changed file; observe
+    the cache.
+  - Restore the cloud and trigger a reconcile (restart or periodic).
+  expected:
+  - After the failed upload the file has NO matching fingerprint in the local cache
+    (the cache was not written on failure)
+  - The next reconcile detects the file as changed/new and re-uploads it
+  - After the successful upload the cache now holds the file's fingerprint
+  spec_ref: docs/1_design/phase6/P6_slice_A2_cache_reconcile.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P6-A2-03
+  behavior: A file dragged to a new folder is reconstructed as a single move (not a
+    delete-then-recapture) by matching its content fingerprint — the cloud keeps the
+    file's summary and knowledge, only updating its location
+  tier: full
+  phase: 6
+  origin: design
+  granularity: outcome
+  trigger: Move a synced file between folders while the daemon is running (watcher
+    emits delete+create or a native move)
+  fixtures: []
+  steps:
+  - With the daemon running, drag a synced file from one folder to another.
+  - Inspect what the cloud received and the document row's path/summary.
+  expected:
+  - The cloud receives ONE moved event (old path -> new path), not a delete plus a
+    fresh upload
+  - The document row's vault_path is updated to the new location and its summary /
+    search entries are preserved (no re-summarize)
+  - The local cache now keys the fingerprint under the new location
+  spec_ref: docs/1_design/phase6/P6_slice_A2_cache_reconcile.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P6-A2-04
+  behavior: A genuinely deleted file is reported as a delete only after the move-correlation
+    window passes with no matching re-creation — a real delete still reaches the cloud,
+    just a few seconds later (bias toward catching moves)
+  tier: full
+  phase: 6
+  origin: design
+  granularity: outcome
+  trigger: Delete a synced file (no re-creation anywhere) while the daemon is running
+  fixtures: []
+  steps:
+  - With the daemon running, delete a synced file and do not recreate it.
+  - Wait past the move-correlation window and inspect the cloud.
+  expected:
+  - During the correlation window the delete is buffered (no delete event sent yet)
+  - After the window passes with no matching create, exactly one deleted event is sent
+    and the cloud document row is removed
+  - The local cache entry for that file is removed
+  spec_ref: docs/1_design/phase6/P6_slice_A2_cache_reconcile.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P6-A2-05
+  behavior: A damaged or unreadable local cache is discarded whole and rebuilt from
+    cloud truth — never partially trusted — so a corrupt notebook degrades to a full
+    reconcile and loses no data
+  tier: full
+  phase: 6
+  origin: design
+  granularity: outcome
+  trigger: Start the daemon with a cache file that is missing, garbled, or truncated
+  fixtures: []
+  steps:
+  - Corrupt or truncate the cache file (or delete it), then start the daemon.
+  - Inspect the startup behaviour and the resulting cache.
+  expected:
+  - The daemon does not crash and does not partially read the damaged cache; it starts
+    with an empty cache
+  - A full reconcile against the cloud runs, and the cache is rebuilt to match cloud
+    truth (plus any disk-only files uploaded)
+  - No cloud document rows are deleted purely because the cache was missing
+  spec_ref: docs/1_design/phase6/P6_slice_A2_cache_reconcile.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P6-A2-06
+  behavior: A file missing during one sweep is NOT instantly scrubbed from the cloud
+    — a sweep-driven delete is only reported after the file stays gone across more
+    than one check (conservative deletes; a transient sync hiccup never destroys real
+    work)
+  tier: full
+  phase: 6
+  origin: design
+  granularity: outcome
+  trigger: A periodic/startup sweep finds a cloud-known file absent on disk for one
+    check, then present again (transient) vs absent again (confirmed)
+  fixtures: []
+  steps:
+  - Make a cloud-known file briefly invisible for one sweep, then restore it before
+    the next sweep.
+  - Separately, remove a cloud-known file and let it stay gone across two sweeps.
+  expected:
+  - A file absent in a single sweep is NOT reported as deleted; its cloud row survives
+  - A file confirmed absent across more than one sweep is reported deleted and its
+    cloud row is removed
+  - A transiently-missing file that reappears is never deleted from the cloud
+  spec_ref: docs/1_design/phase6/P6_slice_A2_cache_reconcile.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P6-A2-07
+  behavior: A cloud rollback (e.g. Litestream restores an older backup that lost recent
+    writes) self-heals on the next reconcile — files present on disk but now missing
+    from the cloud are re-uploaded, with no data loss
+  tier: full
+  phase: 6
+  origin: design
+  granularity: outcome
+  trigger: Cloud state regresses (a previously-synced path disappears from GET /api/state)
+    while the file still exists on disk; a reconcile runs
+  fixtures: []
+  steps:
+  - Simulate a cloud rollback so a synced path is no longer in the cloud manifest while
+    its file remains on disk and in the local cache.
+  - Run a reconcile (startup or periodic).
+  expected:
+  - The disk-present / cloud-absent file is treated as new-to-cloud and re-uploaded
+    (cloud authority drives the heal)
+  - After the reconcile the cloud again knows the file and the cache matches cloud truth
+  - The file is never deleted from disk and its content is never lost
+  spec_ref: docs/1_design/phase6/P6_slice_A2_cache_reconcile.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P6-A2-08
+  behavior: While the daemon runs, a periodic reconcile re-runs on a timer (config-gated,
+    generous default) and catches files stranded by dropped watcher events — without
+    needing a restart
+  tier: full
+  phase: 6
+  origin: design
+  granularity: outcome
+  trigger: A file change is missed by the live watcher (dropped event); the periodic
+    reconcile interval elapses
+  fixtures: []
+  steps:
+  - Arrange for a change the watcher misses (or simulate a stranded file), with the
+    daemon left running.
+  - Wait for the periodic reconcile interval to elapse.
+  expected:
+  - A reconcile runs on the timer without a restart and uploads the stranded/changed
+    file
+  - The cloud document row now reflects the change
+  - With the interval disabled in config, no periodic reconcile runs
+  spec_ref: docs/1_design/phase6/P6_slice_A2_cache_reconcile.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P6-A2-09
+  behavior: The live watcher and a running reconcile never corrupt the shared cache
+    or double-process a file — concurrent access to the cache is serialised, and a
+    file handled by one path is not re-handled by the other in the same window
+  tier: full
+  phase: 6
+  origin: design
+  granularity: outcome
+  trigger: A periodic reconcile runs at the same time the live watcher fires events
+    on overlapping paths
+  fixtures: []
+  steps:
+  - Trigger live file events on the same paths while a reconcile is in progress.
+  - Inspect the cache integrity and the cloud upload counts for the overlapping files.
+  expected:
+  - The cache file/database is never left half-written or internally inconsistent under
+    concurrent access
+  - An overlapping file is not uploaded twice for the same change (no duplicate work
+    from watcher + reconcile racing)
+  - The final cache state matches the final disk state for the overlapping paths
+  spec_ref: docs/1_design/phase6/P6_slice_A2_cache_reconcile.md §Success criteria
+  human_reviewed: false
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null

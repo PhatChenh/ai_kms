@@ -234,3 +234,67 @@ _Avoid_: "the cloud", "bucket" (acceptable shorthand once introduced), "database
 **dummy vault path (TD-059):**
 A throwaway empty folder the container creates only to satisfy a current start-up validation that still insists a "vault root" folder exists on disk — even though no file-watching or vault code runs in the cloud. A stopgap until the configuration split (Phases 6/7/9) removes the vault-root requirement from the cloud side entirely. See TD-059. (Note: how the path is actually supplied to the running cloud process is an open question — see the Slice 2 design doc.)
 _Avoid_: "vault" (there is no real vault cloud-side — it is an empty placeholder)
+
+**blob:**
+The raw bytes of a user's binary/visual file (a photo, screenshot, chart, scanned page) — the original file itself, as opposed to any text pulled out of it. Stored in cloud object storage, never inside the database. The database holds only a small pointer (the blob reference) to where the blob lives. Introduced in Phase 7B for the visual capture path.
+_Avoid_: "attachment" (dead — the old vault `attachment/` folder concept is retired), "document" (the document is the DB row; the blob is the bytes it points to)
+
+**blob store:**
+The application's own write path into cloud object storage for blobs — a small in-house helper wrapping an S3-compatible client, with one put/get interface so the rest of the pipeline never speaks S3 directly. Distinct from Litestream, which also uses object storage but only mirrors the database file and cannot store arbitrary blobs. New in Phase 7B (the client is a new external dependency).
+_Avoid_: "Litestream" (Litestream mirrors the DB; the blob store writes user files), "bucket" (the bucket is the storage; the blob store is the app's client to it)
+
+**blob reference:**
+The small pointer stored on a `documents` row that says where a file's blob lives in object storage (the object key), plus its file type (mime). Never the bytes — only the locator. NULL on text rows; populated only on binary/visual rows. Added by migration 009 in Phase 7B.
+_Avoid_: "the file", "the blob" (the reference points AT the blob; it is not the blob)
+
+**content-addressed (blob) key:**
+The scheme where a blob's object-storage filename is derived from its content fingerprint, so identical bytes map to one stored object and moving a file (which changes its path) never orphans or re-uploads the blob. Distinct from row identity: each vault path still gets its own `documents` row and its own description, while the bytes are de-duplicated at the object level. Two rows with identical bytes therefore share one blob — which is why deleting a blob is reference-counted (delete only when the last row pointing at it is gone).
+_Avoid_: "path-based key" (the rejected alternative — would re-upload on every move), "content-reuse-by-hash" (the rejected summary-sharing optimization — content-addressing the blob does NOT share descriptions across rows)
+
+**Vision Describer:**
+The picture-reading mode of the Housekeeping AI: for an image or text-less PDF it calls an image-capable model once to produce a few sentences describing what the picture shows (figures, labels, chart content), and that description becomes the file's searchable text. A second mode of the same summarizer stage, not a separate pipeline. The text path never invokes it. New in Phase 7B.
+_Avoid_: "OCR" (it describes meaning, not just transcribes characters), "summarizer" (that is the text mode; the Vision Describer is the image mode of the same stage)
+
+**store-blob-first:**
+The Phase 7B extension of store-raw-first (ADR-0014): the raw bytes are written to the blob store and a blob reference is saved on the document row BEFORE the vision model runs. The user's file is safe the moment it is stored; the description is enrichment that may arrive late (or never, if the file is too big, unsupported, or vision fails). Mirrors the text path's "save text first, summarize second."
+_Avoid_: "upload-then-describe", "save-and-summarize" (those blur the safety ordering that is the whole point)
+
+**send-to-vision set (describable types):**
+The config-driven list of file types that are routed to the Vision Describer — images (`image/*`) and text-less PDFs. Everything else (zip, video, spreadsheet-with-no-text) is stored as a blob but left undescribed. The set lives in config so new describable formats can be added without code changes (C-06 spirit). Whether the configured vision model can actually read a PDF (vs only images) is an open question (OQ-7G).
+_Avoid_: "vision whitelist", "image types" (text-less PDFs are in the set too)
+
+**needs-description (derived):**
+The state of a binary/visual row whose description is empty — derived from the same empty-summary signal as 7A's "needs-summary" (`summary IS NULL`), NOT a new flag column. A row reaches this state three ways: the file was too big, the type was unsupported, or the vision call failed. The *reason* lives only in the audit log (a future UI surfaces it — TD-060).
+_Avoid_: "undescribed flag", "pending-description column" (there is no column — it is derived)
+
+**reference-counted delete:**
+The blob-deletion rule: when a document row that references a blob is deleted, the blob in object storage is removed ONLY if no other document row still references the same object key. Because blobs are content-addressed, two rows with identical bytes share one blob, so deleting one row must not break the survivor. The document row is always deleted (hard delete, unchanged from 7A); only the blob's removal is conditional.
+_Avoid_: "garbage collection" (it is a synchronous count-then-delete at delete time, not a sweep), "cascade delete" (the blob is shared, so a plain cascade would corrupt the survivor)
+
+### Phase 6 — Daemon Cache & Reconcile (Slice A2)
+
+> Introduced by P6 Slice A2 (`docs/1_design/phase6/P6_slice_A2_cache_reconcile.md`; ADR-0013). The daemon gains a small local "notebook" as a speed layer. The cloud database stays the single source of truth; losing the notebook is never fatal.
+
+**daemon cache (notebook):**
+The daemon's local manifest mapping each note's vault location to its raw-byte content fingerprint (`vault_path → content_hash`), stored on the user's Mac. It is an **advisory** speed layer only — it lets the daemon skip unchanged files instantly and recognise moves — and the cloud database is always authority. Cache loss or corruption is non-fatal: a missing/damaged cache degrades to a full reconcile against the cloud (the stateless A1 behaviour), never data loss.
+_Avoid_: "local database", "sync state" (it is not authoritative; it is a disposable hint), "index" (the cloud `documents` table is the index)
+
+**cache-on-ack:**
+The invariant that a file's fingerprint is written into the daemon cache ONLY after the cloud returns a success response from `/api/upload` or `/api/event`. A failed or timed-out upload leaves the file uncached, so the next reconcile re-detects and re-sends it. There is no persistent retry queue — reconcile is the durable net.
+_Avoid_: "write-through cache", "optimistic cache" (the whole point is that it is NOT optimistic — never cache before the ack)
+
+**3-way compare (reconcile):**
+The daemon's startup and periodic reconcile that compares three facts per file — present on disk, present in the cache, present in the cloud (`GET /api/state`) — and resolves every disagreement with the cloud as authority. Upgrades A1's two-way disk↔cloud scan. It uploads new/changed files, heals cloud rollbacks (disk-present + cloud-absent → re-upload), reports confirmed offline deletions, and rebuilds the cache to match post-reconcile cloud truth.
+_Avoid_: "diff", "sync" (too generic — name it as the three-input compare), "two-way scan" (that was A1)
+
+**discard & rebuild:**
+The rule for a damaged or unreadable daemon cache: throw the entire notebook away and rebuild it from cloud truth — never repair, never partially trust a salvaged entry (grill D2). A full rebuild is cheap (re-read local files + one cloud request); partial salvage is how silent drift creeps in.
+_Avoid_: "cache recovery", "repair" (those imply salvaging the old contents — the notebook is disposable, not repairable)
+
+**move-correlation window:**
+The short wait (default 2s) after a file delete during which a re-created file with the **same content fingerprint** turns the delete+create pair into a single `moved` event instead of a destructive delete-then-recapture. Needs the cache because the deleted file is gone from disk — the cache holds the only surviving copy of its fingerprint. Biases toward catching moves at the cost of slightly delayed deletes (grill D1).
+_Avoid_: "move timer", "debounce" (debounce coalesces repeated events on one path; this correlates two different paths by content)
+
+**conservative delete (sweep):**
+The rule that a cloud-known file found missing during a single background sweep is NOT reported deleted immediately — it must stay gone across more than one sweep (default 2 confirmations) before the daemon scrubs the cloud row (grill D3). A transiently-missing file that reappears is never deleted. Distinct from a live delete, which clears within the move-correlation window.
+_Avoid_: "delayed delete", "soft delete" (the row is hard-deleted once confirmed; only the *decision* is delayed)

@@ -76,6 +76,45 @@
 
 ---
 
+### OQ-7D · Blob-reference shape if a document ever needs more than one blob
+**Blocks:** Nothing (future multi-blob feature only)
+**Status:** 🔴 Open (deferred — design recommendation stands)
+**Question:** Phase 7B stores one blob per document via two nullable columns on `documents` (blob reference + `mime_type`). If a future feature needs several blobs per document (e.g. a multi-page scan kept as separate page images), do we migrate to a dedicated `blobs`/`attachments` table?
+**Context:** Two columns model the strict one-file = one-blob = one-row relationship with no join. A `blobs` table is a clean one-to-many but adds a join to every reader for flexibility nothing in 7B or Phase 9 needs. Recommendation: keep the two columns; migrate to a table only if a real multi-blob need appears. Source: `docs/1_design/phase7/phase7b_visual_capture.md` Decision 1; seed §A4.
+
+---
+
+### OQ-7E · Where the vision model name lives in provider config (C-09 interaction)
+**Blocks:** Phase 7B (vision wiring)
+**Status:** 🔴 Open (design recommendation: dedicated `vision_model` field)
+**Question:** Does the vision-capable model get its own `vision_model` field on each provider config, or is it folded into an existing field (e.g. routing the `"vision"` task to `synthesis_model` if multimodal)?
+**Context:** C-09 lists `model`/`synthesis_model`/`embedding_model` as required provider fields; a dedicated `vision_model` is a same-shape addition but grows that list (note it in the constraint). Reusing `synthesis_model` couples vision to whatever the synthesis model is and breaks if it is text-only. Recommendation: dedicated `vision_model` field. Source: `docs/1_design/phase7/phase7b_visual_capture.md` Decision 3; seed §A5.
+
+---
+
+### OQ-7G · Vision route + PDF describability
+**Blocks:** Phase 7B (the `describe_image` implementation and the describable-type set)
+**Status:** 🟡 Partially resolved — route DECIDED, capability still to verify at research
+**Decision (human, 2026-06-14):** Vision route = **AgentBase MaaS (platform LLM, OpenAI-compatible)** — owner's choice for cost control, over the design's Anthropic-SDK recommendation. So `describe_image` targets the MaaS `image_url` content-block shape.
+**Still open (BUILD-BLOCKING, verify at research before vision code):** Does AgentBase MaaS (a) accept image input at all, and (b) accept text-less PDF input? → MaaS no-vision = HARD STOP, escalate; MaaS images-only = drop `application/pdf` from the describable set (config edit), text-less PDFs fall to store-only; MaaS images+PDF = keep PDF in the set. Keep the describable set config-editable. Source: `docs/1_design/phase7/phase7b_visual_capture.md` Decision 6 + OQ-7G.
+
+---
+
+### OQ-7H · Storage-client library + bucket topology (HUMAN-GATED before install)
+**Blocks:** Phase 7B (the blob-store module + any dependency install)
+**Status:** 🟢 Resolved (human, 2026-06-14)
+**Decision:** **`boto3` (sync, thread-wrapped) + a separate `KMS_BLOB_*` bucket inside VNG Object Storage** — the same VNG service Litestream already uses (no new vendor). Matches the design recommendation. `boto3` is the one approved new dependency; the actual `pip`/`pyproject.toml` install happens at implementation time, not before. **Still to verify at research:** VNG Object Storage access details (endpoint, bucket creation, access-key env var names). Source: `docs/1_design/phase7/phase7b_visual_capture.md` Decision 4; requirements decision 7.
+
+---
+
+### OQ-7I · Audit outcome name for a successful vision describe
+**Blocks:** Nothing (observability nicety)
+**Status:** 🔴 Open (design recommendation: distinct `DESCRIBED`)
+**Question:** Should a successful vision describe write a distinct `DESCRIBED` audit outcome, or reuse the text path's `CAPTURED`?
+**Context:** `core.audit.write` accepts any outcome string. A distinct `DESCRIBED` lets the briefing / future UI tell a vision describe from a text capture; the skip/failure entries already carry their own reason strings (too-big / unsupported-type / vision-failed). Recommendation: distinct `DESCRIBED`. Source: `docs/1_design/phase7/phase7b_visual_capture.md` Decision; seed §A5.
+
+---
+
 ## ✅ Closed
 
 ### OQ-001 · Move/rename detection when note is edited AND moved simultaneously

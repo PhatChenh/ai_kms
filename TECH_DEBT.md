@@ -2,6 +2,37 @@
 
 ## Active
 
+### TD-062 · Reconstruct lost P6-A1 behavior-inventory entries
+**Status:** OPEN
+**Phase:** Phase 6 — before the next `update-behavior-guide` / testing-guide regeneration.
+**Risk if triggered early:** None to code; the A1 daemon code is recovered + merged and tests pass. The gap is in the behavior inventory only: the A1 design doc claims ~22 `P6-A1-*` entries, but **zero are present in `docs/system_behavior/behavior_inventory.yaml`** — they were lost when the A1 worktree branch was deleted (same orphaning as the merge recovery). If the testing guide is regenerated now, A1's behaviors are silently absent from it.
+**What:** Reconstruct the ~22 `P6-A1-*` behavior entries from `docs/1_design/phase6/P6_slice_A1_daemon_core.md` + `docs/2_specs/phase6/P6_slice_A1_daemon_core.md` (Behavior IDs P6-A1-01..22) back into `behavior_inventory.yaml`, then regenerate the testing guide. A2 entries (`P6-A2-01..09`) are already present and unaffected.
+**Why deferred:** Owner decision (2026-06-14) — A2 design→spec→research→plan doesn't need them; reconstruct at the testing-guide regeneration step to keep A2 momentum.
+**Source:** Phase 6 Slice A2 build-pipeline design review, 2026-06-14 (gap surfaced by the design-lite subagent while appending P6-A2 entries).
+
+---
+
+### TD-061 · OneDrive Files On-Demand placeholder support in the daemon
+**Status:** OPEN
+**Phase:** Phase 6 — deferred from Slice A2. Required before any real OneDrive end-user deployment.
+**Risk if triggered early:** HIGH for real users, none for the demo. The intended end user runs OneDrive, which offloads rarely-touched files to its cloud and leaves an **online-only placeholder** on disk: the file still appears in the folder, but reading its bytes **forces OneDrive to download (hydrate) it**. This collides with two locked Phase 6 decisions — "content hash = raw file bytes" and "startup + periodic full sweep" (ADR-0013): naive hashing/walking would drag the **entire vault** back down from OneDrive (bandwidth, disk, defeats the offload the user relies on). The demo uses a normal local vault, so it does not trigger; a real OneDrive vault would.
+**What:** Make the daemon placeholder-aware. (1) Detect online-only placeholders; **never download a file just to fingerprint it**. (2) Track offloaded files via the daemon cache + cheap metadata (size / modified-time) that OneDrive exposes without triggering a download. (3) Byte-hash **only** files whose content is actually local — a carve-out to the locked "hash = raw bytes" rule. (4) For a never-before-seen offloaded placeholder (daemon installed onto an already-offloaded vault), capture a name/path/size **stub** now so it's findable by name, and capture real content later when the file becomes local — **do NOT force-download the whole vault on install**.
+**Why deferred:** Owner decision (2026-06-14 grill) — demo does not need it; real OneDrive deployment does. The "no-hydrate / hash-only-local" principle is ADR-worthy when the capability is built.
+**Touches when revisited:** `src/daemon/scanner.py` (sweep), `src/daemon/extractor.py` (hashing), `src/daemon/watcher.py`, daemon cache (A2). Related: ADR-0013, `docs/0_draft/phase6/phase6_A2_grill.md` §2.2.
+**Source:** Phase 6 Slice A2 build-pipeline grill, 2026-06-14 (user-raised — end user works with OneDrive, which offloads untouched files to the cloud).
+
+---
+
+### TD-060 · "Why no description" not surfaced to user / consuming AI
+**Status:** OPEN
+**Phase:** Phase 10 (Web UI) — surfaced during Phase 7B grill (2026-06-14).
+**Risk if triggered early:** None — no code yet. Phase 7B stores a blob but leaves its description empty when the file is too big (over the config size cap), the vision call fails, or the file type is unsupported for vision. The *reason* is written to the audit log only. Today nothing reads the audit log back to the user, so the user/consuming AI sees an undescribed image with no explanation of why.
+**What:** When a visual/binary capture produces no description, surface the reason (too-big / vision-failed / unsupported-type — read from the audit-log entry Phase 7B writes) to the user and the consuming AI. Per the locked "needs-description is derived, no new flag column" decision (7B decision 9 / 7A decision 6 / ADR-0014), the reason MUST stay in the audit log, not a new `documents` column — the UI reads it from there.
+**Why deferred:** No UI exists yet (Phase 10). Phase 7B ships the audit trail (the data); surfacing it is a UI concern. Owner-requested at the 7B grill.
+**Source:** Phase 7B build-pipeline grill, 2026-06-14 (user-raised during size-cap discussion).
+
+---
+
 ### TD-059 · Dummy vault path workaround in cloud container
 **Status:** OPEN
 **Phase:** Dies with config split (Phases 6/7/9)
