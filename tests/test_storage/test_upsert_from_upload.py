@@ -293,3 +293,72 @@ def test_update_can_override_title(db):
     row = _row_by_vault(db, "inbox/override_title.md")
     assert row is not None
     assert row["title"] == "Second Title"
+
+
+def test_insert_with_blob_ref_and_mime_type(db):
+    """INSERT with blob_ref and mime_type writes both columns."""
+    from storage.documents import upsert_from_upload
+
+    result = upsert_from_upload(
+        vault_path="Projects/A/attachment/img.png",
+        extracted_text=None,
+        content_hash="hash_blob_001",
+        blob_ref="hash_blob_001",
+        mime_type="image/png",
+        db_path=db,
+    )
+    assert isinstance(result, Success)
+    row = _row_by_vault(db, "Projects/A/attachment/img.png")
+    assert row is not None
+    assert row["blob_ref"] == "hash_blob_001"
+    assert row["mime_type"] == "image/png"
+    assert row["full_body"] is None
+
+
+def test_update_with_blob_ref_and_mime_type(db):
+    """UPDATE path preserves blob_ref and mime_type when re-upload happens."""
+    from storage.documents import upsert_from_upload
+
+    # Insert binary row
+    upsert_from_upload(
+        vault_path="Projects/A/attachment/img2.png",
+        extracted_text=None,
+        content_hash="hash_blob_first",
+        blob_ref="hash_blob_first",
+        mime_type="image/png",
+        db_path=db,
+    )
+
+    # Update with same path, different hash
+    upsert_from_upload(
+        vault_path="Projects/A/attachment/img2.png",
+        extracted_text=None,
+        content_hash="hash_blob_second",
+        blob_ref="hash_blob_second",
+        mime_type="image/jpeg",
+        db_path=db,
+    )
+
+    row = _row_by_vault(db, "Projects/A/attachment/img2.png")
+    assert row is not None
+    assert row["blob_ref"] == "hash_blob_second"
+    assert row["mime_type"] == "image/jpeg"
+    assert row["content_hash"] == "hash_blob_second"
+
+
+def test_text_upload_without_blob_ref_has_nulls(db):
+    """Text upload without blob_ref/mime_type parameters leaves both NULL."""
+    from storage.documents import upsert_from_upload
+
+    upsert_from_upload(
+        vault_path="inbox/text_only.md",
+        extracted_text="Hello world",
+        content_hash="hash_text",
+        db_path=db,
+    )
+
+    row = _row_by_vault(db, "inbox/text_only.md")
+    assert row is not None
+    assert row["blob_ref"] is None
+    assert row["mime_type"] is None
+    assert row["full_body"] == "Hello world"
