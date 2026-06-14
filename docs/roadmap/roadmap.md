@@ -72,10 +72,10 @@ COMPLETED (existing)                    REARCHITECTURE PHASES
 
 Phase 0 (Foundations)  ─┐
 Phase 1 (Capture)       │
-Phase 1.5 (Pay Debt)    ├─ DONE ──→ Phase 5 (Infrastructure) ──→ Phase 6 (Daemon)
+Phase 1.5 (Pay Debt)    ├─ DONE ──→ Phase 5 (Infrastructure) ──→ Phase 6 (Daemon) ✅
 Phase Pre-2 (DB Prep)   │                    │
 Vault-Restructure       │                    ▼
-Phase 2 (Classify)      │           Phase 7 (Capture Refactor)
+Phase 2 (Classify)      │           Phase 7 (Capture Refactor) ✅
 Phase 3 (Search)        │                    │
 Phase 4 (MCP Server)  ──┘                    ▼
                                     Phase 8 (Classify Redesign)
@@ -87,7 +87,7 @@ Phase 4 (MCP Server)  ──┘                    ▼
                                     Phase 10 (Web UI + Self-Learning)
 ```
 
-**Key insight:** Phase 6 (Daemon) and Phase 7 (Capture Refactor) can run in parallel — both depend on Phase 5 only. Daemon is local code, Capture is cloud code. Different test strategies, no conflicts.
+**Key insight:** Phase 6 (Daemon) and Phase 7 (Capture Refactor) can run in parallel — both depend on Phase 5 only. Phase 6 Slice A1 + A2 COMPLETE; Slice B plan written. Phase 7A (Text Capture) + 7B (Visual/Binary Capture) both COMPLETE.
 
 ---
 
@@ -416,6 +416,8 @@ Remove or gut modules that the rearchitecture kills. Clean up imports.
 
 ## Phase 6 — Daemon
 
+**Status: ✅ Slice A1 (core sync pipe) + Slice A2 (cache + smart reconcile) COMPLETE (2026-06-14). Slice B (installable desktop app) — plan written, NOT implemented.**
+
 **`DEPENDS ON: Phase 5 · WEIGHT: medium · TYPE: new local package`**
 
 > **Rearchitecture phase.** Read `docs/0_draft/cloud_native_rearchitecture.md` §4 for full daemon spec. The daemon is a thin bridge — no AI, no DB, no classification. Watch + extract + upload + report events.
@@ -586,6 +588,8 @@ Package daemon as a single installable app for Mac.
 ---
 
 ## Phase 7 — Capture Refactor
+
+**Status: ✅ COMPLETE (2026-06-14). Phase 7A (Text Capture) + Phase 7B (Visual/Binary Capture) — both merged to cloud-native.**
 
 **`DEPENDS ON: Phase 5 (DB schema + API) · WEIGHT: heavy · TYPE: rewrite`**
 
@@ -917,8 +921,11 @@ Context injection engine currently reads CLAUDE.md from disk + builds context fr
   - `kms_vault_info` returns knowledge entries summary instead of CLAUDE.md content
   - Frequency-threshold gating pattern survives (reuse)
   - Content-hash dedup survives (reuse)
+  - **Trust-aware sorting:** order entries by `trust_score DESC` within each dimension block. No `min_trust` filtering yet — all entries start at 0.5 (Phase 8 default), so filtering would exclude nothing. `min_trust` filtering activates in Phase 10 when corrections start moving scores.
+  - **`retrieval_count` increment (from Phase 8 grill, 2026-06-14):** every time a knowledge entry is surfaced in an MCP tool response (context injection), increment `knowledge_entries.retrieval_count` for that entry. This provides a demand signal — facts users ask about rank higher in the Phase 8 Context Loader's budget-capped ranker. The column ships in Phase 8 (default 0); Phase 9 populates it.
+  - **Add `retrieval_count` to ranker (from Phase 8 grill, 2026-06-14):** Phase 8's Context Loader ranks by `trust_score DESC, confidence DESC, updated_at DESC`. Phase 9 adds `retrieval_count DESC` to the formula for context injection sorting: `ORDER BY trust_score DESC, retrieval_count DESC, updated_at DESC`.
 - **Reuse:** `storage/knowledge_entries.py`, `retrieval/search.py`
-- **Acceptance:** `kms_vault_info` returns knowledge entries grouped by dimension. Context injection includes relevant entries for query entities.
+- **Acceptance:** `kms_vault_info` returns knowledge entries grouped by dimension, sorted by trust score. Context injection includes relevant entries for query entities.
 
 ---
 
@@ -1029,6 +1036,16 @@ User corrections feed back as learning signal to improve future extractions.
 
 ---
 
+### Forward items from Phase 8 grill (2026-06-14)
+
+> These decisions were made during Phase 8's grill session and affect Phase 10. Full context: `docs/0_draft/phase8/phase8_classify_redesign_grill.md`.
+
+- **Trust score decay over time** — monitor if stale entries become a problem. Not in MVP; add decay logic if correction data shows need.
+- **Token budget monitoring for dimension summaries** — Phase 8 ships dynamic assembly with budget cap. As facts accumulate over time, may need optimization to pre-computed summaries. Watch and optimize.
+- **Correction volatility flag** — entries with > 3 corrections get `[frequently corrected]` appended in context blocks (signals contested facts to user-facing Claude).
+- **Trust adjustment pure function** — `adjust_trust(current, action) → float`. Promote: +0.05, retire: -0.10, edit: set 0.6. Asymmetric (Hermes-inspired). Deltas in config (C-06).
+- **`min_trust` filtering activation** — config `mcp.context_injection.min_trust: 0.3` starts excluding entries once corrections move trust scores. Until then, all entries pass (flat 0.5 default).
+
 ### Design decisions deferred to this phase's `/grill`
 - Web UI tech stack (SPA vs server-rendered)
 - Hosting (same container as MCP server, or separate)
@@ -1036,14 +1053,17 @@ User corrections feed back as learning signal to improve future extractions.
 - Exact UI layout and interaction patterns
 
 ### Acceptance criteria (behavior test)
-- [ ] Open web UI → see knowledge entries grouped by dimension
+- [ ] Open web UI → see knowledge entries grouped by dimension with trust score indicators
 - [ ] Filter by dimension "people" → see only people entries
 - [ ] Click entity "Anthony" → see all entries about Anthony
-- [ ] Promote a pending entry → status changes to confident
-- [ ] Retire a confident entry → status changes to retired with reason
-- [ ] Edit a fact → fact text updated, old value recorded
+- [ ] Promote a pending entry → status changes to confident, trust score increases by 0.05
+- [ ] Retire a confident entry → status changes to retired with reason, trust score decreases by 0.10
+- [ ] Edit a fact → fact text updated, old value recorded in corrections table, trust score set to 0.6
 - [ ] Add comment to entry → comment visible, timestamped
-- [ ] After corrections: next classify run produces better extractions for similar content
+- [ ] After corrections: next classify run includes corrections as few-shot examples and produces better extractions for similar content
+- [ ] Low-trust entries (< 0.3) excluded from MCP context injection
+- [ ] Frequently corrected entries flagged in context blocks
+- [ ] Correction analytics dashboard shows trends by dimension
 - [ ] Non-technical user completes browse + correct flow without instructions
 
 ---

@@ -1,7 +1,7 @@
 # Plan: Phase 6 Slice B — Installable Daemon App
 
 _Last updated: 2026-06-14_
-_Status: [ ] pending_
+_Status: [~] in progress_
 
 _Spec: `docs/2_specs/phase6/phase6_sliceB_installer.md` — the source of truth for WHAT to build (7 components, "Build" descriptions, "Done when" criteria). This plan owns HOW: ordering, TDD RED→GREEN, exact line numbers, commit boundaries._
 _Research: `docs/3_research/phase6/phase6_sliceB_installer.md` — Invalidated Assumptions: **NONE**. Two mechanical refinements folded into the phases below (eight extractor libs, not six; loader raises rather than returning a Result)._
@@ -146,7 +146,9 @@ src/daemon/secret_vault.py   (NEW)
 
 **Notes / coupling**: `# COUPLING:` the env-var key name `KMS_DAEMON_API_KEY` is shared with the engine (`config.py:125`) and the cloud server (`api.py:61`). It is a hard contract; do not parameterize it.
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-06-15
+**Notes**: Implemented `src/daemon/secret_vault.py` with `store_key`, `read_key`, `load_key_into_env`, `delete_key` — all returning `Result`. Tests use in-memory dict via monkeypatch on keyring functions (no real OS vault touched). Grep-guard test confirms no `load_dotenv` in the module. Full daemon test suite: 261 passed (5 new + 256 baseline). No deviations from plan. keyring was already in pyproject.toml (no dependency change needed).
 
 ---
 
@@ -192,7 +194,9 @@ src/daemon/connection_check.py   (NEW)
 
 **Notes / coupling**: `# COUPLING:` the endpoint suffix `/api/state` is the single authed surface today (`api.py:450`). `[closed]` — a second probe would edit this file; acceptable per the design's honest-cardinality stance.
 
-**Status**: [ ] pending
+**Status**: [x] done
+**Completed**: 2026-06-16
+**Notes**: Implemented `src/daemon/connection_check.py` with `async def check_connection(endpoint, key, client=None) -> Result[None]`. Uses httpx.AsyncClient with injected client support for testing. Targets `/api/state` (gated endpoint), never `/health`. Catches `HTTPStatusError` (401 → "authentication" Failure, other → status+body Failure) and `RequestError` → "cannot reach" Failure. 5 tests: 200→Success, 401→"authentication", connection error→"cannot reach", 500→status+body, GUARD: request path is `/api/state` not `/health`. Mock transport via injected AsyncMock client — no real network calls. Full daemon suite: 270 tests pass (5 new + 265 baseline). No deviations from plan.
 
 ---
 

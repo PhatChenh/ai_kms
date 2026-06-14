@@ -8,7 +8,7 @@
 #   STAGING = parent of VAULT — staging files the tester copies/drags into VAULT
 #
 # IMPORTANT: This script operates on the TEST vault, never the real vault.
-# Last generated: 2026-06-13
+# Last generated: 2026-06-14
 
 set -euo pipefail
 
@@ -948,6 +948,27 @@ setup_P5_DEPLOY_11() {
 setup_P5_DEPLOY_12() {
     echo "P5-DEPLOY-12: No pre-created fixtures. Trigger: python -m mcp_server.server (stdio transport, no container)"
 }
+# ─── Phase 7 (full) ────────────────────────────────────────────────────────
+
+# full | P7-CAP-10: A binary/visual upload (raw bytes, no extracted text) stores the raw bytes in object storage and saves a document row that references the blob, BEFORE any AI runs — the file is safe the moment it is stored
+setup_P7_CAP_10() {
+    echo "P7-CAP-10: No pre-created fixtures. Trigger: POST /api/upload (multipart, raw file bytes + mime + raw-byte fingerprint + size, no extracted_text)"
+}
+
+# full | P7-CAP-11: A describable binary (image or text-less PDF) gets one vision-model description written to both the summary and the full text fields, making it findable by search; on vision failure the blob is kept, the failure is audited, and success is still returned (store-anyway)
+setup_P7_CAP_11() {
+    echo "P7-CAP-11: No pre-created fixtures. Trigger: POST /api/upload (multipart, describable image bytes)"
+}
+
+# full | P7-CAP-12: A binary that is over the size cap, or of a type the vision model cannot read (zip, video, etc.), is stored but not described — the description stays empty and an audit entry records the reason (too-big / unsupported-type)
+setup_P7_CAP_12() {
+    echo "P7-CAP-12: No pre-created fixtures. Trigger: POST /api/upload (multipart, oversized file OR unsupported binary type)"
+}
+
+# full | P7-CAP-13: When a file delete is reported and its document row is removed, the stored blob is deleted only when no other document row still references it (delete-when-last-reference-gone); a blob shared by two rows survives the deletion of one
+setup_P7_CAP_13() {
+    echo "P7-CAP-13: No pre-created fixtures. Trigger: POST /api/event (type=deleted) for a path whose row references a blob"
+}
 
 # ─── Tier runners ──────────────────────────────────────────────────────────────
 
@@ -1053,6 +1074,10 @@ run_all() {
     setup_P5_DEPLOY_10
     setup_P5_DEPLOY_11
     setup_P5_DEPLOY_12
+    setup_P7_CAP_10
+    setup_P7_CAP_11
+    setup_P7_CAP_12
+    setup_P7_CAP_13
 }
 
 # ─── Main dispatch ─────────────────────────────────────────────────────────────
@@ -1171,6 +1196,10 @@ case "${1:-all}" in
     P5-DEPLOY-10)  reset_db; clean_vault; setup_P5_DEPLOY_10 ;;
     P5-DEPLOY-11)  reset_db; clean_vault; setup_P5_DEPLOY_11 ;;
     P5-DEPLOY-12)  reset_db; clean_vault; setup_P5_DEPLOY_12 ;;
+    P7-CAP-10)  reset_db; clean_vault; setup_P7_CAP_10 ;;
+    P7-CAP-11)  reset_db; clean_vault; setup_P7_CAP_11 ;;
+    P7-CAP-12)  reset_db; clean_vault; setup_P7_CAP_12 ;;
+    P7-CAP-13)  reset_db; clean_vault; setup_P7_CAP_13 ;;
     *)
         echo "Unknown test ID: ${1}"
         echo "Usage: $0 [test-id|all|smoke|phase]"

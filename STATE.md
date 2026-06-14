@@ -1,13 +1,13 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-06-14 (Phase 6 Slice B installable-app — build-pipeline COMPLETE, plan-only)_
+_Last updated: 2026-06-14 (Phase 7B Visual/Binary Capture — ✅ COMPLETE + review fixes)_
 
 ## Current Position
-**Phase**: Phase 6 (Daemon). Slice A1 (core sync pipe) built + merged to cloud-native; Slice A2 (cache + smart reconcile) is docs-only (spec/research/plan written, NOT implemented); **Slice B (installable desktop app) — build-pipeline COMPLETE (design→spec→research→plan), plan-only, NO code.** Slice B implementation is gated on A2 landing. (Prior: Phase 5 Slice 2 Deployment Foundation ✅ COMPLETE 2026-06-13, 450+ tests, Docker verified.)
+**Phase**: Phase 7 (Cloud Capture). Phase 7B (Visual/Binary Capture) — ✅ COMPLETE 2026-06-14 (7 phases, 10 commits, ~45 new tests, merged to cloud-native). Phase 7A (Text Capture) completed previously. **Phase 6 (Daemon)**: Slice A1 (core sync pipe) ✅ COMPLETE; Slice A2 (cache + smart reconcile) ✅ COMPLETE (8 phases, merged to cloud-native); **Slice B (installable desktop app) — build-pipeline COMPLETE (design→spec→research→plan), plan-only, gated on user decision.** (Prior: Phase 5 Slice 2 Deployment Foundation ✅ COMPLETE 2026-06-13, 450+ tests, Docker verified.)
 
 **[Phase 6 Slice B — Installable Daemon App — Plan written 2026-06-14]** _(PENDING implementation — gated on Slice A2 landing)_:
 - [ ] Phase 1 — Secret Vault wrapper (`keyring`: Keychain / Credential Manager) [P6-SLICEB-01]
-- [ ] Phase 2 — Cloud Connection Check (live authed test → `GET /api/state`, not `/health`) [P6-SLICEB-02]
+- [x] Phase 2 — Cloud Connection Check (live authed test → `GET /api/state`, not `/health`) [P6-SLICEB-02]
 - [ ] Phase 3 — OS-Glue Seam + 2 adapters (launch-on-login + tray, `pystray`) [P6-SLICEB-03/04]
 - [ ] Phase 4 — Setup Wizard (Tkinter, hard-block on connection test) [P6-SLICEB-05]
 - [ ] Phase 5 — App Supervisor (setup-vs-run, sync-engine on worker thread, clean stop) [P6-SLICEB-06/09]
@@ -16,6 +16,35 @@ _Last updated: 2026-06-14 (Phase 6 Slice B installable-app — build-pipeline CO
 - **Decisions:** native app NOT Docker (ADR-0016); cross-platform Mac+Windows; unsigned + one-time Gatekeeper/SmartScreen override; one generic build per OS + baked editable default endpoint; manual update (auto-update deferred); launch-on-login default ON. New deps planned (not installed): `keyring`, `pystray`, `pyinstaller`.
 - **Artifacts:** grill `docs/0_draft/phase6/phase6_sliceB_grill.md` · design `docs/1_design/phase6/phase6_sliceB_installer.md` · spec `docs/2_specs/phase6/phase6_sliceB_installer.md` · research `docs/3_research/phase6/phase6_sliceB_installer.md` (0 invalidated) · plan `docs/4_plans/phase6/phase6_sliceB_installer.md` · ADR-0016
 - **Open (non-blocking):** OQ-SB1 (pystray ↔ asyncio main-thread per OS), OQ-SB2 (wizard-skip condition), OQ-SB3 (`daemon uninstall` CLI vs internal helper); plus external field-verify risks (PyInstaller freezing of keyring/watchdog/pystray, macOS quarantine clearing for LaunchAgent relaunch).
+
+**[P6 Slice A2 — Cache + Smart Reconcile — ✅ COMPLETE 2026-06-14]** _(8 phases, merged to cloud-native)_:
+- [x] Phase 1 — Cache module (`LocalCache` + `DaemonSyncState`, Phase 1 review fixes)
+- [x] Phase 5 — Bail-early + live-path cache wiring
+- [x] Phase 6 — Move detection wiring
+- [x] Phase 7 — Periodic reconcile timer
+- [x] Phase 8 — Integration wiring + startup orchestration
+- **Plan:** `docs/4_plans/phase6/phase6_sliceA2_cache_reconcile.md`
+- **Key modules:** `src/daemon/cache.py` (LocalCache), `src/daemon/sync_engine.py` (3-way scan path, live-path cache wiring, move detection)
+- **Fixes post-merge:** `fix(p6-a2): touch()` for stat-only refresh, unreadable exclusion, double vault walk elimination, redundant validators removal
+
+**[Phase 7B — Visual / Binary Capture — ✅ COMPLETE 2026-06-14]** _(7 phases, 10 commits, ~45 new tests, merged to cloud-native)_:
+- [x] Phase 1 — Migration 009: `blob_ref` + `mime_type` columns in `documents` table
+- [x] Phase 2 — Blob Store module: `BlobStore` ABC, `LocalBlobStore` (test stub), `S3BlobStore` (boto3)
+- [x] Phase 3 — Vision config + provider extension + prompt: `VisionConfig`, `"vision"` Task, `describe_image` on `LLMProvider`/`OpenAIProvider`, `describe_image.yaml`
+- [x] Phase 4 — Binary capture branch: extends `capture_upload` with 5-beat binary fork; extends `upsert_from_upload` with `blob_ref`/`mime_type`
+- [x] Phase 5 — Reference-counted blob delete: pre-read → delete → ref-count → conditional blob delete
+- [x] Phase 6 — Upload Endpoint re-point: multipart handler passes bytes to binary capture
+- [x] Phase 7 — Full-suite verification: 322 core tests pass, behavior inventory P7-CAP-10…13 active
+- **Review fixes (12 issues, 3 commits):** Critical — prod blob wiring (`build_app()` reads `KMS_BLOB_*` env vars), vision prompt format (`Title:` on last line), `full_body` alignment (`attach_summary` extended). Important — S3 key validation, orphan blob cleanup on content change, mime_type validation, TOCTOU docs. Minor — duplicate import removed, narrow exceptions, validation improvements, docstrings.
+- **Plan:** `docs/4_plans/phase7/phase7b_visual_capture.md`
+- **Spec:** `docs/2_specs/phase7/phase7b_visual_capture.md`
+- **Research:** `docs/3_research/phase7/phase7b_visual_capture.md`
+- **Design:** `docs/1_design/phase7/phase7b_visual_capture.md`
+- **New modules:** `src/storage/blobs.py`, `src/prompts/describe_image.yaml`, `src/storage/migrations/009_add_blob_ref.sql`
+- **New dependency:** `boto3` (approved, VNG Object Storage S3-compatible)
+- **Config additions:** `capture.vision` (describable_mime_prefixes, max_vision_bytes), `providers.vision`, `vision_model` on provider configs
+- **Behavior IDs:** P7-CAP-10…13 (`active`, tested)
+- **ADR-0015:** amended (vision route = AgentBase MaaS, images-only default)
 
 **[P5 Slice 2 — Deployment Foundation (AgentBase) — ✅ COMPLETE 2026-06-13]** _(450+ tests passing, Docker verified)_:
 - [x] Phase 1 — Save-or-update data routine (`upsert_from_upload`) [C2-1]

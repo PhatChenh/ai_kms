@@ -1,7 +1,7 @@
 # AI-KMS Testing Guide
 _For non-technical testers. No coding required for Smoke and Phase checks._
 _Auto-generated from `behavior_inventory.yaml`. Fill in **Current result** fields after testing. All other content is regenerated — do not edit._
-_Last generated: 2026-06-13_
+_Last generated: 2026-06-14_
 
 ---
 
@@ -2637,6 +2637,96 @@ Send a tools/list request over stdio (as a desktop client would).
 
 **Last tested:** never
 **Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### Phase 7
+
+---
+
+### P7-CAP-10 · A binary/visual upload (raw bytes, no extracted text) stores the raw bytes in object storage and saves a document row that references the blob, BEFORE any AI runs — the file is safe the moment it is stored
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Upload one image file as raw bytes with a content fingerprint and no extracted text.
+
+Inspect the object store and the document row for that path.
+
+**Check:**
+- [ ] The raw bytes are present in object storage under a content-addressed key (the object name is derived from the raw-byte fingerprint)
+- [ ] The document row holds a blob reference (object key) and the file type (mime), not the bytes themselves
+- [ ] The store-blob step completes before the vision model is invoked (store-first)
+- [ ] On a re-upload of identical bytes the blob is NOT stored again and the vision model is NOT invoked (front-loaded dedup over raw bytes)
+
+**Last tested:** 2026-06-14
+**Last result:** passed
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P7-CAP-11 · A describable binary (image or text-less PDF) gets one vision-model description written to both the summary and the full text fields, making it findable by search; on vision failure the blob is kept, the failure is audited, and success is still returned (store-anyway)
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Upload one chart/image as raw bytes.
+
+With the vision model healthy, confirm the description landed; then force a vision failure and confirm the blob and row survive.
+
+**Check:**
+- [ ] On success the document's summary and full-text fields hold the vision description and the title is descriptive (not the filename); the file is findable by keyword and meaning search
+- [ ] A success audit entry is written for the describe decision
+- [ ] On a forced vision failure the document row and the stored blob both survive, the description stays empty, a failure audit entry states why, and the endpoint still returns success
+
+**Last tested:** 2026-06-14
+**Last result:** passed
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P7-CAP-12 · A binary that is over the size cap, or of a type the vision model cannot read (zip, video, etc.), is stored but not described — the description stays empty and an audit entry records the reason (too-big / unsupported-type)
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Upload one file larger than the configured size cap, and separately one unsupported binary type (e.g. a zip).
+
+Inspect the document row and the audit log.
+
+**Check:**
+- [ ] The blob is stored (the file is never lost) and the document row references it
+- [ ] The vision model is NOT invoked; the description stays empty (the same "needs-description" state as a vision failure — no new flag column)
+- [ ] An audit entry records the reason the description is missing (too-big or unsupported-type)
+- [ ] The endpoint returns success
+
+**Last tested:** 2026-06-14
+**Last result:** passed
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P7-CAP-13 · When a file delete is reported and its document row is removed, the stored blob is deleted only when no other document row still references it (delete-when-last-reference-gone); a blob shared by two rows survives the deletion of one
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Capture two binary rows that point at the SAME content-addressed blob (identical bytes, two paths); delete one of them via the event endpoint.
+
+Then delete the surviving row and re-check the object store.
+
+**Check:**
+- [ ] After deleting the first row, the blob is still present in object storage (a surviving row still references it)
+- [ ] After deleting the last referencing row, the blob is removed from object storage
+- [ ] Deleting a text row (no blob reference) removes only the document row and touches no object storage
+
+**Last tested:** 2026-06-14
+**Last result:** passed
 **Current result:** ___
 
 ⚠ AI-authored — not yet human-verified.
