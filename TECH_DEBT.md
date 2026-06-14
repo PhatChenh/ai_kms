@@ -588,6 +588,17 @@ Note: `MetadataResult.ai_domain` is **kept** as internal pipeline state — `app
 
 ---
 
+### TD-065 · Catch-up scan enqueues all discoverable ids in one burst
+**Status:** OPEN
+**Phase:** Phase 8 Slice B or later
+**Risk if triggered early:** For very large vaults (thousands of unclassified documents), `catch_up_scan()` loads all ids into memory via `queue.put_nowait()` in a single burst at startup. This could cause memory pressure on container boot.
+**What:** Phase 8 Slice A's `catch_up_scan()` (`src/pipelines/classify.py`) calls `find_unclassified()` and immediately enqueues every returned id with `queue.put_nowait()`. The `asyncio.Queue` has no maxsize. For a vault with very few docs this is fine; for a vault with thousands of pending docs, this loads all ids into memory at once before the single sequential consumer can begin processing.
+**Why deferred:** Slice A is infrastructure-only (no AI calls, fast consumer). The queue drains quickly. Memory pressure is a theoretical concern until Slice B adds AI latency. Page/batch the enqueue then.
+**Unblock condition:** When Slice B adds AI calls (increasing per-doc latency), add a cap (e.g. 1000) and a mechanism to re-scan for remaining work, or use a bounded queue.
+**Source:** Phase 8 Slice A plan OQ-P8A-03; `src/pipelines/classify.py::catch_up_scan()`.
+
+---
+
 ## Archive
 
 ### TD-001 · core/pipeline.py

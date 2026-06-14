@@ -2732,3 +2732,154 @@ Then delete the surviving row and re-check the object store.
 ⚠ AI-authored — not yet human-verified.
 
 ---
+
+### Phase 8
+
+---
+
+### P8-CLS-A-01 · The classify-work-discovery query finds every document that has never been classified (empty classify-fingerprint) or whose content changed since it was last classified (classify-fingerprint no longer matches the content fingerprint), and skips documents whose two fingerprints match
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Seed three documents — one with a NULL classify_content_hash, one whose classify_content_hash differs from its content_hash, and one whose two hashes match.
+
+Run the work-discovery query.
+
+**Check:**
+- [ ] The NULL-hash document is returned (never classified)
+- [ ] The mismatched-hash document is returned (content changed)
+- [ ] The matched-hash document is NOT returned (already classified)
+
+**Last tested:** 2026-06-14
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P8-CLS-A-02 · A successful classify stamps the document's classify-fingerprint to match its current content fingerprint, so the same document is not re-discovered as work on the next scan; a failed classify leaves the fingerprint untouched so the document is retried
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Stamp a document's classify_content_hash to its content_hash, then re-run work discovery.
+
+Leave a second document's classify_content_hash unstamped, then re-run work discovery.
+
+**Check:**
+- [ ] The stamped document is no longer returned by work discovery
+- [ ] The unstamped document is still returned by work discovery (retry path)
+
+**Last tested:** 2026-06-14
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P8-CLS-A-03 · The content reader returns the document's full extracted text when it fits under the configured token budget, and falls back to the short summary when the full text is too large
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Read a document whose full_body is comfortably under the configured token budget.
+
+Read a document whose full_body exceeds the budget but has a summary.
+
+**Check:**
+- [ ] The small document yields its full_body
+- [ ] The large document yields its summary instead of its full_body
+
+**Last tested:** 2026-06-14
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P8-CLS-A-04 · The dimension config loads each dimension with its allowed tags and its guidance text, every tag set keeps its mandatory catch-all tag, and a misconfigured dimension is rejected
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Load the expanded dimension config and read back one dimension's tags and guidance.
+
+Load a config where a dimension is missing its catch-all tag (or is otherwise malformed).
+
+**Check:**
+- [ ] Each loaded dimension exposes its allowed tags and its guidance text
+- [ ] Every dimension still includes the mandatory catch-all tag
+- [ ] The malformed config is rejected with a clear failure, not silently accepted
+
+**Last tested:** 2026-06-14
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P8-CLS-A-05 · The context loader returns existing facts per dimension excluding retired ones, ranked by trust then confidence then recency, capped at the configured maximum per dimension, with each returned fact carrying its database id
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Seed a dimension with confident, pending, and retired facts totalling more than the configured per-dimension cap, with varied trust/confidence/updated_at.
+
+Run the context loader for that dimension.
+
+**Check:**
+- [ ] No retired fact is returned
+- [ ] The returned facts are ordered by trust, then confidence, then recency
+- [ ] The count returned does not exceed the configured per-dimension cap
+- [ ] Each returned fact carries its database id
+
+**Last tested:** 2026-06-14
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P8-CLS-A-06 · The async work queue processes document ids through a single consumer one at a time in order (never two concurrently), and a startup catch-up scan enqueues all currently-discoverable work when the consumer starts
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Pre-seed several discoverable documents, start the consumer, and let the catch-up scan enqueue them.
+
+Observe the order and concurrency of processing.
+
+**Check:**
+- [ ] The catch-up scan enqueues all currently-discoverable documents at startup
+- [ ] The consumer processes ids sequentially — never two at the same time
+- [ ] The queue drains to empty once all enqueued ids are processed
+
+**Last tested:** 2026-06-14
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
+
+### P8-CLS-A-07 · The Slice A migration adds the classify-fingerprint column to documents, the trust-score and retrieval-count columns to knowledge entries with their default values, and the two supporting indexes, without disturbing existing rows
+_Origin: design · Granularity: outcome_
+
+**Run:**
+Apply migrations to a database that already holds documents and knowledge entries.
+
+Inspect the new columns, their defaults, and the new indexes.
+
+**Check:**
+- [ ] documents has a nullable classify_content_hash column
+- [ ] knowledge_entries has trust_score defaulting to 0.5 and retrieval_count defaulting to 0
+- [ ] The trust-score index and the classify-hash index both exist
+- [ ] Existing rows are preserved and readable after the migration
+
+**Last tested:** 2026-06-14
+**Last result:** none
+**Current result:** ___
+
+⚠ AI-authored — not yet human-verified.
+
+---
