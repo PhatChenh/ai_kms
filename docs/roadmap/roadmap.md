@@ -902,6 +902,8 @@ After this phase: user-facing AI (Claude Desktop, web, mobile) connects to the M
 ### Pre-existing fixes to pick up
 
 - **C1 (from Phase 7.5 nuclear review, 2026-06-14):** `api.py:62` re-reads `KMS_DAEMON_API_KEY` from `os.environ` on every request. Read once at app startup instead. LOW severity — correct behavior, just wasteful.
+- **C2 (from Phase 7.5 nuclear review, 2026-06-14):** `capture.py:342` calls sync `blob_store.put()` from the Starlette upload handler (async context). `S3BlobStore` has `async_put` available (`blobs.py:316`) but unused. Blocks the event loop during S3 upload. MEDIUM severity — must fix before production deployment.
+- **C3 (from Phase 7.5 nuclear review, 2026-06-14):** `api.py:330` defines `_delete_with_blob_cleanup` as sync (DB + blob I/O). Called from async event handler. Same category as C2 — wrap in `asyncio.to_thread()` or make fully async. MEDIUM severity.
 
 ### Components
 
