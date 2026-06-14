@@ -541,7 +541,7 @@ cache_path: {cache_path}
             patch.object(daemon.cli, "_log") as mock_log,
             # We need to inspect the real cache, so don't mock LocalCache
             # But we can mock cache.set_after_ack to verify it was called
-            patch.object(daemon.cli.LocalCache, "set_after_ack") as mock_set,
+            patch.object(daemon.cli.LocalCache, "touch") as mock_touch,
         ):
             captured["on_create"]("notes.txt")
 
@@ -551,9 +551,9 @@ cache_path: {cache_path}
         mock_log.debug.assert_any_call(
             "skipped (stat changed, content same)", vault_path="notes.txt"
         )
-        # cache.set_after_ack must have been called with updated stat
-        mock_set.assert_called_once_with(
-            "notes.txt", content_hash, real_st.st_size, real_st.st_mtime
+        # cache.touch must have been called with updated stat (hash preserved)
+        mock_touch.assert_called_once_with(
+            "notes.txt", real_st.st_size, real_st.st_mtime
         )
 
     def test_successful_upload_updates_cache(self, tmp_path: Path, monkeypatch):

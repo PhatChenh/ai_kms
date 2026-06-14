@@ -297,7 +297,7 @@ def start(config_path: str) -> None:
                                 if content_hash == cached["hash"]:
                                     # Content same, just update stat in cache
                                     if cache is not None:
-                                        cache.set_after_ack(vp, content_hash, st.st_size, st.st_mtime)
+                                        cache.touch(vp, st.st_size, st.st_mtime)
                                     _log.debug("skipped (stat changed, content same)", vault_path=vp)
                                     return
 

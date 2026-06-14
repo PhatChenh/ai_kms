@@ -11,7 +11,8 @@ Public API:
         load(path)           read JSON, discard on any error
         save(path)           temp file + atomic rename
         get(vp)              return cached entry or None
-        set_after_ack(...)   write entry (post-cloud-ack only)
+        set_after_ack(...)   write entry (only call after cloud confirms)
+        touch(vp, size, mt)  update size/mtime for an existing entry
         forget(vp)           remove entry
         snapshot()           frozen copy for 3-way compare
         rebuild(entries)     replace entire map (post-reconcile)
@@ -180,6 +181,22 @@ class LocalCache:
         with self._lock:
             entry = self._entries.get(vault_path)
             return dict(entry) if entry is not None else None
+
+    # ── touch ───────────────────────────────────────────────────────────────
+
+    def touch(self, vault_path: str, size: int, mtime: float) -> None:
+        """Update the *size* and *mtime* metadata for an existing entry.
+
+        Unlike :meth:`set_after_ack`, this does NOT touch the content hash —
+        it is intended for the bail-early path where the content is confirmed
+        unchanged (hash matched) but the stat metadata is stale.  Does nothing
+        if the entry does not exist.
+        """
+        with self._lock:
+            entry = self._entries.get(vault_path)
+            if entry is not None:
+                entry["size"] = size
+                entry["mtime"] = float(mtime)
 
     # ── set_after_ack ───────────────────────────────────────────────────────
 
