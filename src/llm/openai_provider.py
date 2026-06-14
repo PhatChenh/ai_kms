@@ -5,6 +5,7 @@ Async LLMProvider for any OpenAI-compatible endpoint (Fireworks, Together, etc.)
 API key is read from the env var named by config.api_key_env at __init__ time.
 """
 
+import base64
 import os
 
 import openai
@@ -24,7 +25,7 @@ class OpenAIProvider(LLMProvider):
 
         Args:
             config: OpenAICompatConfig from core.config.
-            task:   Pipeline task — used to select model (default vs synthesis).
+            task:   Pipeline task — used to select model (default vs synthesis vs vision).
 
         Raises:
             ConfigError: if the env var named by config.api_key_env is unset or empty.
@@ -39,9 +40,15 @@ class OpenAIProvider(LLMProvider):
             base_url=config.base_url,
             timeout=config.timeout,
         )
-        self._model = config.synthesis_model if task in SYNTHESIS_TASKS else config.model
+        if task == "vision":
+            self._model = config.vision_model
+        elif task in SYNTHESIS_TASKS:
+            self._model = config.synthesis_model
+        else:
+            self._model = config.model
         self._max_tokens = config.max_tokens
         self._embedding_model = config.embedding_model
+        self._vision_model = config.vision_model
 
     async def complete(self, system: str, user: str) -> Result[LLMResponse]:
         """
@@ -80,6 +87,64 @@ class OpenAIProvider(LLMProvider):
             )
         except Exception as exc:
             # httpx / asyncio errors not wrapped by the openai SDK
+            return Failure(
+                error=str(exc),
+                recoverable=True,
+                context={"provider": "openai_compat", "model": self._model},
+            )
+
+    async def describe_image(self, system: str, user: str, image_bytes: bytes, mime_type: str) -> Result[LLMResponse]:
+        """Describe an image using a vision-capable model.
+
+        Base64-encodes the image bytes and sends an image_url content block
+        alongside the user text. Requires vision_model to be configured.
+
+        Args:
+            system:      Behavioural instructions.
+            user:        User prompt text describing what to look for.
+            image_bytes: Raw image bytes (PNG, JPEG, etc.).
+            mime_type:   MIME type string, e.g. "image/png".
+
+        Returns:
+            Success(LLMResponse) on a valid description,
+            Failure if vision_model is empty or on any API/network error.
+        """
+        if not self._vision_model:
+            return Failure(
+                "no vision_model configured for OpenAI compat provider",
+                recoverable=False,
+                context={},
+            )
+        b64 = base64.b64encode(image_bytes).decode("ascii")
+        image_block = {
+            "type": "image_url",
+            "image_url": {"url": f"data:{mime_type};base64,{b64}"},
+        }
+        text_block = {"type": "text", "text": user}
+        try:
+            resp = await self._client.chat.completions.create(
+                model=self._model,
+                max_tokens=self._max_tokens,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": [image_block, text_block]},
+                ],
+            )
+            usage = resp.usage.model_dump() if resp.usage else {}
+            return Success(
+                LLMResponse(
+                    content=resp.choices[0].message.content or "",
+                    model=resp.model,
+                    usage=usage,
+                )
+            )
+        except openai.APIError as exc:
+            return Failure(
+                error=str(exc),
+                recoverable=True,
+                context={"provider": "openai_compat", "model": self._model},
+            )
+        except Exception as exc:
             return Failure(
                 error=str(exc),
                 recoverable=True,

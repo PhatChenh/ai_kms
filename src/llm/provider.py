@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from core.config import MainConfig, Provider, Task
-from core.result import Result
+from core.result import Failure, Result
 
 # Tasks that route to the synthesis (smarter) model on every provider.
 # Defined here so all providers share one source of truth.
@@ -49,6 +49,10 @@ class LLMProvider(ABC):
             Success(LLMResponse) on a valid response,
             Failure on any API or network error.
         """
+
+    async def describe_image(self, system: str, user: str, image_bytes: bytes, mime_type: str) -> Result[LLMResponse]:
+        """Describe an image. Default: returns Failure — override for vision-capable providers."""
+        return Failure("vision not supported by this provider", recoverable=False, context={})
 
 
 def get_provider(task: Task, config: MainConfig) -> LLMProvider:
