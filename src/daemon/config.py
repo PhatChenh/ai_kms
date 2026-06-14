@@ -20,7 +20,7 @@ import os
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class DaemonConfig(BaseModel):
@@ -60,6 +60,12 @@ class DaemonConfig(BaseModel):
     scan_batch_size: int = Field(default=50, ge=1)
     max_file_size_bytes: int = Field(default=50_000_000, ge=0)  # 50 MB
 
+    # ── Phase 2 (cache & reconcile) ─────────────────────────────────────
+    cache_path: str = Field(default="~/.kms-daemon/cache.json", validate_default=True)
+    move_window_seconds: float = Field(default=2.0)
+    periodic_interval_seconds: int = Field(default=21600, ge=0)
+    sweep_delete_confirmations: int = Field(default=2, ge=1)
+
     # ── validators ──────────────────────────────────────────────────────
 
     @field_validator("vault_root")
@@ -83,6 +89,22 @@ class DaemonConfig(BaseModel):
         if not stripped:
             raise ValueError("cloud_endpoint must be a non-empty string")
         return stripped
+
+    @field_validator("cache_path")
+    @classmethod
+    def _expand_cache_path_tilde(cls, v: str) -> str:
+        """Expand ~ to the user's home directory."""
+        return str(Path(v).expanduser())
+
+    @model_validator(mode="after")
+    def _move_window_gt_debounce(self) -> "DaemonConfig":
+        """Ensure move_window_seconds > debounce_seconds."""
+        if self.move_window_seconds <= self.debounce_seconds:
+            raise ValueError(
+                f"move_window_seconds must be greater than debounce_seconds "
+                f"(currently {self.debounce_seconds})"
+            )
+        return self
 
 
 def load_daemon_config(path: Path | None = None) -> DaemonConfig:
