@@ -1,7 +1,7 @@
 # Constraints
 
 <!-- One line per group — keep in sync with ## Constraint Index in CLAUDE.md -->
-<!-- Groups: Write Safety, DB Integrity, LLM & Providers, Async & CLI, Architecture, Testing -->
+<!-- Groups: Write Safety, DB Integrity, LLM & Providers, Async & CLI, Architecture, Testing, Daemon Sync -->
 
 ## Write Safety
 
@@ -182,3 +182,15 @@
 **Why:** `CONFIG` validates vault root at import time; module-level import fails at pytest collection on machines without the vault, breaking CI.
 **Danger signal:** Any `from core.config import CONFIG` or `import core.config` at the top of a test file outside an `if TYPE_CHECKING` block; any test fixture that depends on CONFIG being importable without a real vault on disk.
 **Source:** DECISION-012; DEBTS_CONSTRAINTS.md Cross-Phase Constraints §11
+
+---
+
+## Daemon Sync
+
+### C-18 · Daemon cache is advisory; cloud is authority
+**Severity:** CRITICAL
+**Domain:** Daemon Sync
+**Rule:** The local daemon's cache (the `vault_path → raw-file-hash` manifest) is an advisory speed-layer ONLY; the cloud DB is the single source of truth. On any cache↔cloud disagreement, cloud wins. Cache loss or corruption MUST be non-fatal — the daemon degrades to a full reconcile against the cloud (the stateless behavior), never to data loss. The cache is disposable: on ANY doubt about its integrity, discard the whole cache and rebuild from cloud — never repair or partially trust it. **Cache-on-ack corollary:** a file's hash is written to the cache only AFTER the cloud returns 200/ok from `/api/upload` or `/api/event`; a failed/timed-out call leaves the file uncached so the next reconcile re-detects it.
+**Why:** The cloud genuinely rolls back from Litestream backups, and future multi-device use means the cache can legitimately disagree with the cloud. Treating the cache as authoritative reintroduces silent drift against the source of truth and breaks the rearchitecture's single-source-of-truth guarantee. Making cache loss fatal would turn a disposable speed-layer into a data-loss surface.
+**Danger signal:** Daemon code that treats the local cache as authoritative; that repairs or partially trusts a damaged/garbled cache instead of discarding it; that loses data (rather than degrading to a full reconcile) when the cache is missing; or that writes a hash to the cache before the cloud acks.
+**Source:** ADR-0013; Phase 6 Slice A2 grill (2026-06-14). Related: `docs/0_draft/phase6/phase6_A2_grill.md` D2; `docs/1_design/phase6/P6_slice_A2_cache_reconcile.md`.

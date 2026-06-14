@@ -451,3 +451,4 @@ The following were moved out of active guidance because hooks in `.claude/settin
 - [Async & CLI](CONSTRAINTS.md#async--cli) (2 rules) — asyncio.run pattern, load_dotenv placement
 - [Architecture](CONSTRAINTS.md#architecture) (5 rules) — Result returns, audit log, MCP logic-free, MCP pre-req, scheduler order
 - [Testing](CONSTRAINTS.md#testing) (1 rule) — CONFIG import scope
+- [Daemon Sync](CONSTRAINTS.md#daemon-sync) (1 rule) — cache advisory / cloud authority / cache-loss non-fatal / cache-on-ack
