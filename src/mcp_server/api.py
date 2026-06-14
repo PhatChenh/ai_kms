@@ -25,7 +25,6 @@ from storage.documents import (
     delete_by_path,
     get_by_path,
     rename,
-    upsert_from_upload,
 )
 
 _log = logging.getLogger(__name__)
@@ -148,13 +147,20 @@ async def upload_handler(request: Request) -> JSONResponse:
                     status_code=400,
                 )
 
-        # file bytes and mime_type are accepted but discarded in A1
-        # (blob storage arrives in Phase 7)
+        raw_bytes: bytes | None = None
+        mime_type_str: str | None = None
+        file_upload = form.get("file")
+        if file_upload is not None:
+            raw_bytes = await file_upload.read()
+            mime_type_str = form.get("mime_type") or file_upload.content_type or None
 
-        result = upsert_from_upload(
+        result = await capture_upload(
             vault_path=vault_path,
             extracted_text=None,
             content_hash=content_hash,
+            raw_bytes=raw_bytes,
+            mime_type=mime_type_str,
+            blob_store=_blob_store,
             original_filename=original_filename,
             file_size_bytes=file_size_bytes,
             db_path=_db_path,
