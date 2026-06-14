@@ -339,16 +339,19 @@ src/daemon/app.py   (NEW)
 - `tests/test_daemon/test_cli.py` (existing, if present) — add the stop-event-exits-loop test.
 
 **Test criteria**:
-- [ ] `uv run pytest tests/test_daemon/test_app.py` green.
-- [ ] Fresh machine path invokes the wizard and registers at login once on success.
-- [ ] Already-set-up path skips the wizard and starts the engine.
-- [ ] Quit sets the stop event and the watch loop exits via `watcher.stop()/join()` — no `KeyboardInterrupt`.
-- [ ] A half-written config routes to a tray-error state, not an uncaught crash.
+- [x] `uv run pytest tests/test_daemon/test_app.py` green.  (9 tests)
+- [x] Fresh machine path invokes the wizard and registers at login once on success.
+- [x] Already-set-up path skips the wizard and starts the engine.
+- [x] Quit sets the stop event and the watch loop exits via `watcher.stop()/join()` — no `KeyboardInterrupt`.
+- [x] A half-written config routes to a tray-error state, not an uncaught crash.
 - [ ] (Manual) the engine runs through the existing `asyncio.run` path on a worker thread; tray on main; key via env var; no `config.py` edit.
 
 **Notes / coupling**: `# COUPLING:` the env-injection-before-loader ordering is load-bearing — `load_daemon_config` raises `ValueError` if `KMS_DAEMON_API_KEY` is absent (`config.py:126-130`). `load_key_into_env()` MUST run before any `load_daemon_config()` call. C-18: the tray reads engine alive/error via an injected `state_provider`; it must NOT call into the sync path.
 
-**Status**: [ ] pending
+**Status**: [x] done
+
+**Completed**: 2026-06-16
+**Notes**: Implemented `_run_with_stop(cfg, config_path, stop_event=None)` in cli.py — extracted the inner `_run` function from `start` command into a standalone async function. The `start` command now simply calls `asyncio.run(_run_with_stop(cfg, Path(config_path)))`. The stop_event check (`if stop_event is not None and stop_event.is_set(): break`) is the only additive change to the loop. Implemented `run_app()` in app.py with the full setup-vs-run decision, wizard invocation, register-at-login, env injection, config validation, worker-thread engine start, and tray display. catch block handles `ValueError`/`yaml.YAMLError`/`pydantic.ValidationError` from `load_daemon_config` and routes to tray-error via `_show_error_tray()`. 11 new tests (9 app, 2 cli stop-event). Full daemon suite: 303 tests pass, 0 regressions. Removed unused `BinaryContent` import from cli.py (was already unused before this change). Lint clean.
 
 ---
 
