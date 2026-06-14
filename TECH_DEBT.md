@@ -566,6 +566,28 @@ Note: `MetadataResult.ai_domain` is **kept** as internal pipeline state — `app
 
 ---
 
+### TD-063 · Catch-up scan enqueues all doc ids in one burst
+**Status:** OPEN
+**Phase:** During/after Phase 8 Slice A implementation (revisit if vault grows large)
+**Risk if triggered early:** None for the target single-user personal vault (hundreds of docs). Only matters at scale — a vault with thousands of unclassified docs floods the in-memory `asyncio.Queue` at container startup in one burst, spiking memory and starving the event loop before the sequential consumer drains it.
+**What:** Phase 8 Slice A's startup catch-up scan runs the work-discovery query and `put`s every discoverable doc id onto the queue at once (one burst), rather than paging/batching the enqueue. Chosen deliberately for simplicity (OQ-P8A-03 resolved: one burst for Slice A).
+**Why deferred:** One-burst is the simplest correct design and fine for the target deployment. Paging adds code for a case that may never occur in single-user use. Recorded so a future maintainer knows where to add back-pressure if a large backlog becomes real.
+**Unblock condition:** Page/batch the catch-up scan's `put`s (bounded queue + producer that awaits capacity, or chunked enqueue) if measured startup backlog causes memory/latency problems.
+**Source:** OQ-P8A-03; Phase 8 Slice A plan `docs/4_plans/phase8_sliceA_classify_infra.md`; design Risks "Sequential-consumer back-pressure".
+
+---
+
+### TD-064 · Dynamic per-dimension fact summary may strain token budget as facts accumulate
+**Status:** OPEN
+**Phase:** Phase 9/10 (revisit when context-injection token cost is measurable)
+**Risk if triggered early:** None now — the ranker caps each dimension at `max_entries_per_dimension`. Over time, as facts accumulate across many dimensions, the live (per-run) assembly of dimension summaries may strain the housekeeping AI's token budget and raise classify cost.
+**What:** Phase 8's Context Loader assembles a per-dimension summary of existing facts live on every classify run (ranked + capped). It is recomputed each run rather than pre-computed/cached. Tied to the deferred OQ-P8A-04 (periodic synthesis "fact sheet" for the retrieval path).
+**Why deferred:** Dynamic assembly is always-current, needs no extra LLM cost, and preserves per-fact granularity (source/trust/status + entry `id` for update/retire). Pre-computing is premature before token cost is measured and before any retrieval consumer (Phase 9) exists. The structured `knowledge_entries` remain source of truth regardless — any summary is a derived cache.
+**Unblock condition:** If measured token cost bites, optimize from dynamic assembly to pre-computed per-dimension summaries (periodic synthesis session). See OQ-P8A-04.
+**Source:** grill tech-debt + Phase 8 Slice A design; OQ-P8A-04 (`OPEN_QUESTIONS.md`).
+
+---
+
 ## Archive
 
 ### TD-001 · core/pipeline.py

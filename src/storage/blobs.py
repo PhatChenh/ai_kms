@@ -11,10 +11,13 @@ Callers depend on the BlobStore interface, never on a concrete adapter.
 from __future__ import annotations
 
 import asyncio
+import re
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 from core.result import Failure, Result, Success
+
+_HEX_KEY_RE = re.compile(r"^[a-f0-9]{32,}$")
 
 
 # ---------------------------------------------------------------------------
@@ -211,9 +214,7 @@ class S3BlobStore(BlobStore):
         The daemon *should* always send valid SHA-256 hex digests; this is
         defense-in-depth.
         """
-        import re
-
-        if not re.match(r"^[a-f0-9]{32,}$", key):
+        if not _HEX_KEY_RE.match(key):
             return Failure(
                 error="invalid blob key",
                 recoverable=False,

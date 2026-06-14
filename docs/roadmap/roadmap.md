@@ -894,6 +894,10 @@ Adapt the Phase 4 MCP server to the cloud-native architecture. Remove `kms_move`
 
 After this phase: user-facing AI (Claude Desktop, web, mobile) connects to the MCP server on AgentBase. `kms_search` finds documents, `kms_vault_info` shows knowledge entries summary, `kms_read` reads from DB, `kms_inspect` shows three tiers. All work 24/7 — no laptop needed for read/search operations.
 
+### Pre-existing fixes to pick up
+
+- **C1 (from Phase 7.5 nuclear review, 2026-06-14):** `api.py:62` re-reads `KMS_DAEMON_API_KEY` from `os.environ` on every request. Read once at app startup instead. LOW severity — correct behavior, just wasteful.
+
 ### Components
 
 ---

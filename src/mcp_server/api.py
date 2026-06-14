@@ -7,6 +7,7 @@ scoped to /api/* only.
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 from pathlib import Path
@@ -61,9 +62,25 @@ def require_key(request: Request) -> str | None:
     expected = os.environ.get("KMS_DAEMON_API_KEY")
     if expected is None:
         return None
-    if token != expected:
+    if not hmac.compare_digest(token, expected):
         return None
     return token
+
+
+def _sanitize_vault_path(vp: str) -> str | None:
+    """Reject vault_path values that could cause path-traversal or DB pollution.
+
+    Returns the cleaned path, or None if invalid.
+    """
+    if not vp or not isinstance(vp, str):
+        return None
+    if "\x00" in vp:
+        return None
+    if vp.startswith("/"):
+        return None
+    if ".." in vp.split("/"):
+        return None
+    return vp
 
 
 # ============================================================================
@@ -121,22 +138,38 @@ async def upload_handler(request: Request) -> JSONResponse:
                 status_code=400,
             )
 
-        vault_path: str | None = form.get("vault_path")
+        # Extract all fields and close the form before validation/early-returns
+        try:
+            vault_path_raw: str | None = form.get("vault_path")
+            content_hash_raw: str | None = form.get("content_hash")
+            original_filename: str | None = form.get("original_filename") or None
+            file_size_bytes_raw: str | None = form.get("file_size_bytes")
+
+            raw_bytes: bytes | None = None
+            mime_type_str: str | None = None
+            file_upload = form.get("file")
+            if file_upload is not None:
+                raw_bytes = await file_upload.read()
+                mime_type_str = (
+                    form.get("mime_type") or file_upload.content_type or None
+                )
+        finally:
+            await form.close()
+
+        vault_path: str | None = _sanitize_vault_path(vault_path_raw or "")
         if not vault_path:
             return JSONResponse(
-                {"status": "error", "detail": "vault_path is required"},
+                {"status": "error", "detail": "vault_path is required or invalid"},
                 status_code=400,
             )
 
-        content_hash: str | None = form.get("content_hash")
+        content_hash: str | None = content_hash_raw
         if not content_hash:
             return JSONResponse(
                 {"status": "error", "detail": "content_hash is required"},
                 status_code=400,
             )
 
-        original_filename: str | None = form.get("original_filename") or None
-        file_size_bytes_raw: str | None = form.get("file_size_bytes")
         file_size_bytes: int | None = None
         if file_size_bytes_raw:
             try:
@@ -148,21 +181,20 @@ async def upload_handler(request: Request) -> JSONResponse:
                 )
             if file_size_bytes < 0:
                 return JSONResponse(
-                    {"status": "error", "detail": "file_size_bytes must be non-negative"},
+                    {
+                        "status": "error",
+                        "detail": "file_size_bytes must be non-negative",
+                    },
                     status_code=400,
                 )
-
-        raw_bytes: bytes | None = None
-        mime_type_str: str | None = None
-        file_upload = form.get("file")
-        if file_upload is not None:
-            raw_bytes = await file_upload.read()
-            mime_type_str = form.get("mime_type") or file_upload.content_type or None
 
         # No file field in multipart upload is a client error (400), not server
         if raw_bytes is None:
             return JSONResponse(
-                {"status": "error", "detail": "file field is required for multipart uploads"},
+                {
+                    "status": "error",
+                    "detail": "file field is required for multipart uploads",
+                },
                 status_code=400,
             )
 
@@ -203,10 +235,10 @@ async def upload_handler(request: Request) -> JSONResponse:
                 status_code=400,
             )
 
-        vault_path = body.get("vault_path")
+        vault_path = _sanitize_vault_path(body.get("vault_path") or "")
         if not vault_path:
             return JSONResponse(
-                {"status": "error", "detail": "vault_path is required"},
+                {"status": "error", "detail": "vault_path is required or invalid"},
                 status_code=400,
             )
 
@@ -426,22 +458,25 @@ async def event_handler(request: Request) -> JSONResponse:
         )
 
     if event_type == "moved":
-        old_path: str | None = body.get("old_path")
-        new_path: str | None = body.get("new_path")
+        old_path: str | None = _sanitize_vault_path(body.get("old_path") or "")
+        new_path: str | None = _sanitize_vault_path(body.get("new_path") or "")
         if not old_path or not new_path:
             return JSONResponse(
                 {
                     "status": "error",
-                    "detail": "old_path and new_path are required for moved",
+                    "detail": "old_path and new_path are required (and must be valid) for moved",
                 },
                 status_code=400,
             )
         result = rename(old=old_path, new=new_path, db_path=_db_path)
     else:
-        path: str | None = body.get("path")
+        path: str | None = _sanitize_vault_path(body.get("path") or "")
         if not path:
             return JSONResponse(
-                {"status": "error", "detail": "path is required for deleted"},
+                {
+                    "status": "error",
+                    "detail": "path is required (and must be valid) for deleted",
+                },
                 status_code=400,
             )
         result = _delete_with_blob_cleanup(

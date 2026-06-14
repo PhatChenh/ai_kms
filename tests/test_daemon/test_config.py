@@ -71,9 +71,7 @@ class TestVaultRootValidator:
                 api_key="sk-test",
             )
         errors = exc_info.value.errors()
-        assert any(
-            "not a directory" in e["msg"].lower() for e in errors
-        )
+        assert any("not a directory" in e["msg"].lower() for e in errors)
 
     def test_existing_directory_validates(self, tmp_path: Path):
         """A real directory passes validation."""
@@ -134,6 +132,44 @@ class TestCloudEndpointValidator:
         )
         assert cfg.cloud_endpoint == "http://192.168.1.1:8080"
 
+    def test_trailing_slash_is_stripped(self, tmp_path: Path):
+        """A trailing slash is stripped so callers appending /api/... do not
+        produce //api/... (which routes to 404)."""
+        cfg = DaemonConfig(
+            vault_root=tmp_path,
+            cloud_endpoint="http://localhost:8080/",
+            api_key="sk-test",
+        )
+        assert cfg.cloud_endpoint == "http://localhost:8080"
+
+    def test_multiple_trailing_slashes_stripped(self, tmp_path: Path):
+        cfg = DaemonConfig(
+            vault_root=tmp_path,
+            cloud_endpoint="http://localhost:8080///",
+            api_key="sk-test",
+        )
+        assert cfg.cloud_endpoint == "http://localhost:8080"
+
+    def test_path_prefix_preserved_only_trailing_slash_stripped(self, tmp_path: Path):
+        """A base-path prefix survives; only the trailing slash is removed."""
+        cfg = DaemonConfig(
+            vault_root=tmp_path,
+            cloud_endpoint="https://host/base/",
+            api_key="sk-test",
+        )
+        assert cfg.cloud_endpoint == "https://host/base"
+
+    def test_slash_only_endpoint_rejected(self, tmp_path: Path):
+        """A slash-only endpoint reduces to empty and is rejected."""
+        with pytest.raises(ValidationError) as exc_info:
+            DaemonConfig(
+                vault_root=tmp_path,
+                cloud_endpoint="/",
+                api_key="sk-test",
+            )
+        errors = exc_info.value.errors()
+        assert any("cloud_endpoint" in str(e["loc"]) for e in errors)
+
 
 # ===========================================================================
 # Section 2 — Default values
@@ -182,9 +218,7 @@ class TestDefaults:
         assert len(patterns) == 10
 
     def test_cache_path_default(self, minimal_cfg: DaemonConfig):
-        assert minimal_cfg.cache_path == str(
-            Path.home() / ".kms-daemon" / "cache.json"
-        )
+        assert minimal_cfg.cache_path == str(Path.home() / ".kms-daemon" / "cache.json")
 
     def test_move_window_seconds_default(self, minimal_cfg: DaemonConfig):
         assert minimal_cfg.move_window_seconds == 2.0
@@ -271,9 +305,7 @@ class TestLoadDaemonConfig:
 
         cfg = load_daemon_config(yaml_path)
 
-        assert cfg.api_key == "sk-from-env", (
-            "API key must come from env, not YAML"
-        )
+        assert cfg.api_key == "sk-from-env", "API key must come from env, not YAML"
 
     def test_raises_when_env_var_not_set(self, tmp_path: Path, monkeypatch):
         """Without KMS_DAEMON_API_KEY, load_daemon_config must raise."""
@@ -394,18 +426,13 @@ class TestLoadDaemonConfig:
         """Omitting Phase 2 fields from YAML uses documented defaults."""
         yaml_path = _tmp_yaml(
             tmp_path,
-            (
-                f"vault_root: {tmp_path}\n"
-                "cloud_endpoint: http://localhost:8080\n"
-            ),
+            (f"vault_root: {tmp_path}\ncloud_endpoint: http://localhost:8080\n"),
         )
         _set_env(monkeypatch, "KMS_DAEMON_API_KEY", "sk-test")
 
         cfg = load_daemon_config(yaml_path)
 
-        assert cfg.cache_path == str(
-            Path.home() / ".kms-daemon" / "cache.json"
-        )
+        assert cfg.cache_path == str(Path.home() / ".kms-daemon" / "cache.json")
         assert cfg.move_window_seconds == 2.0
         assert cfg.periodic_interval_seconds == 21600
         assert cfg.sweep_delete_confirmations == 2
@@ -490,8 +517,7 @@ class TestMoveWindowValidator:
             )
         errors = exc_info.value.errors()
         assert any(
-            "move_window_seconds must be greater than debounce_seconds"
-            in e["msg"]
+            "move_window_seconds must be greater than debounce_seconds" in e["msg"]
             for e in errors
         )
 
@@ -506,8 +532,7 @@ class TestMoveWindowValidator:
             )
         errors = exc_info.value.errors()
         assert any(
-            "move_window_seconds must be greater than debounce_seconds"
-            in e["msg"]
+            "move_window_seconds must be greater than debounce_seconds" in e["msg"]
             for e in errors
         )
 
@@ -533,10 +558,7 @@ class TestSweepDeleteConfirmationsValidator:
                 sweep_delete_confirmations=0,
             )
         errors = exc_info.value.errors()
-        assert any(
-            "sweep_delete_confirmations" in str(e["loc"])
-            for e in errors
-        )
+        assert any("sweep_delete_confirmations" in str(e["loc"]) for e in errors)
 
     def test_negative_raises(self, tmp_path: Path):
         with pytest.raises(ValidationError) as exc_info:
@@ -547,10 +569,7 @@ class TestSweepDeleteConfirmationsValidator:
                 sweep_delete_confirmations=-1,
             )
         errors = exc_info.value.errors()
-        assert any(
-            "sweep_delete_confirmations" in str(e["loc"])
-            for e in errors
-        )
+        assert any("sweep_delete_confirmations" in str(e["loc"]) for e in errors)
 
     def test_one_passes(self, tmp_path: Path):
         cfg = DaemonConfig(
@@ -574,10 +593,7 @@ class TestPeriodicIntervalSecondsValidator:
                 periodic_interval_seconds=-1,
             )
         errors = exc_info.value.errors()
-        assert any(
-            "periodic_interval_seconds" in str(e["loc"])
-            for e in errors
-        )
+        assert any("periodic_interval_seconds" in str(e["loc"]) for e in errors)
 
     def test_zero_passes_disables_periodic(self, tmp_path: Path):
         """periodic_interval_seconds = 0 disables periodic reconcile."""

@@ -83,12 +83,18 @@ class DaemonConfig(BaseModel):
 
     @field_validator("cloud_endpoint")
     @classmethod
-    def _cloud_endpoint_not_empty(cls, v: str) -> str:
-        """Reject empty or whitespace-only strings."""
-        stripped = v.strip()
-        if not stripped:
+    def _normalize_cloud_endpoint(cls, v: str) -> str:
+        """Strip surrounding whitespace and trailing slashes; reject empties.
+
+        Trailing slashes are removed so callers can append ``/api/...`` paths
+        without producing ``//api/...`` — which routes to 404 (silent failure).
+        rstrip runs before the empty check so a slash-only value (e.g. "/")
+        is rejected, not silently reduced to an empty string.
+        """
+        normalized = v.strip().rstrip("/")
+        if not normalized:
             raise ValueError("cloud_endpoint must be a non-empty string")
-        return stripped
+        return normalized
 
     @field_validator("cache_path")
     @classmethod

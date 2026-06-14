@@ -96,17 +96,21 @@ async def scan(
     # ── A1 backward-compat path (cache=None) ──────────────────────────────
     if cache is None:
         disk_state, unreadable = _build_disk_state(config)
-        return await _scan_2way(
-            config, client, cloud_state, disk_state, unreadable
-        )
+        return await _scan_2way(config, client, cloud_state, disk_state, unreadable)
 
     # ── 3-way path (cache is provided) ────────────────────────────────────
     # Single vault walk: _build_disk_entries produces entries for cache +
     # disk_state + unreadable for scan logic.
     disk_entries, disk_state, unreadable = _build_disk_entries(config)
     return await _scan_3way(
-        config, client, cloud_state, disk_state, unreadable,
-        cache, candidate_deletes, sweep_delete_confirmations,
+        config,
+        client,
+        cloud_state,
+        disk_state,
+        unreadable,
+        cache,
+        candidate_deletes,
+        sweep_delete_confirmations,
         disk_entries,
     )
 
@@ -137,9 +141,7 @@ async def _scan_2way(
     # Files only on disk → "uploaded"
     for vp in disk_only:
         tasks.append(
-            asyncio.create_task(
-                _upload_one(sem, config, client, vp, _OUTCOME_UPLOADED)
-            )
+            asyncio.create_task(_upload_one(sem, config, client, vp, _OUTCOME_UPLOADED))
         )
 
     # Files on both but hash differs → "re_uploaded" (or NULL cloud hash)
@@ -157,18 +159,14 @@ async def _scan_2way(
 
     # Cloud-only files → "deleted"
     for vp in cloud_only:
-        tasks.append(
-            asyncio.create_task(
-                _delete_one(sem, config, client, vp)
-            )
-        )
+        tasks.append(asyncio.create_task(_delete_one(sem, config, client, vp)))
 
     # Execute all tasks concurrently
     if tasks:
         outcomes = await asyncio.gather(*tasks, return_exceptions=True)
         for outcome in outcomes:
             if isinstance(outcome, BaseException):
-                _log.warning("scan task raised exception", exc=outcome)
+                _log.warning("scan task raised exception exc=%s", outcome)
                 continue
             if isinstance(outcome, tuple) and len(outcome) == 3:
                 tag, _vp, ok = outcome
@@ -230,9 +228,16 @@ async def _scan_3way(
         if disk_hash is not None and cache_hash is None and not cloud_present:
             tasks.append(
                 asyncio.create_task(
-                    _upload_one(sem, config, client, vp, _OUTCOME_UPLOADED,
-                                cache=cache, disk_hash=disk_hash,
-                                resolved_entries=resolved_entries)
+                    _upload_one(
+                        sem,
+                        config,
+                        client,
+                        vp,
+                        _OUTCOME_UPLOADED,
+                        cache=cache,
+                        disk_hash=disk_hash,
+                        resolved_entries=resolved_entries,
+                    )
                 )
             )
             continue
@@ -241,9 +246,16 @@ async def _scan_3way(
         if disk_hash is not None and cache_hash is not None and not cloud_present:
             tasks.append(
                 asyncio.create_task(
-                    _upload_one(sem, config, client, vp, _OUTCOME_RE_UPLOADED,
-                                cache=cache, disk_hash=disk_hash,
-                                resolved_entries=resolved_entries)
+                    _upload_one(
+                        sem,
+                        config,
+                        client,
+                        vp,
+                        _OUTCOME_RE_UPLOADED,
+                        cache=cache,
+                        disk_hash=disk_hash,
+                        resolved_entries=resolved_entries,
+                    )
                 )
             )
             continue
@@ -253,20 +265,39 @@ async def _scan_3way(
         if disk_hash is not None and cloud_present and cloud_hash is None:
             tasks.append(
                 asyncio.create_task(
-                    _upload_one(sem, config, client, vp, _OUTCOME_RE_UPLOADED,
-                                cache=cache, disk_hash=disk_hash,
-                                resolved_entries=resolved_entries)
+                    _upload_one(
+                        sem,
+                        config,
+                        client,
+                        vp,
+                        _OUTCOME_RE_UPLOADED,
+                        cache=cache,
+                        disk_hash=disk_hash,
+                        resolved_entries=resolved_entries,
+                    )
                 )
             )
             continue
 
         # Row 5: Disk ✔, Cloud ✔ differ (hash differs from disk) → Re-upload
-        if disk_hash is not None and cloud_present and cloud_hash is not None and cloud_hash != disk_hash:
+        if (
+            disk_hash is not None
+            and cloud_present
+            and cloud_hash is not None
+            and cloud_hash != disk_hash
+        ):
             tasks.append(
                 asyncio.create_task(
-                    _upload_one(sem, config, client, vp, _OUTCOME_RE_UPLOADED,
-                                cache=cache, disk_hash=disk_hash,
-                                resolved_entries=resolved_entries)
+                    _upload_one(
+                        sem,
+                        config,
+                        client,
+                        vp,
+                        _OUTCOME_RE_UPLOADED,
+                        cache=cache,
+                        disk_hash=disk_hash,
+                        resolved_entries=resolved_entries,
+                    )
                 )
             )
             continue
@@ -281,15 +312,29 @@ async def _scan_3way(
                 resolved_entries[vp] = entry
                 if cache_hash != disk_hash:
                     # Cache missing or stale → heal it
-                    cache.set_after_ack(vp, entry["hash"], entry["size"], entry["mtime"])
+                    cache.set_after_ack(
+                        vp, entry["hash"], entry["size"], entry["mtime"]
+                    )
             continue
 
         # Row 6: Disk --, Cache ✔, Cloud ✔ → Candidate delete
-        if (disk_hash is None and cache_hash is not None and cloud_present
-                and cloud_hash is not None and vp not in unreadable):
+        if (
+            disk_hash is None
+            and cache_hash is not None
+            and cloud_present
+            and cloud_hash is not None
+            and vp not in unreadable
+        ):
             _handle_candidate_delete(
-                vp, candidate_deletes, sweep_delete_confirmations,
-                sem, config, client, cache, result, tasks,
+                vp,
+                candidate_deletes,
+                sweep_delete_confirmations,
+                sem,
+                config,
+                client,
+                cache,
+                result,
+                tasks,
             )
             continue
 
@@ -299,11 +344,23 @@ async def _scan_3way(
             continue
 
         # Row 8: Disk --, Cache --, Cloud ✔ → Candidate delete (cloud-only)
-        if disk_hash is None and cache_hash is None and cloud_present and cloud_hash is not None:
+        if (
+            disk_hash is None
+            and cache_hash is None
+            and cloud_present
+            and cloud_hash is not None
+        ):
             if vp not in unreadable:
                 _handle_candidate_delete(
-                    vp, candidate_deletes, sweep_delete_confirmations,
-                    sem, config, client, cache, result, tasks,
+                    vp,
+                    candidate_deletes,
+                    sweep_delete_confirmations,
+                    sem,
+                    config,
+                    client,
+                    cache,
+                    result,
+                    tasks,
                 )
             continue
 
@@ -317,7 +374,7 @@ async def _scan_3way(
         outcomes = await asyncio.gather(*tasks, return_exceptions=True)
         for outcome in outcomes:
             if isinstance(outcome, BaseException):
-                _log.warning("scan task raised exception", exc=outcome)
+                _log.warning("scan task raised exception exc=%s", outcome)
                 continue
             if isinstance(outcome, tuple) and len(outcome) == 3:
                 tag, _vp, ok = outcome
@@ -359,8 +416,7 @@ def _handle_candidate_delete(
         # Threshold met — schedule actual deletion
         tasks.append(
             asyncio.create_task(
-                _delete_one(sem, config, client, vp,
-                            forget_cache=cache)
+                _delete_one(sem, config, client, vp, forget_cache=cache)
             )
         )
         # Remove from tracking once deletion is scheduled
@@ -371,7 +427,8 @@ def _handle_candidate_delete(
 
 
 async def _fetch_cloud_state(
-    config: DaemonConfig, client: httpx.AsyncClient,
+    config: DaemonConfig,
+    client: httpx.AsyncClient,
 ) -> dict[str, str | None]:
     """Fetch the cloud manifest and return ``{vault_path: content_hash}``.
 
@@ -450,7 +507,10 @@ def _build_disk_state(config: DaemonConfig) -> tuple[dict[str, str], set[str]]:
             try:
                 raw = filepath.read_bytes()
             except OSError:
-                _log.warning("Cannot read file during scan, will not delete cloud copy: %s", filepath)
+                _log.warning(
+                    "Cannot read file during scan, will not delete cloud copy: %s",
+                    filepath,
+                )
                 unreadable.add(vault_path)
                 continue
 
@@ -460,7 +520,9 @@ def _build_disk_state(config: DaemonConfig) -> tuple[dict[str, str], set[str]]:
     return result, unreadable
 
 
-def _build_disk_entries(config: DaemonConfig) -> tuple[dict[str, dict], dict[str, str], set[str]]:
+def _build_disk_entries(
+    config: DaemonConfig,
+) -> tuple[dict[str, dict], dict[str, str], set[str]]:
     """Walk the vault once and return ``(entries, disk_state, unreadable)``.
 
     *entries*: ``{vault_path: {"hash": ..., "size": ..., "mtime": ...}}``
@@ -500,7 +562,10 @@ def _build_disk_entries(config: DaemonConfig) -> tuple[dict[str, dict], dict[str
                 stat = filepath.stat()
                 raw = filepath.read_bytes()
             except OSError:
-                _log.warning("Cannot read file during scan, will not delete cloud copy: %s", filepath)
+                _log.warning(
+                    "Cannot read file during scan, will not delete cloud copy: %s",
+                    filepath,
+                )
                 unreadable.add(vault_path)
                 continue
 
@@ -539,7 +604,9 @@ async def _upload_one(
             case Success(value=TextContent() as tc):
                 match await upload_text(client, config, tc):
                     case Success():
-                        _cache_on_ack(vault_path, disk_path, cache, disk_hash, resolved_entries)
+                        _cache_on_ack(
+                            vault_path, disk_path, cache, disk_hash, resolved_entries
+                        )
                         return (tag, vault_path, True)
                     case Failure() as f:
                         _log.warning(
@@ -549,7 +616,9 @@ async def _upload_one(
             case Success(value=BinaryContent() as bc):
                 match await upload_binary(client, config, bc):
                     case Success():
-                        _cache_on_ack(vault_path, disk_path, cache, disk_hash, resolved_entries)
+                        _cache_on_ack(
+                            vault_path, disk_path, cache, disk_hash, resolved_entries
+                        )
                         return (tag, vault_path, True)
                     case Failure() as f:
                         _log.warning(
@@ -557,9 +626,7 @@ async def _upload_one(
                         )
                         return (tag, vault_path, False)
             case Failure() as f:
-                _log.warning(
-                    "extract failed for %s: %s", vault_path, f.error
-                )
+                _log.warning("extract failed for %s: %s", vault_path, f.error)
                 return (tag, vault_path, False)
 
 
@@ -603,7 +670,5 @@ async def _delete_one(
                     forget_cache.forget(vault_path)
                 return (_OUTCOME_DELETED, vault_path, True)
             case Failure() as f:
-                _log.warning(
-                    "report_deleted failed for %s: %s", vault_path, f.error
-                )
+                _log.warning("report_deleted failed for %s: %s", vault_path, f.error)
                 return (_OUTCOME_DELETED, vault_path, False)
