@@ -7,6 +7,9 @@ capture:
   folder_cooldown_seconds: 5.0
   binary_settle_seconds: 5.0
   folder_max_workers: 4
+  vision:
+    describable_mime_prefixes: ["image/"]
+    max_vision_bytes: 10485760  # 10 MB
 claude:
   max_tokens: 1024
   model: claude-haiku-4-5-20251001
@@ -47,6 +50,7 @@ openai_compat:
   model: accounts/fireworks/models/gpt-oss-20b
   synthesis_model: accounts/fireworks/models/llama-v3p1-70b-instruct
   embedding_model: nomic-ai/nomic-embed-text-v1.5
+  vision_model: ""
   timeout: 60
 ollama:
   base_url: http://localhost:11434
@@ -64,6 +68,7 @@ providers:
   embeddings: ollama
   self_learn: claude
   synthesis: claude
+  vision: openai
 self_learning:
   confidence_threshold: 0.8
   enabled: true

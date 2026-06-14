@@ -41,7 +41,7 @@ _CONFIG_DIR = _PROJECT_ROOT / "config"
 # ---------------------------------------------------------------------------
 type Provider = Literal["claude", "claude_cli", "ollama", "openai"]
 type Task = Literal[
-    "classify", "synthesis", "documentation", "embeddings", "self_learn", "capture"
+    "classify", "synthesis", "documentation", "embeddings", "self_learn", "capture", "vision"
 ]
 type LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 type Env = Literal["dev", "prod", "test"]
@@ -181,6 +181,7 @@ class ProvidersConfig(BaseModel):
     embeddings: Provider = "ollama"
     self_learn: Provider = "claude"
     capture: Provider = "claude"
+    vision: Provider = "openai"
 
     def for_task(self, task: Task) -> Provider:
         """
@@ -202,6 +203,7 @@ class ClaudeConfig(BaseModel):
     model: str = "claude-haiku-4-5-20251001"  # capture, classify, self_learn
     synthesis_model: str = "claude-sonnet-4-20250514"  # synthesis, documentation
     embedding_model: str = "voyage-3"  # via Voyage API (future)
+    vision_model: str = ""  # empty = not configured
     max_tokens: int = 1024
     timeout: int = 60  # seconds
 
@@ -213,6 +215,7 @@ class OllamaConfig(BaseModel):
     chat_model: str = "llama3"
     synthesis_model: str = "llama3"  # override with a larger model e.g. llama3
     embedding_model: str = "nomic-embed-text"
+    vision_model: str = ""
     max_tokens: int = 1024
     timeout: int = 120
     delay_between_calls: int = 2  # seconds between batch calls
@@ -225,6 +228,7 @@ class OpenAICompatConfig(BaseModel):
     model: str = "accounts/fireworks/models/gpt-oss-20b"
     synthesis_model: str = "accounts/fireworks/models/llama-v3p1-70b-instruct"
     embedding_model: str = "nomic-ai/nomic-embed-text-v1.5"
+    vision_model: str = ""  # empty = not configured; set to the vision model path
     max_tokens: int = 1024
     timeout: int = 60
     api_key_env: str = "FIREWORKS_API_KEY"  # name of the env var holding the key
@@ -237,6 +241,7 @@ class ClaudeCliConfig(BaseModel):
     model: str = "claude-haiku-4-5-20251001"
     synthesis_model: str = "claude-sonnet-4-20250514"
     embedding_model: str = "voyage-3"  # interface parity; not used by CLI
+    vision_model: str = ""  # empty = not configured
     max_tokens: int = 1024  # interface parity; CLI has no --max-tokens flag
     timeout: int = 60  # seconds passed to asyncio.wait_for
 
@@ -300,6 +305,13 @@ class RenameGateConfig(BaseModel):
     # TODO: migrate _GENERIC_NAMES frozenset to generic_names: list[str] here (TD-GATE-1)
 
 
+class VisionConfig(BaseModel):
+    """Which file types get described and the size cap for vision AI calls."""
+
+    describable_mime_prefixes: list[str] = Field(default_factory=lambda: ["image/"])
+    max_vision_bytes: int = Field(10 * 1024 * 1024, ge=1)  # 10 MB default
+
+
 class CaptureConfig(BaseModel):
     """Tunable parameters for the capture pipeline. Adjust in config/config.yaml."""
 
@@ -309,6 +321,7 @@ class CaptureConfig(BaseModel):
     folder_cooldown_seconds: float = Field(5.0, ge=0.0)
     binary_settle_seconds: float = Field(5.0, ge=0.0)
     folder_max_workers: int = Field(4, ge=1)
+    vision: VisionConfig = Field(default_factory=VisionConfig)
 
 
 class SearchConfig(BaseModel):
