@@ -87,7 +87,7 @@ Phase 4 (MCP Server)  ──┘                    ▼
                                     Phase 10 (Web UI + Self-Learning)
 ```
 
-**Key insight:** Phase 6 (Daemon) and Phase 7 (Capture Refactor) can run in parallel — both depend on Phase 5 only. Phase 6 Slice A1 + A2 COMPLETE; Slice B plan written. Phase 7A (Text Capture) + 7B (Visual/Binary Capture) both COMPLETE.
+**Key insight:** Phase 6 (Daemon) and Phase 7 (Capture Refactor) can run in parallel — both depend on Phase 5 only. Phase 6 Slice A1 + A2 COMPLETE; Slice B plan written. Phase 7A (Text Capture) + 7B (Visual/Binary Capture) both COMPLETE. **Phase 8 Slice A (Classify Infrastructure, no LLM) COMPLETE (2026-06-14).**
 
 ---
 
@@ -155,7 +155,12 @@ These have been stable across ~1258 tests and multiple phases. Independent tasks
 | `mcp_server/_resolve.py` | `inspect(path: Path) → Result[str]` | Binary text extractor — resolves sibling `.md` → binary via `attachment_path` frontmatter, then runs handler registry extractor. No AI, no audit. |
 | `mcp_server/_move.py` | `move(src: Path, dst_name: str, dst_kind: str, db_path=None) → Result[str]` | 7-step proven move recipe: resolve dest → read → capture old path → register guard → `move_note` → `write_note(dst, new_meta)` → `replace_path(old_vp, outcome)`. Blocks human-locked notes (C-02). |
 | `mcp_server/api.py` (P5 Slice 2) | `require_key(request)`, `upload_handler`, `event_handler`, `health_handler` | REST endpoints for daemon sync: `/api/upload` (save-or-update), `/api/event` (move/delete), `/health` (open health check). Bearer-key gate scoped to `/api/*`. |
-| `mcp_server/cloud_entry.py` (P5 Slice 2) | `build_app(db_path=None) → Starlette` | Container-mode entry point: calls `init_db()` (C2-4), builds FastMCP web app, mounts REST routes + health check, runs `uvicorn` on port 8080 under `__main__`. |
+| `mcp_server/cloud_entry.py` (P5 Slice 2) | `build_app(db_path=None) → Starlette` | Container-mode entry point: calls `init_db()` (C2-4), builds FastMCP web app, mounts REST routes + health check, runs `uvicorn` on port 8080 under `__main__`. Phase 8 Slice A adds composed outer lifespan (worker + catch-up scan). |
+| `storage/documents.py` (P8 Slice A) | `find_unclassified(*, db_path=None) → Result[list[int]]`, `stamp_classified(doc_id, *, db_path=None) → Result[int]` | Classify work discovery: returns doc ids where `classify_content_hash IS NULL OR classify_content_hash != content_hash`. Stamp copies `content_hash` → `classify_content_hash`. |
+| `storage/knowledge_entries.py` (P8 Slice A) | `query_ranked_by_dimension(dimension, *, limit, db_path=None) → Result[list[KnowledgeEntry]]` | Ranked, capped, non-retired facts per dimension ordered by `trust_score DESC, confidence DESC, updated_at DESC`. |
+| `pipelines/classify.py` (P8 Slice A) | `content_reader(doc_id, *, config, db_path=None) → Result[str]`, `context_loader(*, config, db_path=None) → Result[dict[str, list[KnowledgeEntry]]]`, `consumer(queue, db_path, config)`, `catch_up_scan(queue, db_path)` | Classify preparation helpers: pick text vs summary by token budget; load ranked facts per dimension from config. Consumer and catch-up scan drive the in-memory work queue. |
+| `core/tags.py` (P8 Slice A) | `load_dimensions(path) → Result[dict]`, `validate_dimensions(rulebook) → Result[dict]` | Loads nested `dimensions.yaml` `{dim: {tags, guidance}}` with loud reject on malformed config. |
+| `core/config.py` (P8 Slice A) | `ClassifyConfig` — `max_content_tokens` (10000), `max_entries_per_dimension` (50) | Classify tunables. |
 
 
 ## Phase 3 — Search ✅ (COMPLETE)
