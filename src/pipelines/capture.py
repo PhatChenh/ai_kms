@@ -7,7 +7,10 @@ Entry point: capture_upload(vault_path, extracted_text, content_hash, ...) -> Re
 
 from __future__ import annotations
 
+from __future__ import annotations
+
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -18,6 +21,9 @@ from llm.provider import get_provider
 import core.audit as audit
 from core.logging_setup import new_correlation_id
 import storage.documents as documents
+
+if TYPE_CHECKING:
+    from storage.blobs import BlobStore
 
 logger = structlog.get_logger(__name__)
 
@@ -122,28 +128,34 @@ async def _summarize_upload(
 
 async def capture_upload(
     vault_path: str,
-    extracted_text: str,
-    content_hash: str,
+    extracted_text: str | None = None,
+    content_hash: str = "",
     original_filename: str | None = None,
     file_size_bytes: int | None = None,
+    raw_bytes: bytes | None = None,
+    mime_type: str | None = None,
+    blob_store: BlobStore | None = None,
     db_path: Path | None = None,
 ) -> Result[int]:
-    """Run the full text-capture pipeline on an upload from the daemon.
+    """Run the capture pipeline on an upload from the daemon.
 
-    This is the **single entry point** for text capture.  It orchestrates:
+    Two branches:
 
-    1. Front-loaded dedup — peek at the existing row; skip AI if same hash
-    2. Store raw first — ``upsert_from_upload`` saves the text immediately
-    3. Summarize — ask the Housekeeping AI for a structured summary
-    4. On AI success: attach summary, index, audit CAPTURED
-    5. On AI failure: audit the failure, return Success (store-anyway)
+    * **Text branch** (7A): when *extracted_text* is present, runs the
+      existing store-first / summarise-second text pipeline unchanged.
+    * **Binary branch** (7B): when *extracted_text* is None and *raw_bytes*
+      is present, runs the binary capture beats: dedup → store blob →
+      store row → describable check → vision describe → attach summary.
 
     Args:
         vault_path:        POSIX-relative document path.
-        extracted_text:    Full extracted text content.
+        extracted_text:    Full extracted text content (None for binary).
         content_hash:      Content fingerprint (over raw bytes — ADR-0013).
         original_filename: Original upload filename (optional).
         file_size_bytes:   File size in bytes (optional).
+        raw_bytes:         Raw file bytes for binary uploads (optional).
+        mime_type:         MIME type for binary uploads (optional).
+        blob_store:        Blob store instance for binary uploads (optional).
         db_path:           Override DB path.
 
     Returns:
@@ -153,6 +165,28 @@ async def capture_upload(
     # 0. Set correlation ID FIRST — or every audit write silently drops.
     new_correlation_id()
 
+    # ── Binary branch (Phase 7B) ────────────────────────────────────────
+    if extracted_text is None and raw_bytes is not None:
+        return await _capture_binary(
+            vault_path=vault_path,
+            raw_bytes=raw_bytes,
+            content_hash=content_hash,
+            mime_type=mime_type or "application/octet-stream",
+            original_filename=original_filename,
+            file_size_bytes=file_size_bytes,
+            blob_store=blob_store,
+            db_path=db_path,
+        )
+
+    # ── Guard: neither text nor bytes ──────────────────────────────────
+    if extracted_text is None and raw_bytes is None:
+        return Failure(
+            error="neither text nor bytes supplied",
+            recoverable=False,
+            context={"vault_path": vault_path},
+        )
+
+    # ── Text branch (Phase 7A) — unchanged ─────────────────────────────
     # 1. Front-loaded dedup (P7-CAP-01): peek BEFORE the AI.
     existing = documents.get_by_path(vault_path, db_path=db_path)
     match existing:
@@ -276,3 +310,239 @@ async def capture_upload(
 
             # Still return Success — content is safe, summary fills in later
             return Success(row_id)
+
+
+# ---------------------------------------------------------------------------
+# Binary capture branch (Phase 7B)
+# ---------------------------------------------------------------------------
+
+
+async def _capture_binary(
+    vault_path: str,
+    raw_bytes: bytes,
+    content_hash: str,
+    mime_type: str,
+    original_filename: str | None,
+    file_size_bytes: int | None,
+    blob_store: BlobStore | None,
+    db_path: Path | None,
+) -> Result[int]:
+    """Run the five-beat binary capture branch.
+
+    Beat 1: Front-loaded dedup — get_by_path; same content_hash → Success.
+    Beat 2: Store blob FIRST — blob_store.put(content_hash, raw_bytes, mime_type).
+    Beat 3: Store raw row — upsert_from_upload with blob_ref/mime_type.
+    Beat 4: Describable check — mime in prefixes AND size <= max_vision_bytes?
+    Beat 5: Vision describe — AI description → attach_summary, index, audit.
+    """
+
+    # Beat 1: Front-loaded dedup
+    existing = documents.get_by_path(vault_path, db_path=db_path)
+    match existing:
+        case Success(row) if row is not None and row.content_hash == content_hash:
+            logger.info(
+                "capture.binary.dedup_skip vault_path=%s content_hash=%s",
+                vault_path,
+                content_hash,
+            )
+            return Success(row.id)
+        case Failure(error=err):
+            logger.warning("capture.binary.dedup_lookup_failed error=%s", err)
+            # Proceed — dedup is a speed optimisation, not a gate.
+
+    # Beat 2: Store blob FIRST
+    if blob_store is None:
+        return Failure(
+            error="blob_store is required for binary capture",
+            recoverable=False,
+            context={"vault_path": vault_path},
+        )
+
+    put_result = blob_store.put(content_hash, raw_bytes, mime_type)
+    match put_result:
+        case Success():
+            pass  # blob safe
+        case Failure() as blob_failure:
+            logger.error(
+                "capture.binary.blob_store_failed vault_path=%s error=%s",
+                vault_path,
+                blob_failure.error,
+            )
+            return Failure(
+                error=f"blob store failed: {blob_failure.error}",
+                recoverable=False,
+                context={"vault_path": vault_path},
+            )
+
+    # Beat 3: Store raw row — file is safe now
+    stem_title = Path(vault_path).stem
+    store_result = documents.upsert_from_upload(
+        vault_path=vault_path,
+        extracted_text=None,
+        content_hash=content_hash,
+        original_filename=original_filename,
+        file_size_bytes=file_size_bytes,
+        title=stem_title,
+        blob_ref=content_hash,
+        mime_type=mime_type,
+        db_path=db_path,
+    )
+    match store_result:
+        case Success(row_id):
+            pass
+        case Failure() as store_failure:
+            return store_failure
+
+    # Beat 4: Describable check
+    try:
+        from core.config import CONFIG  # noqa: C0415 -- lazy import
+
+        vision_cfg = CONFIG.main.capture.vision
+        describable_prefixes = vision_cfg.describable_mime_prefixes
+        max_bytes = vision_cfg.max_vision_bytes
+    except Exception:
+        # If config can't be loaded, skip describing
+        logger.warning("capture.binary.config_load_failed — skipping vision")
+        _audit_skip(vault_path, "config_load_failed", db_path)
+        return Success(row_id)
+
+    size_for_check = file_size_bytes if file_size_bytes is not None else len(raw_bytes)
+
+    # Check MIME type prefix
+    mime_ok = any(mime_type.startswith(prefix) for prefix in describable_prefixes)
+    if not mime_ok:
+        _audit_skip(vault_path, "unsupported type", db_path)
+        return Success(row_id)
+
+    # Check size cap
+    if size_for_check > max_bytes:
+        _audit_skip(vault_path, "too big", db_path)
+        return Success(row_id)
+
+    # Beat 5: Vision describe
+    try:
+        provider = get_provider("vision", CONFIG.main)
+        prompt = PROMPTS["describe_image"]
+        system, user = prompt.render(mime_type=mime_type)
+
+        desc_result = await provider.describe_image(
+            system=system,
+            user=user,
+            image_bytes=raw_bytes,
+            mime_type=mime_type,
+        )
+    except Exception as exc:
+        logger.warning(
+            "capture.binary.vision_setup_failed vault_path=%s error=%s",
+            vault_path,
+            exc,
+        )
+        _audit_failed(vault_path, f"vision setup failed: {exc}", db_path)
+        return Success(row_id)
+
+    match desc_result:
+        case Success(llm_response):
+            # Parse description + title (same pattern as text path)
+            summary, title = _parse_summary_and_title(llm_response.content)
+            if not title:
+                title = stem_title
+
+            # Attach summary
+            documents.attach_summary(
+                vault_path=vault_path,
+                summary=summary,
+                title=title,
+                db_path=db_path,
+            )
+
+            # Best-effort indexing
+            try:
+                from retrieval.keyword import index_keywords
+
+                index_keywords(
+                    vault_path=vault_path,
+                    title=title,
+                    summary=summary or "",
+                    body="",
+                    db_path=db_path,
+                )
+            except Exception:
+                logger.exception("capture.binary.index_keywords_failed")
+
+            try:
+                from retrieval.embeddings import index_embedding
+
+                index_embedding(
+                    vault_path=vault_path,
+                    title=title,
+                    note_type=None,
+                    tags=[],
+                    summary=summary or "",
+                    db_path=db_path,
+                )
+            except Exception:
+                logger.exception("capture.binary.index_embedding_failed")
+
+            # Audit: DESCRIBED
+            audit.write(
+                decision=AIDecision(
+                    action="capture:describe_image",
+                    confidence=1.0,
+                    reasoning="Binary image described successfully",
+                    source_ids=[vault_path],
+                ),
+                pipeline="capture",
+                stage="describe",
+                outcome="DESCRIBED",
+                db_path=db_path,
+            )
+
+            logger.info("capture.classify_ready", vault_path=vault_path)
+
+            return Success(row_id)
+
+        case Failure() as ai_failure:
+            logger.warning(
+                "capture.binary.vision_failed vault_path=%s error=%s",
+                vault_path,
+                ai_failure.error,
+            )
+            _audit_failed(vault_path, f"vision describe failed: {ai_failure.error}", db_path)
+            return Success(row_id)
+
+
+# ---------------------------------------------------------------------------
+# Binary branch audit helpers
+# ---------------------------------------------------------------------------
+
+
+def _audit_skip(vault_path: str, reason: str, db_path: Path | None) -> None:
+    """Write a SKIPPED audit entry for the binary branch."""
+    audit.write(
+        decision=AIDecision(
+            action="capture:describe_skip",
+            confidence=0.0,
+            reasoning=reason,
+            source_ids=[vault_path],
+        ),
+        pipeline="capture",
+        stage="describe",
+        outcome="SKIPPED",
+        db_path=db_path,
+    )
+
+
+def _audit_failed(vault_path: str, reason: str, db_path: Path | None) -> None:
+    """Write a FAILED audit entry for the binary branch."""
+    audit.write(
+        decision=AIDecision(
+            action="capture:describe_failed",
+            confidence=0.0,
+            reasoning=reason,
+            source_ids=[vault_path],
+        ),
+        pipeline="capture",
+        stage="describe",
+        outcome="FAILED",
+        db_path=db_path,
+    )

@@ -324,7 +324,10 @@ _Leaf C -- Vision prompt:_
 
 **Notes**: OQ-7G (MaaS image_url acceptance) is unverifiable from code alone. The OpenAI SDK natively supports `image_url` content blocks. If MaaS rejects them at integration time, HARD STOP and escalate. `application/pdf` is NOT in the default `describable_mime_prefixes` list (research finding: MaaS PDF support unconfirmed). C-09: the `vision_model` field is a same-shape addition; this grows the C-09 field list from 3 to 4 per provider (OQ-7E recommendation: dedicated field -- adopted here).
 
-**Status**: [ ] pending
+**Completed**: 2026-06-14
+**Notes (implementation)**: Implemented VisionConfig with describable_mime_prefixes and max_vision_bytes. Added "vision" to Task literal and ProvidersConfig.vision field. Added vision_model to all four provider configs. Added default describe_image to LLMProvider (returns Failure). Added describe_image override to OpenAIProvider with base64-encoded image_url content blocks and vision_model routing. Created src/prompts/describe_image.yaml. 13 new tests pass. Config access: CONFIG.main.capture.vision.describable_mime_prefixes and get_provider("vision", CONFIG.main) both work.
+
+**Status**: [x] done
 
 ---
 

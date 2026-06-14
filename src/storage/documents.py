@@ -109,6 +109,8 @@ def upsert_from_upload(
     original_filename: str | None = None,
     file_size_bytes: int | None = None,
     title: str | None = None,
+    blob_ref: str | None = None,
+    mime_type: str | None = None,
     db_path: Path | None = None,
 ) -> Result[int]:
     """Save-or-update one uploaded file's record, deciding by content fingerprint.
@@ -128,6 +130,8 @@ def upsert_from_upload(
         file_size_bytes:   File size in bytes (optional).
         title:             Optional override; defaults to ``Path(vault_path).stem``
                            on INSERT, keeps existing title on UPDATE unless provided.
+        blob_ref:           Optional content-addressed key for binary blobs.
+        mime_type:          Optional MIME type for binary uploads.
         db_path:           Override DB path.
 
     Returns:
@@ -148,8 +152,9 @@ def upsert_from_upload(
                     """
                     INSERT INTO documents
                         (vault_path, title, full_body, original_filename,
-                         file_size_bytes, content_hash, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+                         file_size_bytes, content_hash, blob_ref, mime_type,
+                         updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                     """,
                     (
                         vault_path,
@@ -158,6 +163,8 @@ def upsert_from_upload(
                         original_filename,
                         file_size_bytes,
                         content_hash,
+                        blob_ref,
+                        mime_type,
                     ),
                 )
                 return Success(cur.lastrowid)
@@ -179,6 +186,8 @@ def upsert_from_upload(
                     file_size_bytes = ?,
                     content_hash = ?,
                     title = ?,
+                    blob_ref = ?,
+                    mime_type = ?,
                     updated_at = datetime('now')
                 WHERE id = ?
                 """,
@@ -188,6 +197,8 @@ def upsert_from_upload(
                     file_size_bytes,
                     content_hash,
                     resolved_title,
+                    blob_ref,
+                    mime_type,
                     existing_id,
                 ),
             )
