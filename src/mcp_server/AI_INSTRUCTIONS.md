@@ -2,56 +2,71 @@
 
 How to use the KMS vault tools correctly when assisting the user.
 
-## Core workflow
+## Tool inventory
 
-### 1. Discover first — never assume
-Always call `kms_vault_info` before searching. It tells you what projects and domains exist, how many items are in the inbox, and the global context. Never guess the vault structure.
+Five tools are available:
 
-### 2. Two-step retrieval: search then read
-- `kms_search` returns **cards** (title, path, snippet, score). Cards give you enough to decide what is relevant.
-- `kms_read` returns **full note bodies**. Call it after search to get the complete content of the notes you want.
+| Tool | Purpose |
+|---|---|
+| `kms_vault_info` | Discover the vault landscape: projects, domains, inbox stats, global context. |
+| `kms_search` | Find relevant documents by query. Returns context blocks + result cards. |
+| `kms_inspect` | Drill into documents by integer id. Three modes: summary, text, file. |
+| `kms_write` | Save a new insight from the conversation into the knowledge system. |
+| `kms_correct` | Fix an existing knowledge entry by id. Confirm-first workflow. |
 
-Both tools accept multiple paths — read everything you need in one call.
+## Discovery workflow
 
-### 3. Context-before-content
-When `kms_search` or `kms_read` returns context blocks, present those **first** in your response. Context blocks describe the vault landscape (projects, domains, recent activity). Content (result cards, note bodies) comes after.
+Always follow this sequence — never skip ahead:
 
-### 4. Hash-dedup is automatic
+1. **`kms_vault_info`** — Call FIRST. Tells you what projects and domains exist, how many items are in the inbox, and current global context. Never guess the vault structure.
+2. **`kms_search`** — Search for relevant documents. Returns **cards** (title, id, snippet, score) plus any context blocks. Cards give you enough to decide what is relevant. Use filters (`project`, `since`, `until`, `location`, `max_results`) to narrow. Iterative refinement is expected: broad first search, then narrow.
+3. **`kms_inspect`** — Drill into documents selected by integer id. Defaults to **summary** mode (always available). Use **text** mode for the full body (opt-in; may degrade for large or binary documents). Use **file** mode to get the vault path (laptop-dependent; only when the user needs it for local access).
+
+The old `kms_read` / `kms_move` workflow no longer exists. Documents are referenced by integer id, not vault paths.
+
+## Facts vs summaries
+
+The knowledge system stores two kinds of content:
+
+- **Facts** — Targeted, extracted insights with entity, dimension, and tag. Stored as structured knowledge entries. You view and correct these via `kms_inspect` (they appear in summary mode) and `kms_correct`.
+- **Summaries** — General 5-section digests of ingested documents (Overview, Key Points, Entities, Timeline, Gaps). These are the default `kms_inspect summary` output for documents.
+
+## Correct vs write routing
+
+Choosing the right tool for adding or fixing knowledge is critical:
+
+- **`kms_correct`** — Fix an **existing** fact by its integer entry id. Operations: `edit_fact`, `change_tag`, `change_entity`, `promote`, `un_retire`, `retire`. Always confirm with the user before applying a correction. `retire` requires a `reason`.
+- **`kms_write`** — Add a **new** insight from the conversation. Use this when the user shares a novel observation, decision, or piece of knowledge that should be persisted. Be **proactive** (suggest saving when you spot an insight) and **transparent** (tell the user you are saving it and share the returned document id).
+
+## Inspect modes
+
+`kms_inspect` supports three modes, selected by the `mode` parameter:
+
+| Mode | Behaviour | When to use |
+|---|---|---|
+| `summary` | Returns the AI-generated 5-section digest. Always available. This is the **default**. | After search, to understand what a document contains. |
+| `text` | Returns the full extracted body text. May degrade for binaries (see caveat below). | When the summary isn't enough detail. Opt-in. |
+| `file` | Returns the vault filesystem path. Laptop-dependent — only works on the machine running the daemon. | When the user needs to open or edit the file locally. |
+
+### Binary note caveat
+
+When you call `kms_inspect` with `mode="text"` on a binary document (PDF, DOCX, image, etc.), the server returns the AI-generated **vision description** of that binary, not the raw bytes. There is no way to retrieve the original binary bytes through the MCP tools. Summaries (`mode="summary"`) are always a safe default for binaries.
+
+## Reference model
+
+- Documents and knowledge entries are referenced by **integer ids**, not vault paths.
+- `kms_search` result cards include `id` fields — pass these to `kms_inspect`.
+- `kms_correct` requires the entry's integer `entry_id`.
+- `kms_write` returns a `document_id` on success.
+
+## Hash-dedup
+
 The server tracks which context hashes you have already seen this conversation. You will not receive the same context block twice. You do not need to track this yourself.
 
-### 5. Structured filters on search
-Use the filter params on `kms_search` to narrow results:
-- `project` — limit to one project folder
-- `since` / `until` — date range (any format the vault understands)
-- `location` — free-text location filter
+## Refinement is expected
 
-### 6. Refinement is expected
 Your first search may be broad to discover what exists. Narrow with filters on the second call. This is the intended usage pattern — the server is designed for iterative refinement.
 
-### 7. Broad queries skip context
-Queries that match many documents (low frequency signal) automatically skip context injection. Use `include_context=true` on `kms_search` or `kms_read` to force context re-injection when you need it.
+## Broad queries skip context
 
-### 8. Binary source text via kms_inspect
-For PDFs, DOCX, images, and other binary files:
-- `kms_read` returns the AI-generated **summary** (the `.md` sibling)
-- `kms_inspect` returns the **original extracted text** (no AI call)
-
-Pass either the binary path or its sibling `.md` summary path — both work.
-
-### 9. Filing notes with kms_move
-Use `kms_move` to file a note into a project or domain:
-- `src` — current vault path of the note
-- `dest_name` — name of the project or domain
-- `dest_kind` — `"project"` or `"domain"`
-
-The tool updates frontmatter labels, reindexes, and coordinates with the vault watcher to prevent the move from being undone.
-
-## Tool summary
-
-| Tool | When to call |
-|---|---|
-| `kms_vault_info` | First — before any search |
-| `kms_search` | Find relevant notes by query |
-| `kms_read` | Get full note bodies after search |
-| `kms_inspect` | Get raw text from a binary source |
-| `kms_move` | File a note into a project or domain |
+Queries that match many documents (low frequency signal) automatically skip context injection. Use `include_context=true` on `kms_search` to force context re-injection when you need it.

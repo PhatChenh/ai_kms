@@ -480,3 +480,71 @@ def test_search_filter_only_cards_have_metadata(seeded_db):
         assert "tags" in card.metadata
         # Score must be 0.0 (no ranking happened)
         assert card.score == 0.0
+
+
+# ---------------------------------------------------------------------------
+# P9-B-04: SearchResult.id is populated
+# ---------------------------------------------------------------------------
+
+
+def test_card_from_row_populates_id():
+    """_card_from_row with a DocumentRow that has id=42 → SearchResult.id == 42."""
+    from storage.documents import DocumentRow
+    from retrieval.search import _card_from_row
+
+    row = DocumentRow(
+        id=42,
+        vault_path="inbox/test.md",
+        title="Test Note",
+        summary="A test note.",
+        note_type="meeting-notes",
+        confidence=None,
+        created_at="2026-01-01 00:00:00",
+        updated_at="2026-01-01 00:00:00",
+        updated_by_human=False,
+        content_hash=None,
+        batch_id=None,
+        project=None,
+        status=None,
+        key_topics=["test"],
+    )
+
+    card = _card_from_row(row)
+    assert card.id == 42, f"Expected id=42, got {card.id}"
+    assert isinstance(card.id, int), f"id should be int, got {type(card.id)}"
+
+
+def test_search_filter_only_results_have_id(seeded_db):
+    """In filter-only mode, SearchResult.id must be populated from DocumentRow.id."""
+    db_path, _paths = seeded_db
+
+    from retrieval.search import search
+
+    result = search(project="Alpha", db_path=db_path)
+
+    assert isinstance(result, Success), f"Expected Success, got {result}"
+    cards = result.value
+    assert len(cards) > 0, "Expected at least one Alpha result"
+
+    for card in cards:
+        assert card.id is not None, f"Card for {card.vault_path} has id=None"
+        assert isinstance(card.id, int), f"id should be int, got {type(card.id)}"
+        assert card.id > 0, f"id should be positive, got {card.id}"
+
+
+def test_search_query_results_have_id(seeded_db):
+    """In query mode, SearchResult.id must be populated from DocumentRow.id."""
+    db_path, _paths = seeded_db
+
+    from retrieval.search import search
+
+    result = search(query="stakeholder resistance", db_path=db_path)
+
+    assert isinstance(result, Success), f"Expected Success, got {result}"
+    cards = result.value
+    assert len(cards) > 0, "Expected at least one result"
+
+    for card in cards:
+        assert card.id is not None, f"Card for {card.vault_path} has id=None"
+        assert isinstance(card.id, int), f"id should be int, got {type(card.id)}"
+        assert card.id > 0, f"id should be positive, got {card.id}"

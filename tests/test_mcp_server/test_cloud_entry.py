@@ -318,6 +318,50 @@ class TestComposedLifespan:
         )
 
     @pytest.mark.asyncio
+    async def test_sweep_worker_lifecycle(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Sweep worker is created on entry and cancelled on exit."""
+        import asyncio
+
+        db_path = tmp_path / "test.db"
+        self._mock_consumer_and_scan(monkeypatch)
+        self._mock_inner_lifespan(monkeypatch)
+
+        sweep_started = asyncio.Event()
+        sweep_cancelled = asyncio.Event()
+
+        async def _mock_sweep_worker(db_path_arg, main_config):
+            sweep_started.set()
+            try:
+                while True:
+                    await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                sweep_cancelled.set()
+                raise
+
+        monkeypatch.setattr(
+            "mcp_server.cloud_entry._retrieval_sweep_worker",
+            _mock_sweep_worker,
+        )
+
+        from mcp_server.cloud_entry import build_app
+
+        app = build_app(db_path=db_path)
+        lifespan_fn = app.router.lifespan_context
+
+        async with lifespan_fn(app):
+            await asyncio.wait_for(sweep_started.wait(), timeout=5.0)
+            assert sweep_started.is_set(), (
+                "sweep worker should be started on entry"
+            )
+
+        await asyncio.sleep(0.15)
+        assert sweep_cancelled.is_set(), (
+            "sweep worker must be cancelled on lifespan exit"
+        )
+
+    @pytest.mark.asyncio
     async def test_lifespan_returns_state(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -379,4 +423,26 @@ class TestComposedLifespan:
         source = inspect.getsource(build_app)
         assert "on_startup" not in source, (
             "build_app must NOT use on_startup — it is a silent no-op with lifespan"
+        )
+
+
+# ============================================================================
+# P9-E-01 — Container boot guard (if __name__ == "__main__")
+# ============================================================================
+
+
+class TestContainerBootBlockPresent:
+    """Verify the uvicorn boot guard exists in cloud_entry.py source."""
+
+    def test_if_name_main_block_in_source(self) -> None:
+        """The source file must contain ``if __name__ == \"__main__\":``."""
+        source_path = (
+            Path(__file__).resolve().parents[2]
+            / "src"
+            / "mcp_server"
+            / "cloud_entry.py"
+        )
+        source_text = source_path.read_text()
+        assert 'if __name__ == "__main__":' in source_text, (
+            "cloud_entry.py is missing the if __name__ == '__main__' block"
         )

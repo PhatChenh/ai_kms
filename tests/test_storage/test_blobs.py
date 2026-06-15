@@ -270,7 +270,7 @@ def test_s3_blob_store_smoke(tmp_path):
 
 
 def test_s3_blob_store_async_wrappers_exist():
-    """S3BlobStore has async_* convenience wrappers."""
+    """S3BlobStore has async_put convenience wrapper (inherited from ABC)."""
     from storage.blobs import S3BlobStore
 
     # Instantiate with fake credentials — boto3 client creation is lazy,
@@ -282,10 +282,37 @@ def test_s3_blob_store_async_wrappers_exist():
         secret_access_key="fake",
     )
 
-    # Verify async wrappers exist and are async functions
+    # Verify async wrapper exists and is an async function
     import inspect
 
-    for name in ("async_put", "async_get", "async_delete", "async_exists"):
+    for name in ("async_put",):
         method = getattr(store, name, None)
         assert method is not None, f"Missing async wrapper: {name}"
         assert inspect.iscoroutinefunction(method), f"{name} is not a coroutine function"
+
+
+# ---------------------------------------------------------------------------
+# P9-E-03: ABC async_put wrapper delegates to sync put correctly
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_async_put_delegates_to_sync_put(tmp_path):
+    """Calling await store.async_put(...) on a LocalBlobStore writes the
+    blob just like the synchronous put() would."""
+    store = LocalBlobStore(root=tmp_path)
+    key = "test/async-put.bin"
+    data = b"async blob content"
+
+    result = await store.async_put(key, data, mime_type="application/octet-stream")
+    assert result.is_success()
+
+    # Verify the blob was actually persisted
+    exists_result = store.exists(key)
+    assert exists_result.is_success()
+    assert exists_result.value is True
+
+    # Verify content round-trips
+    get_result = store.get(key)
+    assert get_result.is_success()
+    assert get_result.value == data

@@ -357,7 +357,7 @@ async def _capture_binary(
             context={"vault_path": vault_path},
         )
 
-    put_result = blob_store.put(content_hash, raw_bytes, mime_type)
+    put_result = await blob_store.async_put(content_hash, raw_bytes, mime_type)
     match put_result:
         case Success():
             pass  # blob safe

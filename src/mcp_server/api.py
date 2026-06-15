@@ -7,6 +7,7 @@ scoped to /api/* only.
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
 import os
@@ -62,6 +63,10 @@ _db_path: Path | None = None
 # in production to an S3BlobStore.  None = no blob cleanup (text-only).
 _blob_store: BlobStore | None = None
 
+# API key read-once cache — read from env at import time so require_key()
+# does not re-read os.environ on every request.
+_daemon_api_key: str | None = os.environ.get("KMS_DAEMON_API_KEY")
+
 
 # ============================================================================
 # Secret-key gate
@@ -75,7 +80,14 @@ def require_key(request: Request) -> str | None:
     match, ``None`` on mismatch or missing header.
 
     Short-circuits on missing header or non-Bearer prefix.
+
+    The key is read once: first from the module-level ``_daemon_api_key``
+    (set at import time), with a lazy fallback to ``os.environ`` on first
+    call if the import-time read yielded ``None`` (e.g. in tests where the
+    env var is patched after import).
     """
+    global _daemon_api_key
+
     auth = request.headers.get("Authorization")
     if auth is None:
         return None
@@ -83,7 +95,10 @@ def require_key(request: Request) -> str | None:
         return None
 
     token = auth[len("Bearer ") :]
-    expected = os.environ.get("KMS_DAEMON_API_KEY")
+    expected = _daemon_api_key
+    if expected is None:
+        expected = os.environ.get("KMS_DAEMON_API_KEY")
+        _daemon_api_key = expected  # cache for subsequent calls
     if expected is None:
         return None
     if not hmac.compare_digest(token, expected):
@@ -510,7 +525,9 @@ async def event_handler(request: Request) -> JSONResponse:
                 },
                 status_code=400,
             )
-        result = rename(old=old_path, new=new_path, db_path=_db_path)
+        result = await asyncio.to_thread(
+            rename, old=old_path, new=new_path, db_path=_db_path
+        )
     else:
         path: str | None = _sanitize_vault_path(body.get("path") or "")
         if not path:
@@ -521,7 +538,8 @@ async def event_handler(request: Request) -> JSONResponse:
                 },
                 status_code=400,
             )
-        result = _delete_with_blob_cleanup(
+        result = await asyncio.to_thread(
+            _delete_with_blob_cleanup,
             vault_path=path,
             db_path=_db_path,
             blob_store=_blob_store,

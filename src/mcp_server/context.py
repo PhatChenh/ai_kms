@@ -1,641 +1,388 @@
 """ContextInjectionEngine — the per-conversation decision engine.
 
-Phase 3 fills in the methods (build response blocks, dedup, count, gate).
-Phase 2 only needs the constructor so the server lifespan can instantiate it.
+Phase 9 rewrite: reads from knowledge_entries (structured facts) and
+dual-corpus search (search_dual), zero disk reads.  Provides orientation
+context blocks for the user-facing AI at conversation start.
 """
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from core.result import Failure, Result, Success
 
-if TYPE_CHECKING:
-    from retrieval.reranker import SearchResult
-    from vault.registry import ProjectRegistry
-
 _log = logging.getLogger(__name__)
+
+_INBOX_LIKE_PATTERN = "inbox/%"
 
 
 class ContextInjectionEngine:
-    """Context injection decision engine.  Built in Phase 3."""
+    """Per-conversation engine that builds orientation context from DB.
+
+    Instantiated once per conversation via FastMCP lifespan.  Tracks which
+    facts and documents have already been surfaced so later queries don't
+    repeat the same context (identity-based dedup, not hash-based).
+    """
 
     def __init__(self) -> None:
-        self._dedup_memory: dict[str, str] = {}  # content_hash -> filename
+        self._seen_fact_ids: set[int] = set()
+        self._seen_doc_ids: set[int] = set()
 
     # ======================================================================
-    # Dedup memory (RED 1)
+    # Identity dedup memory
     # ======================================================================
 
-    def is_already_provided(self, content_hash: str) -> tuple[bool, str]:
-        """Check whether *content_hash* was already sent this conversation.
+    def is_fact_seen(self, entry_id: int) -> bool:
+        """Return True if this knowledge entry was already injected."""
+        return entry_id in self._seen_fact_ids
 
-        Returns:
-            ``(True, source_label)`` if the hash is in dedup memory,
-            ``(False, "")`` otherwise.
-        """
-        label = self._dedup_memory.get(content_hash, "")
-        return (label != "", label)
+    def record_fact_seen(self, entry_id: int) -> None:
+        """Mark a knowledge entry as injected this conversation."""
+        self._seen_fact_ids.add(entry_id)
 
-    def record_sent(self, content_hash: str, label: str) -> None:
-        """Record that *content_hash* was sent, keyed by *label*.
+    def is_doc_seen(self, doc_id: int) -> bool:
+        """Return True if this document was already surfaced."""
+        return doc_id in self._seen_doc_ids
 
-        Args:
-            content_hash: The SHA-256 hash of the file content sent.
-            label: A human-readable identifier (e.g. ``"project:Alpha"``).
-        """
-        self._dedup_memory[content_hash] = label
+    def record_doc_seen(self, doc_id: int) -> None:
+        """Mark a document as surfaced this conversation."""
+        self._seen_doc_ids.add(doc_id)
 
     # ======================================================================
-    # Public API — three build_*_response methods (RED 2, 5, 6)
+    # Public API
     # ======================================================================
-
-    def build_search_response(
-        self,
-        cards: list[SearchResult] | None = None,
-        registry: ProjectRegistry | None = None,
-        query: str | None = None,
-        *,
-        project: str | None = None,
-        since: str | None = None,
-        until: str | None = None,
-        location: str | None = None,
-        include_context: bool = False,
-        max_results: int | None = None,
-        db_path: Path | None = None,
-    ) -> Result[list[dict]]:
-        """Build a response for a search: context blocks first, result cards second.
-
-        Concentration-gated: if the top domain's share of results is below
-        the configured threshold, no context is attached.  At or above the
-        threshold, the top few domain/project context files are injected.
-
-        Two calling modes:
-
-        1. **Direct mode** (existing, Phase 3) — pass ``cards`` + ``registry``:
-           ``build_search_response(cards_list, registry_obj, query="...")``
-
-        2. **Convenience mode** (Phase 6 MCP tools) — pass user-facing params:
-           ``build_search_response(query="...", project="Alpha", since="...")``
-           The engine performs the search and loads the registry internally.
-
-        Args:
-            cards:           Search result cards (direct mode).  If ``None``,
-                             search is performed using *query* et al.
-            registry:        Live project→domain registry.  If ``None``, loaded
-                             from the vault automatically.
-            query:           Search query string (also used for logging in
-                             direct mode).
-            project:         Filter results to this project name.
-            since:           ISO-8601 lower-bound date (inclusive).
-            until:           ISO-8601 upper-bound date (inclusive).
-            location:        ``"Projects"``, ``"Domain"``, ``"inbox"``, or
-                             ``None`` (all locations).
-            include_context: If ``True``, bypass dedup and force full injection.
-            max_results:     Maximum number of result cards to return.
-            db_path:         Optional DB path override (for tests).
-
-        Returns:
-            ``Success(list[dict])`` — each dict is a response block.
-        """
-        try:
-            # ---- Step 0: convenience mode — perform search internally ----
-            if cards is None:
-                from datetime import datetime  # noqa: C0415
-
-                from retrieval.search import (  # noqa: C0415
-                    search as do_search,
-                )
-
-                # Parse since/until strings to datetime
-                since_dt: datetime | None = None
-                if since is not None:
-                    since_dt = datetime.fromisoformat(since)
-                until_dt: datetime | None = None
-                if until is not None:
-                    until_dt = datetime.fromisoformat(until)
-
-                date_range: tuple | None = None
-                if since_dt is not None or until_dt is not None:
-                    date_range = (since_dt, until_dt)
-
-                match do_search(
-                    query=query,
-                    project=project,
-                    date_range=date_range,
-                    max_results=max_results,
-                    location=location,
-                    db_path=db_path,
-                ):
-                    case Success(value=found_cards):
-                        cards = found_cards
-                    case Failure() as f:
-                        return f
-
-            # ---- Step 0b: load registry if not provided ------------------
-            if registry is None:
-                from vault.registry import ProjectRegistry  # noqa: C0415
-
-                from core.config import CONFIG  # noqa: C0415
-
-                registry = ProjectRegistry(CONFIG.main.vault)
-
-            if not cards:
-                return Success([])
-
-            # ---- Step 1: build project→domain reverse map ---------------
-            project_domain = self._build_project_domain_map(registry)
-
-            # ---- Step 2: count concentration ----------------------------
-            threshold = self._get_frequency_threshold()
-            domain_share, top_domains = self._count_concentration(cards, project_domain)
-
-            # ---- Step 3: gate -------------------------------------------
-            if domain_share < threshold and not include_context:
-                # Below threshold — return cards only
-                return Success([{"type": "result_card", "data": c} for c in cards])
-
-            # ---- Step 4: collect context for top domains ----------------
-            cap = self._get_max_context_files()
-            context_blocks = self._collect_context_for_domains(
-                domain_names=set(top_domains),
-                registry=registry,
-                include_context=include_context,
-                max_files=cap,
-            )
-
-            # ---- Step 5: assemble — context first, then cards -----------
-            blocks: list[dict] = []
-            blocks.extend(context_blocks)
-            for card in cards:
-                blocks.append({"type": "result_card", "data": card})
-
-            return Success(blocks)
-
-        except Exception as exc:
-            _log.warning("build_search_response failed: %s", exc)
-            return Failure(
-                str(exc),
-                recoverable=True,
-                context={"query": query or ""},
-            )
 
     def build_vault_info_response(
         self,
-        registry: ProjectRegistry | None = None,
         db_path: Path | None = None,
     ) -> Result[list[dict]]:
-        """Build a vault-overview response: domain/project listing, inbox
-        stats, and vault-root CLAUDE.md.
+        """Build a vault-overview response: entity map, orientation facts, inbox stats.
 
-        Args:
-            registry: Live project→domain registry.  If ``None``, loaded
-                      from the vault automatically.
-            db_path:  Optional DB path override (for tests).
-
-        Returns:
-            ``Success(list[dict])`` — context blocks describing the vault.
+        All data comes from the cloud DB — zero disk reads.
         """
         try:
-            if registry is None:
-                from vault.registry import ProjectRegistry  # noqa: C0415
-
-                from core.config import CONFIG  # noqa: C0415
-
-                registry = ProjectRegistry(CONFIG.main.vault)
-
             blocks: list[dict] = []
 
-            # ---- Vault-overview text ------------------------------------
-            domain_names = sorted(
-                name for name in registry.groups if name != "Uncategorized"
-            )
-            all_projects = sorted(registry.all_project_names)
-
-            overview_lines = [
-                "# Vault Overview",
-                "",
-                "## Domains",
-            ]
-            for dn in domain_names:
-                group = registry.groups[dn]
-                pnames = [e.name for e in group.projects]
-                if pnames:
-                    overview_lines.append(f"- **{dn}**: {', '.join(pnames)}")
-                else:
-                    overview_lines.append(f"- **{dn}**: (no active projects)")
-
-            overview_lines.append("")
-            overview_lines.append("## All Projects")
-            for pn in all_projects:
-                overview_lines.append(f"- {pn}")
-
-            overview_text = "\n".join(overview_lines)
-            overview_hash = hashlib.sha256(overview_text.encode("utf-8")).hexdigest()
-
+            # ---- Entity map ------------------------------------------------
+            entity_map_result = self._build_entity_map(db_path)
+            if isinstance(entity_map_result, Failure):
+                return entity_map_result
             blocks.append(
                 {
                     "type": "context",
-                    "source": "vault_overview",
-                    "path": "registry://overview",
-                    "content": overview_text,
+                    "source": "entity_map",
+                    "content": entity_map_result.value,
                 }
             )
 
-            # Record the overview hash so it can be deduped later
-            self.record_sent(overview_hash, "vault_overview")
+            # ---- Orientation facts -----------------------------------------
+            orientation_result = self._build_orientation_facts(db_path)
+            if isinstance(orientation_result, Failure):
+                return orientation_result
+            blocks.append(
+                {
+                    "type": "context",
+                    "source": "orientation_facts",
+                    "content": orientation_result.value,
+                }
+            )
 
-            # ---- Inbox stats --------------------------------------------
+            # ---- Inbox stats -----------------------------------------------
             inbox_count, last_capture = self._get_inbox_stats(db_path)
             inbox_text = (
                 f"# Inbox\n\n"
                 f"- Unprocessed notes: {inbox_count}\n"
                 f"- Last capture: {last_capture or 'N/A'}"
             )
-            inbox_hash = hashlib.sha256(inbox_text.encode("utf-8")).hexdigest()
-
             blocks.append(
                 {
                     "type": "context",
                     "source": "inbox_stats",
-                    "path": "inbox://stats",
                     "content": inbox_text,
                 }
             )
-
-            self.record_sent(inbox_hash, "inbox_stats")
-
-            # ---- Vault-root CLAUDE.md -----------------------------------
-            root_content, root_hash = self._read_vault_root_context()
-            if root_content is not None:
-                blocks.append(
-                    {
-                        "type": "context",
-                        "source": "vault_root",
-                        "path": "CLAUDE.md",
-                        "content": root_content,
-                    }
-                )
-                self.record_sent(root_hash, "vault_root")
 
             return Success(blocks)
 
         except Exception as exc:
             _log.warning("build_vault_info_response failed: %s", exc)
-            return Failure(
-                str(exc),
-                recoverable=True,
-                context={},
-            )
+            return Failure(str(exc), recoverable=True, context={})
 
-    def build_read_response(
+    def build_search_response(
         self,
-        paths: list[Path],
-        registry: ProjectRegistry | None = None,
-        include_context: bool = False,
+        query: str,
+        *,
+        project: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        location: str | None = None,
+        max_results: int | None = None,
         db_path: Path | None = None,
     ) -> Result[list[dict]]:
-        """Build a response for reading specific notes.
+        """Build a search response: orientation facts + query facts + documents.
 
-        Reads each note body via ``read_note`` and when *include_context* is
-        ``True``, injects minority-domain context first (bypasses dedup to
-        force full re-injection).  When ``False``, no domain context is
-        injected.
-
-        A binary-backed note (``note_type == "attachment-summary"``) returns
-        its AI summary body, not raw bytes.
-
-        Args:
-            paths:           Absolute paths to notes to read.
-            registry:        Optional project→domain registry for context
-                             injection.  If ``None`` and *include_context*
-                             is ``True``, the registry is loaded from the
-                             vault automatically.
-            include_context: If ``True``, inject domain context before notes
-                             and bypass dedup (re-send already-provided files).
-            db_path:         Optional DB path override.
-
-        Returns:
-            ``Success(list[dict])`` — context blocks (optional) + read_note blocks.
+        Uses dual-corpus search (facts + documents), extracts entities from
+        fact results, fetches orientation facts for those entities, and
+        assembles everything with identity dedup.
         """
         try:
-            from vault.reader import read_note  # noqa: C0415
+            from datetime import datetime  # noqa: C0415
+
+            from retrieval.search import search_dual  # noqa: C0415
+
+            # Parse date strings if provided
+            since_dt: datetime | None = None
+            if since is not None:
+                since_dt = datetime.fromisoformat(since)
+            until_dt: datetime | None = None
+            if until is not None:
+                until_dt = datetime.fromisoformat(until)
+
+            date_range: tuple | None = None
+            if since_dt is not None or until_dt is not None:
+                date_range = (since_dt, until_dt)
+
+            # ---- Step 1: dual-corpus search --------------------------------
+            match search_dual(
+                query=query,
+                project=project,
+                date_range=date_range,
+                max_results=max_results,
+                location=location,
+                db_path=db_path,
+            ):
+                case Success(value=dual):
+                    facts, docs = dual.facts, dual.documents
+                case Failure() as f:
+                    return f
 
             blocks: list[dict] = []
 
-            # ---- Optional: inject minority-domain context ---------------
-            if include_context:
-                if registry is None:
-                    from vault.registry import ProjectRegistry  # noqa: C0415
+            # ---- Step 2: orientation facts for matched entities ------------
+            if facts:
+                entities = list({f.entity for f in facts if f.entity})
+                orientation_blocks = self._build_orientation_for_entities(
+                    entities, db_path
+                )
+                if isinstance(orientation_blocks, Failure):
+                    return orientation_blocks
+                blocks.extend(orientation_blocks.value)
 
-                    from core.config import CONFIG  # noqa: C0415
+            # ---- Step 3: query fact blocks ---------------------------------
+            for fact in facts:
+                if self.is_fact_seen(fact.entry_id):
+                    continue
+                self.record_fact_seen(fact.entry_id)
+                blocks.append(
+                    {
+                        "type": "fact_result",
+                        "entry_id": fact.entry_id,
+                        "dimension": fact.dimension,
+                        "entity": fact.entity,
+                        "fact": fact.fact,
+                        "confidence": fact.confidence,
+                        "trust_score": fact.trust_score,
+                        "score": fact.score,
+                    }
+                )
 
-                    registry = ProjectRegistry(CONFIG.main.vault)
-                # Determine which domains the requested notes belong to
-                project_domain = self._build_project_domain_map(registry)
-                note_domains: set[str] = set()
-                for path in paths:
-                    # Derive project from the path: Projects/<Project>/...
-                    project_name = self._project_name_from_path(path, registry)
-                    if project_name:
-                        domain = project_domain.get(project_name)
-                        if domain is not None:
-                            note_domains.add(domain)
-
-                if note_domains:
-                    context_blocks = self._collect_context_for_domains(
-                        domain_names=note_domains,
-                        registry=registry,
-                        include_context=include_context,
-                    )
-                    blocks.extend(context_blocks)
-
-            # ---- Read each note -----------------------------------------
-            for path in paths:
-                match read_note(path):
-                    case Success(note):
-                        note_block = {
-                            "type": "read_note",
-                            "path": str(path),
-                            "content": note.content,
-                            "content_hash": note.content_hash,
-                            "metadata": {
-                                "title": note.metadata.title,
-                                "type": (
-                                    note.metadata.type
-                                    if isinstance(note.metadata.type, list)
-                                    else [note.metadata.type]
-                                ),
-                                "tags": note.metadata.tags,
-                            },
-                        }
-                        blocks.append(note_block)
-                    case Failure() as f:
-                        blocks.append(
-                            {
-                                "type": "read_note",
-                                "path": str(path),
-                                "content": f"[Error reading note: {f.error}]",
-                                "content_hash": "",
-                                "metadata": {},
-                                "error": f.error,
-                            }
-                        )
+            # ---- Step 4: document result blocks ----------------------------
+            for doc in docs:
+                doc_id = getattr(doc, "id", None)
+                if doc_id is not None and self.is_doc_seen(doc_id):
+                    continue
+                if doc_id is not None:
+                    self.record_doc_seen(doc_id)
+                blocks.append(
+                    {
+                        "type": "result_card",
+                        "data": doc,
+                    }
+                )
 
             return Success(blocks)
 
         except Exception as exc:
-            _log.warning("build_read_response failed: %s", exc)
+            _log.warning("build_search_response failed: %s", exc)
+            return Failure(str(exc), recoverable=True, context={"query": query})
+
+    # ======================================================================
+    # Entity map
+    # ======================================================================
+
+    def _build_entity_map(self, db_path: Path | None = None) -> Result[str]:
+        """Build an entity map grouped by dimension from knowledge_entries.
+
+        Caps entities per dimension at max_entities_per_dimension (config).
+
+        Uses raw SQL for the grouped aggregate query
+        (DISTINCT dimension, entity, COUNT … GROUP BY) — the
+        ``knowledge_entries`` module does not expose an equivalent.
+        """
+        try:
+            from storage.db import get_connection  # noqa: C0415
+            from core.config import CONFIG  # noqa: C0415
+
+            max_entities = CONFIG.main.mcp.context_injection.max_entities_per_dimension
+
+            with get_connection(db_path, readonly=True) as conn:
+                rows = conn.execute(
+                    "SELECT dimension, entity, COUNT(*) as cnt "
+                    "FROM knowledge_entries "
+                    "WHERE (status IS NULL OR status != 'retired') AND entity IS NOT NULL AND entity != '' "
+                    "GROUP BY dimension, entity "
+                    "ORDER BY dimension, cnt DESC"
+                ).fetchall()
+
+            # Group by dimension
+            by_dim: dict[str, list[tuple[str, int]]] = {}
+            for dim, entity, cnt in rows:
+                by_dim.setdefault(dim, []).append((entity, cnt))
+
+            lines = ["# Knowledge Map", ""]
+            for dim in sorted(by_dim.keys()):
+                entities = by_dim[dim]
+                shown = entities[:max_entities]
+                lines.append(f"## {dim}")
+                for entity, cnt in shown:
+                    lines.append(f"- {entity} ({cnt})")
+                if len(entities) > max_entities:
+                    extra = len(entities) - max_entities
+                    lines.append(f"  +{extra} more")
+                lines.append("")
+
+            return Success("\n".join(lines))
+
+        except Exception as exc:
+            return Failure(str(exc), recoverable=True, context={"op": "entity_map"})
+
+    # ======================================================================
+    # Orientation facts
+    # ======================================================================
+
+    def _build_orientation_facts(
+        self, db_path: Path | None = None
+    ) -> Result[str]:
+        """Build orientation fact bullets for each dimension.
+
+        Uses 4-key ranking from query_ranked_for_orientation.
+        Capped per dimension at max_orientation_facts_per_dimension.
+        """
+        try:
+            from storage.knowledge_entries import (  # noqa: C0415
+                query_ranked_for_orientation,
+            )
+            from core.config import CONFIG  # noqa: C0415
+
+            max_per_dim = CONFIG.main.mcp.context_injection.max_orientation_facts_per_dimension
+
+            from storage.db import get_connection  # noqa: C0415
+
+            with get_connection(db_path, readonly=True) as conn:
+                dim_rows = conn.execute(
+                    "SELECT DISTINCT dimension FROM knowledge_entries "
+                    "WHERE (status IS NULL OR status != 'retired') ORDER BY dimension"
+                ).fetchall()
+
+            lines = ["# Key Facts", ""]
+            for (dim,) in dim_rows:
+                match query_ranked_for_orientation(
+                    dimension=dim,
+                    limit=max_per_dim,
+                    db_path=db_path,
+                ):
+                    case Success(value=entries):
+                        if not entries:
+                            continue
+                        lines.append(f"## {dim}")
+                        for entry in entries:
+                            self.record_fact_seen(entry.id)
+                            lines.append(
+                                f"- [{entry.entity}] {entry.fact} "
+                                f"(confidence: {entry.confidence})"
+                            )
+                        lines.append("")
+                    case Failure() as f:
+                        return f
+
+            return Success("\n".join(lines))
+
+        except Exception as exc:
             return Failure(
-                str(exc),
-                recoverable=True,
-                context={"paths": [str(p) for p in paths]},
+                str(exc), recoverable=True, context={"op": "orientation_facts"}
+            )
+
+    def _build_orientation_for_entities(
+        self,
+        entities: list[str],
+        db_path: Path | None = None,
+    ) -> Result[list[dict]]:
+        """Fetch orientation facts for specific entities, with dedup.
+
+        A ``seen_dimensions`` set tracks which dimensions have already been
+        injected for earlier entities in *entities*.  Once a dimension has
+        been claimed, later entities that belong to the same dimension are
+        skipped — this prevents repeating the same dimension block multiple
+        times in a single response.
+        """
+        try:
+            from storage.knowledge_entries import (  # noqa: C0415
+                query_ranked_for_orientation,
+            )
+            from core.config import CONFIG  # noqa: C0415
+
+            max_per_dim = CONFIG.main.mcp.context_injection.max_orientation_facts_per_dimension
+
+            blocks: list[dict] = []
+            seen_dimensions: set[str] = set()
+
+            for entity in entities:
+                match query_ranked_for_orientation(
+                    entity=entity,
+                    limit=max_per_dim,
+                    db_path=db_path,
+                ):
+                    case Success(value=entries):
+                        by_dim: dict[str, list] = {}
+                        for e in entries:
+                            if e.dimension not in seen_dimensions:
+                                by_dim.setdefault(e.dimension, []).append(e)
+
+                        for dim, dim_entries in by_dim.items():
+                            seen_dimensions.add(dim)
+                            lines = [f"## {dim} — {entity}"]
+                            for entry in dim_entries:
+                                if not self.is_fact_seen(entry.id):
+                                    self.record_fact_seen(entry.id)
+                                lines.append(
+                                    f"- [{entry.entity}] {entry.fact} "
+                                    f"(confidence: {entry.confidence})"
+                                )
+                            blocks.append(
+                                {
+                                    "type": "context",
+                                    "source": f"orientation:{dim}:{entity}",
+                                    "content": "\n".join(lines),
+                                }
+                            )
+                    case Failure() as f:
+                        return f
+
+            return Success(blocks)
+
+        except Exception as exc:
+            return Failure(
+                str(exc), recoverable=True, context={"op": "orientation_entities"}
             )
 
     # ======================================================================
-    # Project→Domain reverse map builder (RED 3)
+    # Inbox stats
     # ======================================================================
-
-    def _build_project_domain_map(
-        self, registry: ProjectRegistry
-    ) -> dict[str, str | None]:
-        """Build a reverse lookup: project_name → domain_name.
-
-        Projects in the ``"Uncategorized"`` pseudo-domain map to ``None``
-        (no real domain).  Projects not found in any group are absent from
-        the returned dict.
-
-        Args:
-            registry: The live ``ProjectRegistry``.
-
-        Returns:
-            ``{project_name: domain_name | None}`` — ``None`` means
-            Uncategorized or unknown.
-        """
-        mapping: dict[str, str | None] = {}
-        for domain_name, group in registry.groups.items():
-            for entry in group.projects:
-                if domain_name == "Uncategorized":
-                    mapping[entry.name] = None
-                else:
-                    mapping[entry.name] = domain_name
-        return mapping
-
-    # ======================================================================
-    # Concentration counting (RED 2)
-    # ======================================================================
-
-    def _count_concentration(
-        self,
-        cards: list,
-        project_domain: dict[str, str | None],
-    ) -> tuple[float, list[str]]:
-        """Count how concentrated the search results are by domain.
-
-        Args:
-            cards:           Search result cards (each with
-                             ``metadata["project"]``).
-            project_domain:  Reverse map from ``_build_project_domain_map``.
-
-        Returns:
-            ``(top_domain_share, sorted_domains)`` where *top_domain_share*
-            is the fraction of cards belonging to the single largest domain
-            and *sorted_domains* lists domain names in descending frequency
-            order (project-only results that lack a real domain contribute
-            to project count but NOT to any domain's count).
-        """
-        total = len(cards)
-        if total == 0:
-            return 0.0, []
-
-        # Count by domain (real domains only; Uncategorized/unknown excluded)
-        domain_counts: dict[str, int] = {}
-        for card in cards:
-            project = card.metadata.get("project", "")
-            if project:
-                domain = project_domain.get(project)
-                if domain is not None:  # real domain only
-                    domain_counts[domain] = domain_counts.get(domain, 0) + 1
-
-        if not domain_counts:
-            return 0.0, []
-
-        top_count = max(domain_counts.values())
-        top_share = top_count / total
-
-        # Sort domains by count descending, then alphabetically for ties
-        sorted_domains = sorted(
-            domain_counts.keys(),
-            key=lambda d: (-domain_counts[d], d),
-        )
-
-        return top_share, sorted_domains
-
-    # ======================================================================
-    # Context file reading helpers (RED 2, 4, 7)
-    # ======================================================================
-
-    def _collect_context_for_domains(
-        self,
-        domain_names: set[str],
-        registry: ProjectRegistry,
-        include_context: bool,
-        max_files: int | None = None,
-    ) -> list[dict]:
-        """Read CLAUDE.md + context.yaml for each domain and its projects.
-
-        Returns a list of context blocks.  Files that have already been sent
-        this conversation are replaced with a short note unless
-        *include_context* is ``True``.
-
-        Args:
-            domain_names:    Domain names to collect context for.
-            registry:        Live project→domain registry.
-            include_context: If ``True``, force full re-injection even for
-                             previously-sent files.
-            max_files:       Maximum number of context blocks to return.
-                             If ``None``, no cap is applied.
-
-        Returns:
-            A list of ``{"type": "context", ...}`` blocks.
-        """
-        from core.config import CONFIG  # noqa: C0415
-
-        include_yaml = CONFIG.main.mcp.context_injection.include_context_yaml
-        blocks: list[dict] = []
-
-        for domain_name in sorted(domain_names):
-            group = registry.groups.get(domain_name)
-            if group is None:
-                continue
-
-            # Domain-level context.yaml
-            if include_yaml and group.domain_path is not None:
-                context_yaml_path = group.domain_path / "context.yaml"
-                block = self._read_and_dedup_context_file(
-                    context_yaml_path,
-                    source=f"domain:{domain_name}",
-                    include_context=include_context,
-                )
-                if block is not None:
-                    blocks.append(block)
-                    if max_files is not None and len(blocks) >= max_files:
-                        return blocks
-
-            # Project-level CLAUDE.md for each project in this domain
-            for entry in group.projects:
-                claude_path = entry.path / "CLAUDE.md"
-                block = self._read_and_dedup_context_file(
-                    claude_path,
-                    source=f"project:{entry.name}",
-                    include_context=include_context,
-                )
-                if block is not None:
-                    blocks.append(block)
-                    if max_files is not None and len(blocks) >= max_files:
-                        return blocks
-
-        return blocks
-
-    def _read_and_dedup_context_file(
-        self,
-        path: Path,
-        source: str,
-        include_context: bool,
-    ) -> dict | None:
-        """Read a single context file, apply dedup, return a block or None.
-
-        Args:
-            path:            Absolute path to the context file.
-            source:          Source label (e.g. ``"project:Alpha"``).
-            include_context: If ``True``, force full re-injection.
-
-        Returns:
-            A context block dict, or ``None`` if the file doesn't exist or
-            was deduped (and include_context is False).
-        """
-        content, content_hash = self._read_context_file(path, source)
-        if content is None:
-            return None  # file doesn't exist
-
-        # Dedup check
-        if not include_context:
-            already, label = self.is_already_provided(content_hash)
-            if already:
-                # Return a short note instead of full content
-                return {
-                    "type": "context",
-                    "source": source,
-                    "path": str(path),
-                    "content": (
-                        f"[Context for {source} was already provided "
-                        f"earlier in this conversation.]"
-                    ),
-                }
-
-        # Record and return full block
-        self.record_sent(content_hash, source)
-        return {
-            "type": "context",
-            "source": source,
-            "path": str(path),
-            "content": content,
-        }
-
-    def _read_context_file(
-        self, path: Path, source_label: str
-    ) -> tuple[str | None, str]:
-        """Read a context file from disk and return (content, content_hash).
-
-        Handles both CLAUDE.md and context.yaml files.  Returns
-        ``(None, "")`` if the file does not exist (graceful degrade).
-
-        Args:
-            path:         Absolute path to the file.
-            source_label: Human-readable label for logging (not used in
-                          the returned value, but available for subclasses).
-
-        Returns:
-            ``(content, sha256_hex_hash)`` or ``(None, "")``.
-        """
-        try:
-            if not path.is_file():
-                return (None, "")
-            content = path.read_text(encoding="utf-8")
-            content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-            return (content, content_hash)
-        except (OSError, UnicodeDecodeError) as exc:
-            _log.debug("Cannot read context file %s: %s", path, exc)
-            return (None, "")
-
-    # ======================================================================
-    # Vault-info helpers (RED 5)
-    # ======================================================================
-
-    def _read_vault_root_context(self) -> tuple[str | None, str]:
-        """Read the vault-root ``CLAUDE.md``.
-
-        Returns:
-            ``(content, content_hash)`` or ``(None, "")`` if missing.
-        """
-        from core.config import CONFIG  # noqa: C0415
-
-        root = CONFIG.main.vault.root
-        claude_path = root / "CLAUDE.md"
-        return self._read_context_file(claude_path, "vault_root")
 
     def _get_inbox_stats(self, db_path: Path | None = None) -> tuple[int, str]:
-        """Get inbox note count and most recent capture time from the catalog.
-
-        Args:
-            db_path: Optional DB path override.
-
-        Returns:
-            ``(inbox_count, last_capture_iso_string)``.
-        """
+        """Get inbox note count and most recent capture time from the DB."""
         try:
             from storage.db import get_connection  # noqa: C0415
 
@@ -649,51 +396,3 @@ class ContextInjectionEngine:
                 return count, last_updated
         except Exception:
             return 0, ""
-
-    # ======================================================================
-    # Config helpers (C-06 — no float literal in engine if/elif)
-    # ======================================================================
-
-    def _get_frequency_threshold(self) -> float:
-        """Read the frequency threshold from config (C-06 compliant)."""
-        from core.config import CONFIG  # noqa: C0415
-
-        return CONFIG.main.mcp.context_injection.frequency_threshold
-
-    def _get_max_context_files(self) -> int:
-        """Read the max context files cap from config (C-06 compliant)."""
-        from core.config import CONFIG  # noqa: C0415
-
-        return CONFIG.main.mcp.context_injection.max_context_files
-
-    # ======================================================================
-    # Path helpers (RED 6)
-    # ======================================================================
-
-    @staticmethod
-    def _project_name_from_path(path: Path, registry: ProjectRegistry) -> str | None:
-        """Heuristic: extract a project name from a vault path.
-
-        Looks for ``Projects/<Name>/...`` in the path and checks if
-        *Name* is a known project in *registry*.
-
-        Args:
-            path:     Absolute path to a vault note.
-            registry: Live ``ProjectRegistry`` to validate against.
-
-        Returns:
-            The project name, or ``None`` if it cannot be determined.
-        """
-        all_known = set(registry.all_project_names)
-        parts = path.parts
-        # Find "Projects" in the path parts, the next part is the project name
-        for i, part in enumerate(parts):
-            if part == "Projects" and i + 1 < len(parts):
-                candidate = parts[i + 1]
-                if candidate in all_known:
-                    return candidate
-        return None
-
-    # ======================================================================
-    # End of ContextInjectionEngine
-    # ======================================================================

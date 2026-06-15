@@ -42,6 +42,8 @@ class SearchResult:
         score:      Cross-encoder relevance score (higher = more relevant).
         metadata:   Dict with ``title``, ``project``, ``note_type``,
                     ``updated_at``, ``key_topics``, ``tags``.
+        id:         Integer document ID from the Note Catalog, or ``None``
+                    for backward compatibility.
     """
 
     vault_path: str
@@ -49,6 +51,7 @@ class SearchResult:
     snippet: str
     score: float
     metadata: dict
+    id: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +170,7 @@ def rerank(
                 snippet=candidate.snippet,
                 score=score,
                 metadata=metadata,
+                id=row.id,
             )
         )
 

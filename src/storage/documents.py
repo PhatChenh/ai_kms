@@ -279,6 +279,23 @@ def get_by_path(
         )
 
 
+def get_by_id(
+    doc_id: int, db_path: Path | None = None
+) -> Result[DocumentRow | None]:
+    """Fetch the documents row for a given integer id."""
+    try:
+        with get_connection(db_path, readonly=True) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM documents WHERE id = ?", (doc_id,)
+            ).fetchone()
+            if row is None:
+                return Success(None)
+            return Success(_row_from_sqlite(row))
+    except sqlite3.Error as exc:
+        return Failure(str(exc), recoverable=False, context={"doc_id": doc_id})
+
+
 def all_paths(db_path: Path | None = None) -> Result[list[tuple[str, str]]]:
     """
     Return all (vault_path, content_hash) pairs in the documents table.

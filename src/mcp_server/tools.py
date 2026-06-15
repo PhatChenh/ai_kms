@@ -1,5 +1,5 @@
 """
-mcp_server/tools.py — MCP Tool Shim Layer (Component 7)
+mcp_server/tools.py — MCP Tool Shim Layer
 
 Five tools, each ONE expression (C-14 hard block).
 ctx is auto-excluded from the public schema by the FastMCP framework.
@@ -7,16 +7,11 @@ ctx is auto-excluded from the public schema by the FastMCP framework.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from mcp.server.fastmcp import Context
-
-from mcp_server._move import move
-from mcp_server._resolve import inspect
 
 
 def kms_vault_info(ctx: Context) -> list[dict]:
-    """Discover the vault: projects, domains, inbox stats, and global context."""
+    """Discover the vault: entity map, orientation facts, and inbox stats."""
     return (
         ctx.request_context.lifespan_context["engine"]
         .build_vault_info_response()
@@ -30,10 +25,10 @@ def kms_search(
     since: str | None = None,
     until: str | None = None,
     location: str | None = None,
-    include_context: bool = False,
+    max_results: int | None = None,
     ctx: Context = None,
 ) -> list[dict]:
-    """Search the vault with context injection. Returns context blocks + result cards."""
+    """Search facts and documents. Returns orientation blocks + fact results + result cards."""
     return (
         ctx.request_context.lifespan_context["engine"]
         .build_search_response(
@@ -42,41 +37,57 @@ def kms_search(
             since=since,
             until=until,
             location=location,
-            include_context=include_context,
+            max_results=max_results,
         )
         .unwrap()
     )
 
 
-def kms_read(
-    paths: list[str],
-    include_context: bool = False,
+def kms_inspect(
+    doc_ids: list[int],
+    mode: str = "summary",
     ctx: Context = None,
 ) -> list[dict]:
-    """Read full note bodies with optional minority-domain context injection."""
-    return (
-        ctx.request_context.lifespan_context["engine"]
-        .build_read_response(
-            paths=[Path(p) for p in paths],
-            include_context=include_context,
-        )
-        .unwrap()
-    )
+    """Drill into documents by integer id. Mode: summary, text, file."""
+    from mcp_server._resolve import resolve_dicts
+
+    return resolve_dicts(doc_ids, mode)
 
 
-def kms_inspect(path: str, ctx: Context = None) -> str:
-    """Re-extract raw text from a binary source (via sibling .md or direct path). No AI call."""
-    return inspect(Path(path)).unwrap()
-
-
-def kms_move(
-    src: str,
-    dest_name: str,
-    dest_kind: str,
+async def kms_write(
+    content: str,
+    title_hint: str | None = None,
     ctx: Context = None,
-) -> str:
-    """Move a note to a project or domain folder. dest_kind is 'project' or 'domain'."""
-    return move(Path(src), dest_name, dest_kind).unwrap()
+) -> dict:
+    """Save a chat insight as a new document in the knowledge system."""
+    from mcp_server._write import write_from_chat
+
+    return {"document_id": (await write_from_chat(
+        content, title_hint,
+        classify_queue=ctx.request_context.lifespan_context.get("classify_queue") if ctx else None,
+    )).unwrap()}
+
+
+def kms_correct(
+    entry_id: int,
+    operation: str,
+    new_fact: str | None = None,
+    new_tag: str | None = None,
+    new_entity: str | None = None,
+    reason: str | None = None,
+    ctx: Context = None,
+) -> dict:
+    """Correct a knowledge entry. Operations: retire, edit_fact, change_tag, change_entity, promote, un_retire."""
+    from mcp_server._correct import correct_entry
+
+    return correct_entry(
+        entry_id,
+        operation,
+        new_fact=new_fact,
+        new_tag=new_tag,
+        new_entity=new_entity,
+        reason=reason,
+    ).unwrap()
 
 
 # ---------------------------------------------------------------------------
@@ -87,17 +98,17 @@ def kms_move(
 def register_tools(mcp):
     """Register all five KMS tools on *mcp* (a ``FastMCP`` instance)."""
     mcp.tool(
-        description="Discover the vault structure: projects, domains, inbox statistics, and global context. Call this FIRST before any search."
+        description="Discover the knowledge base: entity map grouped by dimension, key orientation facts, and inbox statistics. Call this FIRST before any search."
     )(kms_vault_info)
     mcp.tool(
-        description="Search the vault. Returns context blocks (if query is focused) followed by result cards. Use project/since/until/location to filter. For broad queries context is automatically skipped."
+        description="Search facts and documents across the knowledge base. Returns orientation context, fact results, and document result cards. Use project/since/until/location to filter."
     )(kms_search)
     mcp.tool(
-        description="Read full note bodies for one or more vault paths. Use after kms_search to get full content. Accepts multiple paths for batch reading."
-    )(kms_read)
-    mcp.tool(
-        description="Re-extract raw text from a binary source file (PDF, DOCX, etc.). Accepts either the binary path directly or its sibling .md summary path. No AI call — returns original text."
+        description="Drill into documents by integer id with three modes: summary (always available), text (full body, may degrade), file (vault path, laptop-dependent). Defaults to summary mode."
     )(kms_inspect)
     mcp.tool(
-        description="Move a note to a project or domain folder. Updates frontmatter labels, reindexes, and prevents watcher undo. dest_kind must be 'project' or 'domain'."
-    )(kms_move)
+        description="Save a chat insight as a new document in the knowledge system. The insight will be classified and indexed automatically."
+    )(kms_write)
+    mcp.tool(
+        description="Correct a knowledge entry. Operations: retire (requires reason), edit_fact, change_tag, change_entity, promote (pending→confident), un_retire (retired→confident)."
+    )(kms_correct)
