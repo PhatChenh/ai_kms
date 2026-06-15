@@ -428,11 +428,14 @@ async def consumer(
                 )
                 continue
 
-            # ---- Slice B seam ----
-            # Slice B will insert the AI classify() call here and, on
-            # success, call stamp_classified(doc_id, db_path=db_path).
-            # Until then we intentionally leave classify_content_hash
-            # untouched so every doc is retried on restart.
+            # ---- Slice B seam (Phase 7) ----
+            orch_result = await orchestrate(doc_id, config=config, db_path=db_path)
+            if isinstance(orch_result, Failure):
+                _worker_log.warning(
+                    "classify_worker orchestrate failed doc_id=%s error=%s",
+                    doc_id,
+                    orch_result.error,
+                )
 
         except Exception:
             _worker_log.exception(
@@ -950,3 +953,231 @@ def write_entries(
             )
 
     return Success(summary)
+
+
+# ===========================================================================
+# Phase 7 — Orchestrator + retry loop (Slice B)
+# ===========================================================================
+
+
+async def orchestrate(
+    doc_id: int,
+    *,
+    config: MainConfig,
+    db_path: Path | None = None,
+    band: object | None = None,
+) -> Result[str]:
+    """Run one document through the full classify extraction pipeline.
+
+    1. Tag the run with a fresh correlation id (load-bearing for audit).
+    2. Read the document text and load known facts per dimension.
+    3. Load retry state (attempts + last error).
+    4. For each dimension: extract → write → audit.
+    5. If all clean: stamp the document done + clear retry state.
+    6. If any failure: save error + increment attempts; park at the cap.
+
+    Args:
+        band: Optional ConfidenceBand for status re-gating.  If None,
+              falls back to CONFIG.thresholds.for_pipeline("classify").
+
+    Returns:
+        Success("stamped"), Success("retried"), or Success("parked").
+    """
+    from core.audit import write as audit_write
+    from core.confidence import AIDecision
+    from core.config import CONFIG
+    from core.logging_setup import new_correlation_id
+    from core.tags import load_dimensions
+    from storage.documents import (
+        clear_classify_retry_state,
+        load_classify_retry_state,
+        park_document,
+        record_classify_failure,
+        stamp_classified,
+    )
+
+    # 1. Fresh correlation id — MUST precede any audit write (A7)
+    cid = new_correlation_id()
+
+    # 2. Read the document text
+    text_result = content_reader(doc_id, config=config, db_path=db_path)
+    if isinstance(text_result, Failure):
+        # Can't even read the doc → record failure and bail
+        record_classify_failure(
+            doc_id, text_result.error, db_path=db_path
+        )
+        return Failure(
+            error=f"content_reader failed: {text_result.error}",
+            recoverable=True,
+            context={"doc_id": doc_id, "stage": "orchestrate"},
+        )
+
+    text = text_result.value
+
+    # 3. Load known facts per dimension
+    ctx_result = context_loader(config=config, db_path=db_path)
+    if isinstance(ctx_result, Failure):
+        record_classify_failure(
+            doc_id, ctx_result.error, db_path=db_path
+        )
+        return Failure(
+            error=f"context_loader failed: {ctx_result.error}",
+            recoverable=True,
+            context={"doc_id": doc_id, "stage": "orchestrate"},
+        )
+
+    facts_by_dim: dict[str, list] = ctx_result.value
+
+    # 4. Load retry state
+    state_result = load_classify_retry_state(doc_id, db_path=db_path)
+    if isinstance(state_result, Failure):
+        return Failure(
+            error=f"load_classify_retry_state failed: {state_result.error}",
+            recoverable=False,
+            context={"doc_id": doc_id},
+        )
+
+    attempts, last_error = state_result.value
+
+    # 5. Load dimensions for guidance + band
+    dimensions_path = (
+        Path(__file__).resolve().parent.parent / "config" / "dimensions.yaml"
+    )
+    dims_result = load_dimensions(dimensions_path)
+    if isinstance(dims_result, Failure):
+        record_classify_failure(
+            doc_id, dims_result.error, db_path=db_path
+        )
+        return Failure(
+            error=f"load_dimensions failed: {dims_result.error}",
+            recoverable=False,
+            context={"doc_id": doc_id},
+        )
+
+    rulebook: dict = dims_result.value
+
+    # Confidence band for status re-gating
+    if band is None:
+        band = CONFIG.thresholds.for_pipeline("classify")
+
+    # 6. Per-dimension extract → write → audit
+    all_clean = True
+    failure_reasons: list[str] = []
+
+    for dim_name in rulebook:
+        guidance_text = rulebook[dim_name].get("guidance", "")
+        existing = facts_by_dim.get(dim_name, [])
+
+        # 6a. Extract
+        extracted = await extract(
+            dim_name,
+            text,
+            existing,
+            guidance_text,
+            feedback=last_error or "",
+            config=config,
+        )
+
+        if isinstance(extracted, Failure):
+            all_clean = False
+            failure_reasons.append(f"{dim_name}: {extracted.error}")
+            continue
+
+        # 6b. Write entries
+        summary = write_entries(
+            extracted.value,
+            doc_id,
+            dim_name,
+            band=band,
+            db_path=db_path,
+        )
+
+        if isinstance(summary, Failure):
+            all_clean = False
+            failure_reasons.append(f"{dim_name} write: {summary.error}")
+            continue
+
+        if not summary.value.clean:
+            all_clean = False
+            failure_reasons.append(
+                f"{dim_name}: skipped_ids={summary.value.skipped_ids}"
+            )
+
+        # 6c. Audit per dimension
+        audit_decision = AIDecision(
+            action=f"extract:{dim_name}",
+            confidence=0.8,
+            reasoning=f"Extracted {len(extracted.value)} facts from doc {doc_id}",
+            source_ids=[str(doc_id)],
+        )
+        audit_result = audit_write(
+            audit_decision,
+            pipeline="classify",
+            stage=dim_name,
+            outcome="classify" if all_clean else "needs-retry",
+            db_path=db_path,
+        )
+        if isinstance(audit_result, Failure):
+            all_clean = False
+            failure_reasons.append(
+                f"{dim_name} audit: {audit_result.error}"
+            )
+
+    # 7. Decide: stamp or retry
+    if all_clean:
+        # All dimensions passed → stamp + clear retry
+        stamp_result = stamp_classified(doc_id, db_path=db_path)
+        if isinstance(stamp_result, Failure) or stamp_result.value == 0:
+            # Rowcount 0 means the doc was deleted mid-run — treat as failure
+            record_classify_failure(
+                doc_id,
+                "stamp_classified returned 0 rowcount — doc may have been deleted",
+                db_path=db_path,
+            )
+            return Failure(
+                error="stamp_classified failed or returned 0",
+                recoverable=True,
+                context={"doc_id": doc_id},
+            )
+
+        clear_classify_retry_state(doc_id, db_path=db_path)
+        _worker_log.info(
+            "orchestrate stamped doc_id=%s cid=%s", doc_id, cid
+        )
+        return Success("stamped")
+
+    # Partial/full failure
+    error_msg = "; ".join(failure_reasons)
+    record_classify_failure(doc_id, error_msg, db_path=db_path)
+
+    # Re-read attempts (just incremented by record_classify_failure)
+    state2 = load_classify_retry_state(doc_id, db_path=db_path)
+    new_attempts = state2.value[0] if isinstance(state2, Success) else attempts + 1
+
+    if new_attempts >= config.classify.max_retries:
+        # Park the document
+        park_document(doc_id, db_path=db_path)
+        park_decision = AIDecision(
+            action="park:max_retries",
+            confidence=1.0,
+            reasoning=f"Parked after {new_attempts} failed attempts: {error_msg}",
+            source_ids=[str(doc_id)],
+        )
+        audit_write(
+            park_decision,
+            pipeline="classify",
+            stage="park",
+            outcome="parked",
+            db_path=db_path,
+        )
+        _worker_log.warning(
+            "orchestrate parked doc_id=%s attempts=%s cid=%s",
+            doc_id, new_attempts, cid,
+        )
+        return Success("parked")
+
+    _worker_log.info(
+        "orchestrate retry doc_id=%s attempts=%s cid=%s",
+        doc_id, new_attempts, cid,
+    )
+    return Success("retried")

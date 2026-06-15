@@ -419,9 +419,9 @@ Remove or gut modules that the rearchitecture kills. Clean up imports.
 
 ---
 
-## Phase 6 — Daemon
+## Phase 6 — Daemon ✅
 
-**Status: ✅ Slice A1 (core sync pipe) + Slice A2 (cache + smart reconcile) COMPLETE (2026-06-14). Slice B (installable desktop app) — plan written, NOT implemented.**
+**Status: ✅ Slice A1 (core sync pipe) + Slice A2 (cache + smart reconcile) COMPLETE (2026-06-14). ✅ Slice B (installable desktop app).**
 
 **`DEPENDS ON: Phase 5 · WEIGHT: medium · TYPE: new local package`**
 
@@ -592,7 +592,7 @@ Package daemon as a single installable app for Mac.
 
 ---
 
-## Phase 7 — Capture Refactor
+## Phase 7 — Capture Refactor ✅
 
 **Status: ✅ COMPLETE (2026-06-14). Phase 7A (Text Capture) + Phase 7B (Visual/Binary Capture) — both merged to cloud-native.**
 
