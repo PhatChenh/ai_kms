@@ -392,16 +392,18 @@ def _delete_with_blob_cleanup(
     Returns:
         ``Success(rowcount)`` or ``Failure(recoverable=False)``.
     """
-    # 1. Pre-read the row to capture blob_ref
+    # 1. Pre-read the row to capture blob_ref and doc id (for source-prune)
     pre_read = get_by_path(vault_path, db_path=db_path)
     blob_ref: str | None = None
+    doc_id: int | None = None
     match pre_read:
         case Success(row) if row is not None:
             blob_ref = row.blob_ref
+            doc_id = row.id
         case Failure():
             return pre_read
         case _:
-            pass  # row is None → treat as no blob
+            pass  # row is None → treat as no blob, no prune needed
 
     # 2. Delete the row (existing behavior)
     del_result = delete_by_path(vault_path=vault_path, db_path=db_path)
@@ -409,6 +411,18 @@ def _delete_with_blob_cleanup(
         return del_result
 
     rowcount: int = del_result.value  # type: ignore[union-attr]
+
+    # 2b. Phase 9 — Prune deleted doc id from knowledge_entries sources
+    if doc_id is not None and rowcount > 0:
+        from storage.knowledge_entries import prune_sources
+
+        prune_result = prune_sources(doc_id, db_path=db_path)
+        if prune_result.is_failure():
+            _log.warning(
+                "prune_sources failed doc_id=%s error=%s",
+                doc_id,
+                prune_result.error,
+            )
 
     # 3-4. Reference-count check + best-effort blob delete
     if blob_ref is not None and blob_store is not None and rowcount > 0:
