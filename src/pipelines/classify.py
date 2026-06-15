@@ -165,31 +165,9 @@ async def consumer(
             doc_id = await queue.get()
             got_item = True
 
-            # ---- Content Reader ----
-            cr = content_reader(doc_id, config=config, db_path=db_path)
-            if isinstance(cr, Failure):
-                _worker_log.warning(
-                    "classify_worker content_reader failed doc_id=%s error=%s",
-                    doc_id,
-                    cr.error,
-                )
-                continue
-
-            # ---- Dimension Loader (no-op: dimensions are loaded by context_loader) ----
-            # The design says "Dimension Loader → Context Loader".
-            # load_dimensions is called internally by context_loader.
-
-            # ---- Context Loader ----
-            cl = context_loader(config=config, db_path=db_path)
-            if isinstance(cl, Failure):
-                _worker_log.warning(
-                    "classify_worker context_loader failed doc_id=%s error=%s",
-                    doc_id,
-                    cl.error,
-                )
-                continue
-
             # ---- Slice B seam (Phase 7) ----
+            # orchestrate() handles all input preparation internally
+            # (content_reader, context_loader, retry state, dimensions).
             orch_result = await orchestrate(doc_id, config=config, db_path=db_path)
             if isinstance(orch_result, Failure):
                 _worker_log.warning(
@@ -230,23 +208,6 @@ async def catch_up_scan(
         queue.put_nowait(doc_id)
 
     _worker_log.info("catch_up_scan enqueued=%d", len(result.value))
-
-
-# ===========================================================================
-# Phase 5 — Entity Extractor (Slice B)
-# ===========================================================================
-
-
-@dataclass
-class _ExtractFact:
-    """One parsed fact from the AI reply — internal to extract()."""
-    action: str
-    entity: str
-    tag: str
-    fact: str = ""
-    confidence: float = 0.5
-    id: int | None = None
-    reason: str = ""
 
 
 async def extract(
@@ -421,6 +382,16 @@ async def extract(
 
         elif action == "new":
             # new: requires entity, tag, fact, confidence; must NOT have id
+            if "id" in item:
+                return Failure(
+                    error=f"entity_extract item[{i}] 'new' must not include 'id'",
+                    recoverable=True,
+                    context={
+                        "stage": "extract",
+                        "dimension": dimension,
+                        "raw": raw_text[:200],
+                    },
+                )
             for field in ("entity", "tag", "fact", "confidence"):
                 if field not in item:
                     return Failure(
@@ -432,6 +403,29 @@ async def extract(
                             "raw": raw_text[:200],
                         },
                     )
+                # Non-empty check for string fields (M5)
+                if field in ("entity", "tag", "fact") and not str(item[field]).strip():
+                    return Failure(
+                        error=f"entity_extract item[{i}] 'new' {field!r} must not be empty",
+                        recoverable=True,
+                        context={
+                            "stage": "extract",
+                            "dimension": dimension,
+                            "raw": raw_text[:200],
+                        },
+                    )
+            # Confidence range validation (I4)
+            conf_val = float(item["confidence"])
+            if conf_val < 0.0 or conf_val > 1.0:
+                return Failure(
+                    error=f"entity_extract item[{i}] confidence {conf_val} out of range [0.0, 1.0]",
+                    recoverable=True,
+                    context={
+                        "stage": "extract",
+                        "dimension": dimension,
+                        "raw": raw_text[:200],
+                    },
+                )
             parsed.append({
                 "action": "new",
                 "entity": item["entity"],
@@ -489,7 +483,6 @@ def write_entries(
     """
     from storage.knowledge_entries import (
         KnowledgeEntry,
-        get_confident_and_pending,
         query_by_entity,
         retire as ke_retire,
         upsert as ke_upsert,
@@ -580,6 +573,11 @@ def write_entries(
             existing_sources: list[str] = (
                 json.loads(row["sources"]) if row["sources"] else []
             )
+            # Preserve existing reasoning unless AI explicitly provides one (I3)
+            existing_reasoning: str = row["reasoning"] if "reasoning" in row.keys() else ""
+            new_reasoning = fact.get("reason", "")
+            merged_reasoning = new_reasoning if new_reasoning else existing_reasoning
+            
             merged_sources = existing_sources + [str(doc_id)]
             # Dedupe while preserving order
             seen: set[str] = set()
@@ -597,7 +595,7 @@ def write_entries(
                 fact=fact.get("fact", ""),
                 confidence=float(fact.get("confidence", 0.5)),
                 sources=deduped,
-                reasoning=fact.get("reason", ""),
+                reasoning=merged_reasoning,
             )
 
             # Re-gate status
@@ -631,6 +629,16 @@ def write_entries(
                     ):
                         twin_id = t.id
                         break
+            else:
+                # DB error on twin lookup — log, mark unclean, skip this fact
+                _worker_log.warning(
+                    "write_entries twin lookup failed entity=%s error=%s doc_id=%s",
+                    entity,
+                    twins_result.error,
+                    doc_id,
+                )
+                summary.clean = False
+                continue
 
             if twin_id is not None:
                 # Fold into the existing twin: merge sources, update fact text
@@ -638,15 +646,18 @@ def write_entries(
                     with get_connection(db_path, readonly=True) as conn:
                         conn.row_factory = _sqlite3.Row
                         twin_row = conn.execute(
-                            "SELECT sources FROM knowledge_entries WHERE id = ?",
+                            "SELECT sources, reasoning FROM knowledge_entries WHERE id = ?",
                             (twin_id,),
                         ).fetchone()
                 except _sqlite3.Error:
                     twin_row = None
 
                 existing_sources: list[str] = []
-                if twin_row and twin_row["sources"]:
-                    existing_sources = json.loads(twin_row["sources"])
+                existing_reasoning: str = ""
+                if twin_row:
+                    if twin_row["sources"]:
+                        existing_sources = json.loads(twin_row["sources"])
+                    existing_reasoning = twin_row["reasoning"] or ""
 
                 merged = existing_sources + [str(doc_id)]
                 seen = set()
@@ -656,6 +667,10 @@ def write_entries(
                         seen.add(s)
                         deduped_sources.append(s)
 
+                # Preserve existing reasoning unless AI explicitly provides one (I3)
+                new_reasoning = fact.get("reason", "")
+                merged_reasoning = new_reasoning if new_reasoning else existing_reasoning
+
                 twin_entry = KnowledgeEntry(
                     id=twin_id,
                     dimension=dimension,
@@ -664,7 +679,7 @@ def write_entries(
                     fact=fact.get("fact", ""),
                     confidence=confidence,
                     sources=deduped_sources,
-                    reasoning=fact.get("reason", ""),
+                    reasoning=merged_reasoning,
                 )
 
                 status = None
@@ -763,10 +778,14 @@ async def orchestrate(
     # 2. Read the document text
     text_result = content_reader(doc_id, config=config, db_path=db_path)
     if isinstance(text_result, Failure):
-        # Can't even read the doc → record failure and bail
-        record_classify_failure(
+        rf_result = record_classify_failure(
             doc_id, text_result.error, db_path=db_path
         )
+        if isinstance(rf_result, Failure):
+            _worker_log.warning(
+                "orchestrate record_classify_failure failed doc_id=%s error=%s",
+                doc_id, rf_result.error,
+            )
         return Failure(
             error=f"content_reader failed: {text_result.error}",
             recoverable=True,
@@ -778,9 +797,14 @@ async def orchestrate(
     # 3. Load known facts per dimension
     ctx_result = context_loader(config=config, db_path=db_path)
     if isinstance(ctx_result, Failure):
-        record_classify_failure(
+        rf_result = record_classify_failure(
             doc_id, ctx_result.error, db_path=db_path
         )
+        if isinstance(rf_result, Failure):
+            _worker_log.warning(
+                "orchestrate record_classify_failure failed doc_id=%s error=%s",
+                doc_id, rf_result.error,
+            )
         return Failure(
             error=f"context_loader failed: {ctx_result.error}",
             recoverable=True,
@@ -806,9 +830,14 @@ async def orchestrate(
     )
     dims_result = load_dimensions(dimensions_path)
     if isinstance(dims_result, Failure):
-        record_classify_failure(
+        rf_result = record_classify_failure(
             doc_id, dims_result.error, db_path=db_path
         )
+        if isinstance(rf_result, Failure):
+            _worker_log.warning(
+                "orchestrate record_classify_failure failed doc_id=%s error=%s",
+                doc_id, rf_result.error,
+            )
         return Failure(
             error=f"load_dimensions failed: {dims_result.error}",
             recoverable=False,
@@ -826,6 +855,7 @@ async def orchestrate(
     failure_reasons: list[str] = []
 
     for dim_name in rulebook:
+        dim_clean = True  # per-dimension tracker (C1)
         guidance_text = rulebook[dim_name].get("guidance", "")
         existing = facts_by_dim.get(dim_name, [])
 
@@ -841,41 +871,41 @@ async def orchestrate(
 
         if isinstance(extracted, Failure):
             all_clean = False
+            dim_clean = False
             failure_reasons.append(f"{dim_name}: {extracted.error}")
-            continue
-
-        # 6b. Write entries
-        summary = write_entries(
-            extracted.value,
-            doc_id,
-            dim_name,
-            band=band,
-            db_path=db_path,
-        )
-
-        if isinstance(summary, Failure):
-            all_clean = False
-            failure_reasons.append(f"{dim_name} write: {summary.error}")
-            continue
-
-        if not summary.value.clean:
-            all_clean = False
-            failure_reasons.append(
-                f"{dim_name}: skipped_ids={summary.value.skipped_ids}"
+        else:
+            # 6b. Write entries
+            summary = write_entries(
+                extracted.value,
+                doc_id,
+                dim_name,
+                band=band,
+                db_path=db_path,
             )
 
-        # 6c. Audit per dimension
+            if isinstance(summary, Failure):
+                all_clean = False
+                dim_clean = False
+                failure_reasons.append(f"{dim_name} write: {summary.error}")
+            elif not summary.value.clean:
+                all_clean = False
+                dim_clean = False
+                failure_reasons.append(
+                    f"{dim_name}: skipped_ids={summary.value.skipped_ids}"
+                )
+
+        # 6c. Audit per dimension — always write, even on failure (C1)
         audit_decision = AIDecision(
             action=f"extract:{dim_name}",
             confidence=0.8,
-            reasoning=f"Extracted {len(extracted.value)} facts from doc {doc_id}",
+            reasoning=f"Extracted {len(extracted.value) if not isinstance(extracted, Failure) else 0} facts from doc {doc_id}",
             source_ids=[str(doc_id)],
         )
         audit_result = audit_write(
             audit_decision,
             pipeline="classify",
             stage=dim_name,
-            outcome="classify" if all_clean else "needs-retry",
+            outcome="classify" if dim_clean else "needs-retry",
             db_path=db_path,
         )
         if isinstance(audit_result, Failure):
@@ -890,11 +920,16 @@ async def orchestrate(
         stamp_result = stamp_classified(doc_id, db_path=db_path)
         if isinstance(stamp_result, Failure) or stamp_result.value == 0:
             # Rowcount 0 means the doc was deleted mid-run — treat as failure
-            record_classify_failure(
+            rf_result = record_classify_failure(
                 doc_id,
                 "stamp_classified returned 0 rowcount — doc may have been deleted",
                 db_path=db_path,
             )
+            if isinstance(rf_result, Failure):
+                _worker_log.warning(
+                    "orchestrate record_classify_failure failed doc_id=%s error=%s",
+                    doc_id, rf_result.error,
+                )
             return Failure(
                 error="stamp_classified failed or returned 0",
                 recoverable=True,
@@ -909,7 +944,12 @@ async def orchestrate(
 
     # Partial/full failure
     error_msg = "; ".join(failure_reasons)
-    record_classify_failure(doc_id, error_msg, db_path=db_path)
+    rf_result = record_classify_failure(doc_id, error_msg, db_path=db_path)
+    if isinstance(rf_result, Failure):
+        _worker_log.warning(
+            "orchestrate record_classify_failure failed doc_id=%s error=%s",
+            doc_id, rf_result.error,
+        )
 
     # Re-read attempts (just incremented by record_classify_failure)
     state2 = load_classify_retry_state(doc_id, db_path=db_path)

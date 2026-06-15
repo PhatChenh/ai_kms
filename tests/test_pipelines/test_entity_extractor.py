@@ -403,3 +403,93 @@ class TestEntityExtractor:
 
         assert isinstance(result, Failure)
         assert result.recoverable is True
+
+    async def test_new_fact_with_spurious_id_is_rejected(self, tmp_path, monkeypatch):
+        """I6 — A 'new' action with an 'id' field → recoverable Failure."""
+        from pipelines.classify import extract
+
+        reply = json.dumps([{
+            "action": "new",
+            "id": 99,
+            "entity": "Anthony",
+            "tag": "other",
+            "fact": "Test.",
+            "confidence": 0.9,
+        }])
+        provider = _FakeProvider(reply=reply)
+        monkeypatch.setattr(
+            "pipelines.classify.get_provider", lambda task, cfg: provider
+        )
+
+        result = await extract(
+            dimension="TestDim",
+            text="Some text.",
+            existing_facts=[],
+            guidance="Tag: other",
+            feedback="",
+            config=_make_config(str(tmp_path)),
+        )
+
+        assert isinstance(result, Failure)
+        assert result.recoverable is True
+
+    async def test_confidence_out_of_range_is_rejected(self, tmp_path, monkeypatch):
+        """I4 — confidence outside [0.0, 1.0] → recoverable Failure."""
+        from pipelines.classify import extract
+
+        reply = json.dumps([{
+            "action": "new",
+            "entity": "Anthony",
+            "tag": "other",
+            "fact": "Test.",
+            "confidence": 2.5,
+        }])
+        provider = _FakeProvider(reply=reply)
+        monkeypatch.setattr(
+            "pipelines.classify.get_provider", lambda task, cfg: provider
+        )
+
+        result = await extract(
+            dimension="TestDim",
+            text="Some text.",
+            existing_facts=[],
+            guidance="Tag: other",
+            feedback="",
+            config=_make_config(str(tmp_path)),
+        )
+
+        assert isinstance(result, Failure)
+        assert result.recoverable is True
+
+    async def test_empty_entity_tag_or_fact_is_rejected(self, tmp_path, monkeypatch):
+        """M5 — empty string for entity, tag, or fact → recoverable Failure."""
+        from pipelines.classify import extract
+
+        for bad_field, bad_value in [("entity", ""), ("tag", ""), ("fact", "")]:
+            item = {
+                "action": "new",
+                "entity": "Anthony",
+                "tag": "other",
+                "fact": "Test.",
+                "confidence": 0.9,
+            }
+            item[bad_field] = bad_value
+            reply = json.dumps([item])
+            provider = _FakeProvider(reply=reply)
+            monkeypatch.setattr(
+                "pipelines.classify.get_provider", lambda task, cfg: provider
+            )
+
+            result = await extract(
+                dimension="TestDim",
+                text="Some text.",
+                existing_facts=[],
+                guidance="Tag: other",
+                feedback="",
+                config=_make_config(str(tmp_path)),
+            )
+
+            assert isinstance(result, Failure), (
+                f"Empty {bad_field!r} should be rejected"
+            )
+            assert result.recoverable is True
