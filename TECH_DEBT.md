@@ -632,6 +632,28 @@ Note: `MetadataResult.ai_domain` is **kept** as internal pipeline state — `app
 
 ---
 
+### TD-069 · context_loader re-reads dimensions + re-queries facts per document
+**Status:** OPEN
+**Phase:** Phase 8 Slice B (fix when the consumer loop is built) or fast-follow
+**Risk if triggered early:** Low correctness risk, real cost risk. For N documents and D dimensions, `context_loader` (`pipelines/classify.py`) re-reads `dimensions.yaml` and re-queries `knowledge_entries` per document — N×D redundant reads. Inert in Slice A (no AI). In Slice B each document also drives a paid LLM call per dimension, so the wasted DB work compounds alongside token spend.
+**What:** Cache the loaded dimensions rulebook + per-dimension fact set once per consumer session instead of per document.
+**Why deferred:** Correctness is unaffected; the optimization is a clean fast-follow once the Slice B consumer loop exists. Carried from the Phase 8 Slice A review note.
+**Unblock condition:** Slice B consumer loop implemented → add a per-session cache.
+**Source:** Phase 8 Slice A review note; re-raised by Phase 8 Slice B research (2026-06-15).
+
+---
+
+### TD-070 · context_loader hardcodes dimensions.yaml path via Path(__file__) traversal
+**Status:** OPEN
+**Phase:** Phase 8 Slice B or whenever package-install / deployment layout changes
+**Risk if triggered early:** Breaks silently if the source-tree layout changes (package install into site-packages, deployment restructure) — the `Path(__file__).resolve().parent.parent / "config" / "dimensions.yaml"` traversal resolves to the wrong place.
+**What:** Resolve `dimensions.yaml` via `CONFIG_DIR` from `core.config` (matching how other config/SQL files resolve relative to install path) or accept a path parameter, instead of `Path(__file__)` traversal.
+**Why deferred:** Works in the current dev + Docker layout; fragile but not broken. Carried from the Phase 8 Slice A review note.
+**Unblock condition:** Any change to package install / deployment file layout, or before first non-editable install of the classify path.
+**Source:** Phase 8 Slice A review note; re-raised by Phase 8 Slice B research (2026-06-15).
+
+---
+
 ## Archive
 
 ### TD-001 · core/pipeline.py
