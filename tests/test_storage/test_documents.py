@@ -570,3 +570,206 @@ def test_find_unclassified_db_error(tmp_path):
     result = find_unclassified(db_path=bad_db)
     assert isinstance(result, Failure)
     assert result.recoverable is False
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Retry-state tests (Slice B)
+# ---------------------------------------------------------------------------
+
+
+def test_work_finder_excludes_needs_review(db: Path):
+    """find_unclassified skips documents with status='needs-review' even
+    when their classify fingerprint is NULL."""
+    from storage.documents import find_unclassified
+
+    conn = sqlite3.connect(str(db))
+    # Seed: parked doc (NULL fingerprint + status=needs-review)
+    conn.execute(
+        """INSERT INTO documents (vault_path, title, status, content_hash)
+           VALUES (?, ?, 'needs-review', ?)""",
+        ("parked.md", "Parked", "hash1"),
+    )
+    # Seed: normal unclassified doc (NULL fingerprint, NULL status)
+    conn.execute(
+        """INSERT INTO documents (vault_path, title, content_hash)
+           VALUES (?, ?, ?)""",
+        ("normal.md", "Normal", "hash2"),
+    )
+    # Seed: stale fingerprint doc (non-NULL, mismatched)
+    conn.execute(
+        """INSERT INTO documents (vault_path, title, content_hash, classify_content_hash)
+           VALUES (?, ?, ?, ?)""",
+        ("stale.md", "Stale", "hash3", "oldhash"),
+    )
+    # Seed: already-classified doc (matching fingerprints)
+    conn.execute(
+        """INSERT INTO documents (vault_path, title, content_hash, classify_content_hash)
+           VALUES (?, ?, ?, ?)""",
+        ("done.md", "Done", "hash4", "hash4"),
+    )
+    conn.commit()
+    conn.close()
+
+    result = find_unclassified(db_path=db)
+    assert isinstance(result, Success)
+    ids = result.value
+    # parked.md should NOT be in the list
+    parked_id = _doc_id(db, "parked.md")
+    assert parked_id not in ids, "needs-review doc should be excluded"
+    # normal.md and stale.md SHOULD be in the list
+    normal_id = _doc_id(db, "normal.md")
+    stale_id = _doc_id(db, "stale.md")
+    done_id = _doc_id(db, "done.md")
+    assert normal_id in ids, "NULL-fingerprint doc should be included"
+    assert stale_id in ids, "stale-fingerprint doc should be included"
+    assert done_id not in ids, "matching-fingerprint doc should be excluded"
+
+
+def test_document_row_classify_attempts_round_trips(db: Path):
+    """classify_attempts field on DocumentRow is read from the DB."""
+    from storage.documents import DocumentRow, get_by_path, _row_from_sqlite
+
+    _seed(vault_path="test.md", content_hash="h1", db=db)
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        "UPDATE documents SET classify_attempts = 2 WHERE vault_path = ?",
+        ("test.md",),
+    )
+    conn.commit()
+    conn.close()
+
+    result = get_by_path("test.md", db_path=db)
+    assert isinstance(result, Success)
+    row = result.value
+    assert row is not None
+    assert row.classify_attempts == 2
+
+
+def test_document_row_classify_last_error_round_trips(db: Path):
+    """classify_last_error field on DocumentRow is read from the DB."""
+    from storage.documents import get_by_path
+
+    _seed(vault_path="test.md", content_hash="h1", db=db)
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        "UPDATE documents SET classify_last_error = ? WHERE vault_path = ?",
+        ("bad JSON", "test.md"),
+    )
+    conn.commit()
+    conn.close()
+
+    result = get_by_path("test.md", db_path=db)
+    assert isinstance(result, Success)
+    row = result.value
+    assert row is not None
+    assert row.classify_last_error == "bad JSON"
+
+
+def test_document_row_retry_fields_default(db: Path):
+    """New documents have classify_attempts=0, classify_last_error=None."""
+    from storage.documents import get_by_path
+
+    _seed(vault_path="test.md", content_hash="h1", db=db)
+    result = get_by_path("test.md", db_path=db)
+    assert isinstance(result, Success)
+    row = result.value
+    assert row is not None
+    assert row.classify_attempts == 0
+    assert row.classify_last_error is None
+
+
+def test_record_classify_failure_increments_and_saves_error(db: Path):
+    """record_classify_failure bumps attempts and stores the error string."""
+    from storage.documents import record_classify_failure, load_classify_retry_state
+
+    doc_id = _seed(vault_path="test.md", content_hash="h1", db=db)
+
+    # First failure
+    r1 = record_classify_failure(doc_id, "parse error", db_path=db)
+    assert isinstance(r1, Success)
+    assert r1.value == 1
+
+    state = load_classify_retry_state(doc_id, db_path=db)
+    assert isinstance(state, Success)
+    attempts, error = state.value
+    assert attempts == 1
+    assert error == "parse error"
+
+    # Second failure
+    r2 = record_classify_failure(doc_id, "timeout", db_path=db)
+    assert isinstance(r2, Success)
+    state2 = load_classify_retry_state(doc_id, db_path=db)
+    assert isinstance(state2, Success)
+    assert state2.value[0] == 2
+    assert state2.value[1] == "timeout"
+
+
+def test_clear_classify_retry_state_resets_both(db: Path):
+    """clear_classify_retry_state resets attempts to 0 and error to None."""
+    from storage.documents import (
+        clear_classify_retry_state,
+        load_classify_retry_state,
+        record_classify_failure,
+    )
+
+    doc_id = _seed(vault_path="test.md", content_hash="h1", db=db)
+    record_classify_failure(doc_id, "some error", db_path=db)
+
+    result = clear_classify_retry_state(doc_id, db_path=db)
+    assert isinstance(result, Success)
+    assert result.value == 1
+
+    state = load_classify_retry_state(doc_id, db_path=db)
+    assert isinstance(state, Success)
+    assert state.value == (0, None)
+
+
+def test_park_document_sets_needs_review_status(db: Path):
+    """park_document sets status='needs-review'."""
+    from storage.documents import park_document, get_by_path
+
+    doc_id = _seed(vault_path="test.md", content_hash="h1", db=db)
+
+    result = park_document(doc_id, db_path=db)
+    assert isinstance(result, Success)
+    assert result.value == 1
+
+    row_result = get_by_path("test.md", db_path=db)
+    assert isinstance(row_result, Success)
+    row = row_result.value
+    assert row is not None
+    assert row.status == "needs-review"
+
+
+def test_load_classify_retry_state_missing_id_returns_defaults(db: Path):
+    """load_classify_retry_state for a non-existent id returns (0, None)."""
+    from storage.documents import load_classify_retry_state
+
+    result = load_classify_retry_state(99999, db_path=db)
+    assert isinstance(result, Success)
+    assert result.value == (0, None)
+
+
+def test_record_classify_failure_missing_id_returns_zero(db: Path):
+    """record_classify_failure for a non-existent id returns 0 rowcount."""
+    from storage.documents import record_classify_failure
+
+    result = record_classify_failure(99999, "error", db_path=db)
+    assert isinstance(result, Success)
+    assert result.value == 0
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+
+def _doc_id(db: Path, vault_path: str) -> int:
+    """Return the id of a documents row by vault_path."""
+    conn = sqlite3.connect(str(db))
+    row = conn.execute(
+        "SELECT id FROM documents WHERE vault_path = ?", (vault_path,)
+    ).fetchone()
+    conn.close()
+    assert row is not None, f"No row for {vault_path}"
+    return row[0]
