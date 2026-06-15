@@ -231,6 +231,38 @@ _Avoid_: "extractor" (that is the daemon's text-extraction step, a different thi
 The Slice A step that gathers the existing facts already known for a dimension (confident and pending only, never retired), ranks them by trust then confidence then recency, and keeps only the top N per dimension (a configured budget cap) so the prompt does not bloat. Each surviving fact carries its database ID so a later step can reference it for update or retirement.
 _Avoid_: "memory loader", "history loader"
 
+### Cloud-Native — Classify Extraction (Phase 8 Slice B)
+
+> Introduced by Phase 8 Slice B (`docs/1_design/phase8_sliceB_extraction.md`; ADR-0018, ADR-0019). Slice B is the AI brain that Slice A's plumbing feeds: it extracts structured facts per dimension and safely writes them. These terms describe extraction, safe writing, and the self-correcting retry loop.
+
+**entity extractor:**
+The Slice B step that makes one focused AI call per dimension — feeding that dimension's guidance, its top-ranked existing facts (each with its database id), the document text, and any previous-attempt feedback — and parses the structured-JSON reply into a list of proposed facts to add, update, or retire. One call per dimension, never one monolithic call.
+_Avoid_: "the classifier", "extraction model" (it is a step that calls a model, not the model itself)
+
+**entry writer:**
+The Slice B step that applies the extracted facts to the knowledge table: it routes each proposed fact by action (new → insert, update → edit the referenced fact, retire → retire the referenced fact), validates that referenced ids exist, accumulates sources on update, and folds exact duplicates. The only place that writes knowledge facts during classify.
+_Avoid_: "fact saver", "writer" alone (ambiguous with the vault writer)
+
+**source accumulation:**
+The rule that when a new document updates an existing fact, the document's id is *added* to that fact's source list (and deduped), never overwriting the prior sources. Provenance must grow — "which documents back this fact" is the point — and the database does not merge for you, so the entry writer reads the existing list, appends, dedupes, and writes the merged list.
+_Avoid_: "source overwrite", "re-sourcing" (the whole point is it accumulates, never replaces)
+
+**exact-entity dedup backstop:**
+The deterministic safety check the entry writer runs before inserting any brand-new fact: it looks up the database for an existing non-retired fact with the same dimension, entity, and tag, and if found, folds the new fact into that one (as an update) instead of spawning a twin. It exists because the AI only sees the capped top-N existing facts, so a duplicate ranked outside that window would otherwise slip through. Catches exact-entity duplicates only; name-variant duplicates ("Anthony" vs "Anthony Nguyen") are entity resolution, deferred.
+_Avoid_: "unique index", "dedup constraint" (there is no DB uniqueness rule — it is a write-time lookup)
+
+**self-correction retry (withhold-stamp loop):**
+The behavior where a document that produced any bad fact or a failed audit write is deliberately *not* marked classified, so the work-discovery scan re-finds it and tries again — and on each retry the prompt carries a machine-generated note of what failed last time so the AI can correct itself. The good facts from each attempt are kept; duplicates fold away on retry. Distinct from a blind retry (which repeats the same mistake) and from the banned Phase-10 user-corrections slot (this feedback is machine-generated validation errors, not human edits).
+_Avoid_: "retry queue", "redo" (there is no separate queue — it is the absence of the done-stamp plus the catch-up scan)
+
+**parked for human review:**
+The terminal state a document reaches after a configured number of failed classify attempts: auto-retrying stops, the document's status is set to needs-review (the work scan skips it), and an audit entry records why it was parked. It prevents a permanently-malformed AI reply from looping forever and burning tokens, while never losing the partial facts already written. A future web UI surfaces parked documents.
+_Avoid_: "failed", "dead-lettered" (it is paused for a human, not discarded; the facts and the document survive)
+
+**live enqueue:**
+The wiring that puts a freshly-captured document's id straight onto the running work queue the moment capture finishes, so it classifies immediately instead of waiting for the next container restart. The queue is reached via the running web app's shared state; when no queue is present (command-line or test runs) the push is skipped and the startup catch-up scan remains the safety net.
+_Avoid_: "push notification", "trigger" alone (be specific — it is an in-process queue put, gated on the queue being present)
+
 ### Cloud-Native — Deployment Foundation (P5 Slice 2)
 
 > Introduced by P5 Slice 2 (`docs/1_design/P5_slice2_deployment_foundation.md`). These concepts let the existing cloud code run as a container on AgentBase and give the future daemon (Phase 6) a cloud endpoint to send files to. Purely additive infrastructure — no pipeline changes.
