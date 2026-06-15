@@ -30,6 +30,32 @@ from storage.documents import (
 
 _log = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Phase 8 — Live-enqueue helper
+# ---------------------------------------------------------------------------
+
+
+def _push_to_classify_queue(request: Request, document_id: int) -> None:
+    """Push *document_id* onto the classify work queue if one is present.
+
+    The queue is published on app.state by the composed lifespan in
+    cloud_entry.py.  When absent (CLI / tests), skip silently — the
+    catch-up scan is the safety net.
+    """
+    import asyncio
+    queue = getattr(request.app.state, "classify_queue", None)
+    if queue is not None:
+        try:
+            queue.put_nowait(document_id)
+        except asyncio.QueueFull:
+            _log.warning(
+                "classify_queue full — doc_id=%s will be picked up by next "
+                "catch-up scan",
+                document_id,
+            )
+
+_log = logging.getLogger(__name__)
+
 # Testability injection point — set this to an explicit Path in tests to
 # override the default CONFIG-derived database path.  None = use CONFIG.
 _db_path: Path | None = None
@@ -212,6 +238,8 @@ async def upload_handler(request: Request) -> JSONResponse:
 
         match result:
             case Success(document_id):
+                # Phase 8 — Live-enqueue: push new doc onto the classify queue
+                _push_to_classify_queue(request, document_id)
                 return JSONResponse({"status": "ok", "document_id": document_id})
             case Failure(error=err):
                 return JSONResponse(
@@ -267,6 +295,8 @@ async def upload_handler(request: Request) -> JSONResponse:
 
         match result:
             case Success(document_id):
+                # Phase 8 — Live-enqueue: push new doc onto the classify queue
+                _push_to_classify_queue(request, document_id)
                 return JSONResponse({"status": "ok", "document_id": document_id})
             case Failure(error=err):
                 return JSONResponse(
