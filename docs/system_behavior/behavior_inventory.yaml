@@ -4485,3 +4485,292 @@
   pytest_ref: null
   status: planned
   retired: null
+- id: P8-CLS-B-01
+  behavior: For each knowledge dimension, the system makes one focused AI call that
+    sees the document content, that dimension's guidance, and that dimension's
+    existing facts (each with its database id), and returns structured facts to
+    add, update, or retire
+  tier: full
+  phase: 8
+  origin: design
+  granularity: outcome
+  trigger: The classify worker processes a captured document with non-empty content
+  fixtures: []
+  steps:
+  - Capture a document mentioning a person and a project, then let the classify
+    worker process it with a stubbed AI returning a valid per-dimension JSON reply.
+  - Inspect the AI request payload and the parsed facts for one dimension.
+  expected:
+  - One AI call is made per configured dimension (not one monolithic call)
+  - Each call's payload includes the document content, that dimension's guidance,
+    and that dimension's existing facts each carrying its database id
+  - A valid JSON reply parses into facts each tagged with a dimension, tag, and action
+  spec_ref: docs/1_design/phase8_sliceB_extraction.md §Success criteria
+  human_reviewed: 'no'
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P8-CLS-B-02
+  behavior: A new fact is inserted, an update action edits the referenced existing
+    fact, and a retire action retires the referenced existing fact (never deletes it),
+    with status re-gated from the fact's confidence on every write
+  tier: full
+  phase: 8
+  origin: design
+  granularity: outcome
+  trigger: The entry writer applies a parsed set of new/update/retire facts
+  fixtures: []
+  steps:
+  - Seed one existing fact, then apply a reply containing one new fact, one update
+    referencing the seeded fact's id, and one retire referencing it.
+  - Inspect the knowledge_entries table afterward.
+  expected:
+  - The new fact appears as a fresh row with status derived from its confidence
+  - The updated fact's row reflects the new content
+  - The retired fact's row has status retired and is never physically deleted
+  spec_ref: docs/1_design/phase8_sliceB_extraction.md §Success criteria
+  human_reviewed: 'no'
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P8-CLS-B-03
+  behavior: When a document updates an existing fact, the document's id is appended
+    to that fact's source list and deduplicated, never overwriting the existing sources
+  tier: full
+  phase: 8
+  origin: design
+  granularity: outcome
+  trigger: An update action targets a fact already sourced from other documents
+  fixtures: []
+  steps:
+  - Seed a fact whose sources list holds one document id.
+  - Apply an update to that fact originating from a second document.
+  expected:
+  - The fact's sources list contains both document ids after the update
+  - No previously-recorded source id is lost
+  - Re-applying the same update does not duplicate the id in the sources list
+  spec_ref: docs/1_design/phase8_sliceB_extraction.md §Success criteria
+  human_reviewed: 'no'
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P8-CLS-B-04
+  behavior: Before inserting a brand-new fact, the writer checks for an existing
+    non-retired fact with the same dimension and entity and tag; if one exists it folds
+    into that fact (treated as an update) instead of creating a duplicate, and logs the fold
+  tier: full
+  phase: 8
+  origin: design
+  granularity: outcome
+  trigger: A new-fact action names an entity that already has a matching non-retired fact
+  fixtures: []
+  steps:
+  - Seed a non-retired fact for a given dimension, entity, and tag.
+  - Apply a new-fact action for the same dimension, entity, and tag.
+  expected:
+  - No second row is created for the same dimension, entity, and tag
+  - The existing fact is updated and the second document is added to its sources
+  - A fold is recorded in the audit log
+  spec_ref: docs/1_design/phase8_sliceB_extraction.md §Success criteria
+  human_reviewed: 'no'
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P8-CLS-B-05
+  behavior: An action referencing a non-existent fact id is skipped and logged rather
+    than applied, and the document is not marked classified so it is retried
+  tier: full
+  phase: 8
+  origin: design
+  granularity: outcome
+  trigger: The AI reply references a fact id that does not exist in the database
+  fixtures: []
+  steps:
+  - Process a document whose stubbed AI reply contains an update action referencing
+    a fact id that is not present.
+  expected:
+  - The hallucinated-id action is skipped and logged, not applied
+  - No row is created or altered for the bad action
+  - The document's classify-fingerprint is left unstamped so it is retried
+  spec_ref: docs/1_design/phase8_sliceB_extraction.md §Success criteria
+  human_reviewed: 'no'
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P8-CLS-B-06
+  behavior: When one fact in an otherwise-valid AI reply fails validation, the good
+    facts are written and the bad fact is skipped and logged, but the document is left
+    unclassified so it is retried
+  tier: full
+  phase: 8
+  origin: design
+  granularity: outcome
+  trigger: The AI reply is valid JSON but one fact has an invalid tag or missing field
+  fixtures: []
+  steps:
+  - Process a document whose reply contains two valid facts and one fact with an
+    invalid tag.
+  expected:
+  - The two valid facts are written to the database
+  - The invalid fact is skipped and logged
+  - The document's classify-fingerprint is left unstamped so it is retried
+  spec_ref: docs/1_design/phase8_sliceB_extraction.md §Success criteria
+  human_reviewed: 'no'
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P8-CLS-B-07
+  behavior: A document is stamped classified only after all of its dimensions write
+    their facts and their audit records succeed; if any dimension fails or its audit
+    write fails, the document is left unstamped and retried
+  tier: full
+  phase: 8
+  origin: design
+  granularity: outcome
+  trigger: A document completes classify with all dimensions succeeding, versus one failing
+  fixtures: []
+  steps:
+  - Process a document where every dimension extracts and audits successfully.
+  - Process a second document where one dimension's audit write fails.
+  expected:
+  - The all-success document is stamped classified and not re-discovered as work
+  - The audit-failure document is left unstamped and re-discovered as work
+  - Write order is facts, then audit, then stamp
+  spec_ref: docs/1_design/phase8_sliceB_extraction.md §Success criteria
+  human_reviewed: 'no'
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P8-CLS-B-08
+  behavior: One audit record is written per dimension per document, capturing the
+    counts of facts added, updated, and retired and whether the dimension succeeded,
+    under one correlation id per document
+  tier: full
+  phase: 8
+  origin: design
+  granularity: outcome
+  trigger: The classify worker finishes processing one document across all dimensions
+  fixtures: []
+  steps:
+  - Process a document across three dimensions with a mix of new, update, and retire
+    outcomes.
+  - Inspect the audit log rows for that document.
+  expected:
+  - There is one audit row per dimension for that document
+  - Each row records the new/updated/retired counts and a success or failure outcome
+  - All rows for the document share one correlation id
+  spec_ref: docs/1_design/phase8_sliceB_extraction.md §Success criteria
+  human_reviewed: 'no'
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P8-CLS-B-09
+  behavior: A document captured while the container is running is enqueued for classify
+    immediately, without waiting for a restart, and the startup catch-up scan still
+    covers anything captured while the worker was down
+  tier: full
+  phase: 8
+  origin: design
+  granularity: outcome
+  trigger: A document is captured at runtime after the worker has already started
+  fixtures: []
+  steps:
+  - With the worker running and idle, capture a new document.
+  - Observe whether it is processed without a restart.
+  expected:
+  - The freshly-captured document's id is enqueued live and processed by the worker
+  - No container restart is required for it to classify
+  - The startup catch-up scan continues to enqueue work captured while the worker was down
+  spec_ref: docs/1_design/phase8_sliceB_extraction.md §Success criteria
+  human_reviewed: 'no'
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P8-CLS-B-10
+  behavior: After a configured number of failed classify attempts, a document stops
+    being auto-retried and is parked for human review with an audit entry explaining
+    why, so a permanently-malformed reply cannot loop forever
+  tier: full
+  phase: 8
+  origin: design
+  granularity: outcome
+  trigger: A document fails classify more times than the configured retry cap
+  fixtures: []
+  steps:
+  - Process a document whose stubbed AI reply always fails validation, repeated past
+    the configured retry cap.
+  expected:
+  - The document is no longer re-enqueued or re-attempted after the cap is reached
+  - The document is marked for human review
+  - An audit entry records why it was parked
+  spec_ref: docs/1_design/phase8_sliceB_extraction.md §Success criteria
+  human_reviewed: 'no'
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P8-CLS-B-11
+  behavior: On a retry, the extraction prompt includes a description of why the
+    previous attempt failed, and this feedback is empty on the first attempt
+  tier: full
+  phase: 8
+  origin: design
+  granularity: outcome
+  trigger: A document is re-processed after a prior failed attempt
+  fixtures: []
+  steps:
+  - Process a document once with a reply that fails validation, then process it again.
+  - Inspect the second attempt's prompt payload.
+  expected:
+  - The first attempt's prompt carries no previous-failure feedback
+  - The retry's prompt includes a description of the prior failure reason
+  spec_ref: docs/1_design/phase8_sliceB_extraction.md §Success criteria
+  human_reviewed: 'no'
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null
+- id: P8-CLS-B-12
+  behavior: When a captured document is deleted, only that document's id is removed
+    from every fact's source list, and any fact left with no sources is set to pending
+    (never auto-deleted or auto-retired)
+  tier: full
+  phase: 8
+  origin: design
+  granularity: outcome
+  trigger: A delete event arrives for a document whose id backs one or more facts
+  fixtures: []
+  steps:
+  - Seed one fact sourced from two documents and a second fact sourced only from one.
+  - Send a delete event for the document that backs both.
+  expected:
+  - The deleted document's id is removed from both facts' source lists
+  - The fact still backed by another document keeps that surviving source and its status
+  - The fact left with no sources is set to pending, not deleted or retired
+  spec_ref: docs/1_design/phase8_sliceB_extraction.md §Success criteria
+  human_reviewed: 'no'
+  last_tested: null
+  last_result: null
+  pytest_ref: null
+  status: planned
+  retired: null

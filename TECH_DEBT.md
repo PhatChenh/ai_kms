@@ -599,6 +599,39 @@ Note: `MetadataResult.ai_domain` is **kept** as internal pipeline state — `app
 
 ---
 
+### TD-066 · Classify makes N×M stateless LLM calls — no batching
+**Status:** OPEN
+**Phase:** Phase 8 Slice B or later (revisit when doc volume makes token cost measurable)
+**Risk if triggered early:** None for the target single-user personal vault. At scale, classify cost scales as N docs × M dimensions = N×M stateless LLM calls, each re-shipping its context (the full document text M× per doc; each dimension's top-N existing facts ~N× across docs). Token bill, not DB, is the cost driver.
+**What:** Slice B runs one focused LLM call per (document × dimension) — deliberate per decision #6 (focused prompt = better extraction). Context is re-sent on every call because the LLM API is stateless (no persistent session). No cross-doc batching and no one-call-extracts-all-dimensions-per-doc.
+**Why deferred:** Classify is async/off-hot-path; DeepSeek V4 Pro is cheap + large-context; single-user vault has modest counts; batching would damage the clean per-doc audit/stamp/source-attribution model locked this grill (D4/D5/D6) and hurt extraction focus. Optimize when volume *proves* it hurts, not before.
+**Unblock condition:** Measured classify token cost becomes painful → introduce cross-doc batching and/or a single call extracting all dimensions per doc, preserving per-doc audit/stamp/source attribution.
+**Source:** Phase 8 Slice B grill D7; `docs/0_draft/phase8/phase8_sliceB_extraction_grill.md`.
+
+---
+
+### TD-067 · Prompt caching for the stable classify context prefix not wired
+**Status:** OPEN
+**Phase:** Phase 8 Slice B (verify endpoint support in research) or later
+**Risk if triggered early:** None — purely a cost optimization. Without it, the (relatively stable) guidance + existing-facts context prefix is billed in full on every one of the N×M calls.
+**What:** If the DeepSeek/OpenAI-compatible endpoint supports prompt caching, the stable context prefix could bill at a fraction on repeated calls. Config-level change, no architecture impact. Endpoint support is UNVERIFIED — research must confirm before relying on it. Note the live top-N context shifts as facts are written, weakening cache hits.
+**Why deferred:** Unconfirmed endpoint capability; the MVP works correctly without it. A pure cost lever, not a correctness need.
+**Unblock condition:** Research confirms the endpoint supports prompt caching → wire the stable prefix via config.
+**Source:** Phase 8 Slice B grill D7; `docs/0_draft/phase8/phase8_sliceB_extraction_grill.md`.
+
+---
+
+### TD-068 · No cross-dimension context in per-dimension extraction (Focused only)
+**Status:** OPEN
+**Phase:** Phase 8 Slice B or later (add only if extraction quality gap is confirmed)
+**Risk if triggered early:** None now. Each per-dimension extraction call sees only its own dimension's existing facts (Focused, decision D8) — chosen for cost + focus. The AI may miss cross-dimension links (e.g. a people-fact "Anthony leads Movie Q2" that would benefit from knowing Movie Q2 is a project with a Q2 deadline).
+**What:** Slice B's Context Loader feeds each call only the current dimension's top-N facts (plus the full doc + that dimension's guidance). No facts from other dimensions are visible to a given call.
+**Why deferred:** Holistic (all dimensions every call) maximizes the exact repeated-context cost TD-066 is trying to bound and risks unfocused extraction. The cheap upgrade — a Hybrid: own dimension's facts + a lightweight header of known entity NAMES (not full facts) from other dimensions — should be added only if the gap is confirmed in practice.
+**Unblock condition:** Observed extractions visibly miss cross-dimension links → add the Hybrid cross-dimension entity-name header.
+**Source:** Phase 8 Slice B grill D8; `docs/0_draft/phase8/phase8_sliceB_extraction_grill.md`.
+
+---
+
 ## Archive
 
 ### TD-001 · core/pipeline.py
