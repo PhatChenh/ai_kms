@@ -116,6 +116,8 @@ def _wrap_lifespan(app: Starlette, db_path: Path | None) -> None:
     @asynccontextmanager
     async def _composed(app_ref):
         queue: asyncio.Queue[int] = asyncio.Queue()
+        # Publish the queue on app.state so upload_handler can push to it
+        app_ref.state.classify_queue = queue  # COUPLING: consumed by api.py upload_handler
         worker = asyncio.create_task(
             consumer(queue, db_path, CONFIG.main)
         )
