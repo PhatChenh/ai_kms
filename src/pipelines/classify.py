@@ -466,3 +466,214 @@ async def catch_up_scan(
         queue.put_nowait(doc_id)
 
     _worker_log.info("catch_up_scan enqueued=%d", len(result.value))
+
+
+# ===========================================================================
+# Phase 5 — Entity Extractor (Slice B)
+# ===========================================================================
+
+
+@dataclass
+class _ExtractFact:
+    """One parsed fact from the AI reply — internal to extract()."""
+    action: str
+    entity: str
+    tag: str
+    fact: str = ""
+    confidence: float = 0.5
+    id: int | None = None
+    reason: str = ""
+
+
+async def extract(
+    dimension: str,
+    text: str,
+    existing_facts: list,
+    guidance: str,
+    feedback: str,
+    config: MainConfig,
+) -> Result[list[dict]]:
+    """Ask the AI to extract structured facts from *text* for *dimension*.
+
+    Returns a list of parsed fact dicts, each validated against the
+    entity_extract prompt's reply contract.  The caller is responsible for
+    routing each fact (new / update / retire).
+
+    Args:
+        dimension:     The knowledge category name (e.g. "people").
+        text:          The document text from Content Reader.
+        existing_facts: List of KnowledgeEntry-like objects with .id, .entity,
+                        .tag, .fact, .confidence attributes.
+        guidance:      The dimension's guidance text from dimensions.yaml.
+        feedback:      The previous failure reason (empty string on first attempt).
+        config:        Validated MainConfig.
+
+    Returns:
+        Success(list[dict]) with parsed facts, or Failure with a recoverable
+        flag set per the error class.
+    """
+    # 1. Render the prompt
+    try:
+        system, user = PROMPTS["entity_extract"].render(
+            document_text=text,
+            dimension_guidance=guidance,
+            existing_facts=existing_facts,
+            previous_attempt_feedback=feedback,
+        )
+    except Exception as exc:
+        return Failure(
+            error=f"entity_extract render error: {exc}",
+            recoverable=False,
+            context={"stage": "extract", "dimension": dimension},
+        )
+
+    # 2. Get the AI provider via the factory (never instantiate directly)
+    provider = get_provider("classify", config)
+
+    # 3. Call the AI
+    response = await provider.complete(system, user)
+
+    # 4. Handle provider failure
+    if isinstance(response, Failure):
+        return Failure(
+            error=response.error,
+            recoverable=True,
+            context={"stage": "extract", "dimension": dimension},
+        )
+
+    # 5. Parse JSON
+    raw_text = response.value.content
+    try:
+        data = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        return Failure(
+            error=f"entity_extract JSON parse error: {exc}",
+            recoverable=True,
+            context={
+                "stage": "extract",
+                "dimension": dimension,
+                "raw": raw_text[:200],
+            },
+        )
+
+    # 6. Validate top-level is a list
+    if not isinstance(data, list):
+        return Failure(
+            error=f"entity_extract reply must be a JSON array, got {type(data).__name__}",
+            recoverable=True,
+            context={
+                "stage": "extract",
+                "dimension": dimension,
+                "raw": raw_text[:200],
+            },
+        )
+
+    # 7. Validate each fact
+    parsed: list[dict] = []
+    for i, item in enumerate(data):
+        if not isinstance(item, dict):
+            return Failure(
+                error=f"entity_extract item[{i}] is not a dict: {type(item).__name__}",
+                recoverable=True,
+                context={
+                    "stage": "extract",
+                    "dimension": dimension,
+                    "raw": raw_text[:200],
+                },
+            )
+
+        action = item.get("action")
+        if action not in ("new", "update", "retire"):
+            return Failure(
+                error=f"entity_extract item[{i}] unknown action {action!r}",
+                recoverable=True,
+                context={
+                    "stage": "extract",
+                    "dimension": dimension,
+                    "raw": raw_text[:200],
+                },
+            )
+
+        # Per-action field validation
+        if action == "retire":
+            # retire: requires id + reason
+            if "id" not in item:
+                return Failure(
+                    error=f"entity_extract item[{i}] 'retire' missing 'id'",
+                    recoverable=True,
+                    context={
+                        "stage": "extract",
+                        "dimension": dimension,
+                        "raw": raw_text[:200],
+                    },
+                )
+            if "reason" not in item:
+                return Failure(
+                    error=f"entity_extract item[{i}] 'retire' missing 'reason'",
+                    recoverable=True,
+                    context={
+                        "stage": "extract",
+                        "dimension": dimension,
+                        "raw": raw_text[:200],
+                    },
+                )
+            parsed.append({
+                "action": "retire",
+                "id": item["id"],
+                "reason": item.get("reason", ""),
+            })
+
+        elif action == "update":
+            # update: requires id, entity, tag, fact, confidence
+            if "id" not in item:
+                return Failure(
+                    error=f"entity_extract item[{i}] 'update' missing 'id'",
+                    recoverable=True,
+                    context={
+                        "stage": "extract",
+                        "dimension": dimension,
+                        "raw": raw_text[:200],
+                    },
+                )
+            for field in ("entity", "tag", "fact", "confidence"):
+                if field not in item:
+                    return Failure(
+                        error=f"entity_extract item[{i}] 'update' missing {field!r}",
+                        recoverable=True,
+                        context={
+                            "stage": "extract",
+                            "dimension": dimension,
+                            "raw": raw_text[:200],
+                        },
+                    )
+            parsed.append({
+                "action": "update",
+                "id": item["id"],
+                "entity": item["entity"],
+                "tag": item["tag"],
+                "fact": item["fact"],
+                "confidence": float(item["confidence"]),
+            })
+
+        elif action == "new":
+            # new: requires entity, tag, fact, confidence; must NOT have id
+            for field in ("entity", "tag", "fact", "confidence"):
+                if field not in item:
+                    return Failure(
+                        error=f"entity_extract item[{i}] 'new' missing {field!r}",
+                        recoverable=True,
+                        context={
+                            "stage": "extract",
+                            "dimension": dimension,
+                            "raw": raw_text[:200],
+                        },
+                    )
+            parsed.append({
+                "action": "new",
+                "entity": item["entity"],
+                "tag": item["tag"],
+                "fact": item["fact"],
+                "confidence": float(item["confidence"]),
+            })
+
+    return Success(parsed)
