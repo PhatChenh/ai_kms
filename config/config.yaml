@@ -84,6 +84,7 @@ env: prod   # dev | prod = use vault.root | test = use testing.vault_path below
 classify:
   max_content_tokens: 10000
   max_entries_per_dimension: 50
+  max_retries: 3
 testing:
   vault_path: /tmp/ai_kms_test_vault  # isolated vault for manual testing guide runs — never the real vault
 vault:

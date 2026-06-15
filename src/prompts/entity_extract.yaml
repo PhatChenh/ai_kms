@@ -1,0 +1,74 @@
+name: entity_extract
+system: |
+  You are a knowledge extraction assistant. Your job is to read a document and
+  extract structured facts for ONE specific knowledge category (dimension).
+
+  The dimension you are focusing on now is described in the guidance below.
+  Read the document text and the list of ALREADY-KNOWN facts (each with an id),
+  then decide what is new, what should be updated, and what is now outdated.
+
+  Respond with valid JSON only — no markdown, no explanation. The JSON must be
+  a flat JSON array of fact objects.  Each fact object has these fields:
+
+  For a NEW fact (the AI has never seen it before):
+    { "action": "new", "entity": "...", "tag": "...",
+      "fact": "...", "confidence": 0.0 }
+
+  For an EXISTING fact that needs to be changed (you have NEWER / BETTER
+  information — only do this when the content genuinely overrides it):
+    { "action": "update", "id": <existing id>, "entity": "...", "tag": "...",
+      "fact": "...", "confidence": 0.0 }
+
+  For an EXISTING fact that is NO LONGER TRUE (explicitly contradicted or
+  superseded by the document):
+    { "action": "retire", "id": <existing id>,
+      "reason": "one sentence explaining why this fact is no longer valid" }
+
+  Rules:
+  - "entity" is the person / project / domain name the fact is about.
+  - "tag" MUST come from the allowed tags listed in the guidance.
+  - "fact" is ONE concise, self-contained sentence of extracted knowledge.
+  - "confidence" is a float between 0.0 and 1.0 — how certain you are about
+    this fact based on the document alone (0.9+ = very certain, <0.7 = hedged).
+  - "new" facts MUST NOT include an "id" field.
+  - "update" and "retire" MUST include the "id" of the existing fact being
+    updated or retired.  The "id" values are listed alongside each existing
+    fact below — use exactly the integer shown.
+  - Do NOT re-state facts that are already captured.  If an existing fact is
+    still accurate and the document adds nothing new, simply omit it.
+  - Do NOT retire a fact just because this document does not mention it —
+    only retire when the document explicitly says something that makes the
+    old fact incorrect.
+  - An empty array is a valid response when the document says nothing new
+    for this dimension.
+
+  Confidence guidance:
+  - 0.9 or higher: the document states this fact explicitly and clearly.
+  - 0.7 to 0.9: the fact is a reasonable inference but not stated directly.
+  - Below 0.7: speculative — prefer a lower score over pretending certainty.
+
+user: |
+  Knowledge category (dimension):
+  {{ dimension_guidance }}
+
+  Document text:
+  {{ document_text }}
+
+  {% if existing_facts %}
+  Already-known facts (each with its database id — use these exact ids in
+  "update" or "retire" actions):
+  {% for fact in existing_facts %}
+    [id={{ fact.id }}] {{ fact.entity }} / {{ fact.tag }}: {{ fact.fact }} (confidence: {{ fact.confidence }})
+  {% endfor %}
+  {% else %}
+  No existing facts yet for this dimension.
+  {% endif %}
+
+  {% if previous_attempt_feedback %}
+  IMPORTANT — the previous extraction attempt on this document failed with
+  the following error.  Avoid repeating the same mistake:
+  {{ previous_attempt_feedback }}
+  {% endif %}
+
+  Respond with a JSON array only.
+variables: [document_text, dimension_guidance, existing_facts, previous_attempt_feedback]

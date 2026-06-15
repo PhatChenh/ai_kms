@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 
 from core.config import ConfidenceBand
+from core.result import Failure, Success
 from storage.db import init_db
 from storage.knowledge_entries import (
     KnowledgeEntry,
@@ -453,3 +454,134 @@ def test_query_ranked_by_dimension_excludes_retired_orders_and_caps(tmp_path):
     # 5) The top entry should be the one with highest trust_score (Alice, 0.9)
     assert entries[0].trust_score == 0.9
     assert entries[0].entity == "Alice"
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 — Source-prune (Slice B)
+# ---------------------------------------------------------------------------
+
+
+def test_prune_sources_removes_target_id_from_multi_source_facts(tmp_path):
+    """Multi-source facts lose only the target id, rest intact, deduped."""
+    db_path = tmp_path / "kb.db"
+    init_db(db_path)
+
+    from storage.knowledge_entries import prune_sources
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        """INSERT INTO knowledge_entries
+           (dimension, entity, tag, fact, status, confidence, sources, reasoning)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("people", "Alice", "role", "Fact A", "confident", 0.9,
+         '["100", "200", "300"]', ''),
+    )
+    conn.execute(
+        """INSERT INTO knowledge_entries
+           (dimension, entity, tag, fact, status, confidence, sources, reasoning)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("people", "Bob", "role", "Fact B", "confident", 0.8,
+         '["100"]', ''),
+    )
+    conn.commit()
+    conn.close()
+
+    result = prune_sources(100, db_path=db_path)
+    assert isinstance(result, Success)
+    assert result.value == 2  # Both entries touched
+
+    # Multi-source: 100 removed, 200 and 300 remain
+    entries = query_by_entity("Alice", db_path=db_path)
+    assert isinstance(entries, Success)
+    alice = entries.value[0]
+    assert "100" not in alice.sources
+    assert "200" in alice.sources
+    assert "300" in alice.sources
+
+    # Sole-source: sources emptied, status → pending
+    bob_entries = query_by_entity("Bob", db_path=db_path)
+    assert isinstance(bob_entries, Success)
+    bob = bob_entries.value[0]
+    assert bob.sources == []
+    assert bob.status == "pending"
+
+
+def test_prune_sources_skips_retired_facts(tmp_path):
+    """Retired facts are not touched by prune_sources."""
+    db_path = tmp_path / "kb.db"
+    init_db(db_path)
+
+    from storage.knowledge_entries import prune_sources
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        """INSERT INTO knowledge_entries
+           (dimension, entity, tag, fact, status, confidence, sources, reasoning)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("people", "Alice", "role", "Retired fact", "retired", 0.5,
+         '["100"]', 'was wrong'),
+    )
+    conn.commit()
+    conn.close()
+
+    result = prune_sources(100, db_path=db_path)
+    assert isinstance(result, Success)
+    assert result.value == 0  # No entries touched
+
+    entries = query_by_entity("Alice", db_path=db_path)
+    assert isinstance(entries, Success)
+    assert entries.value[0].sources == ["100"]
+    assert entries.value[0].status == "retired"
+
+
+def test_prune_sources_unrelated_facts_untouched(tmp_path):
+    """Facts that don't contain the target id are untouched."""
+    db_path = tmp_path / "kb.db"
+    init_db(db_path)
+
+    from storage.knowledge_entries import prune_sources
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        """INSERT INTO knowledge_entries
+           (dimension, entity, tag, fact, status, confidence, sources, reasoning)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("people", "Alice", "role", "Fact A", "confident", 0.9,
+         '["200", "300"]', ''),
+    )
+    conn.commit()
+    conn.close()
+
+    result = prune_sources(100, db_path=db_path)
+    assert isinstance(result, Success)
+    assert result.value == 0
+
+    entries = query_by_entity("Alice", db_path=db_path)
+    assert isinstance(entries, Success)
+    assert entries.value[0].sources == ["200", "300"]
+
+
+def test_prune_sources_deduplicates_after_removal(tmp_path):
+    """After removing target id, sources list has no duplicates."""
+    db_path = tmp_path / "kb.db"
+    init_db(db_path)
+
+    from storage.knowledge_entries import prune_sources
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        """INSERT INTO knowledge_entries
+           (dimension, entity, tag, fact, status, confidence, sources, reasoning)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("people", "Alice", "role", "Fact A", "confident", 0.9,
+         '["100", "200", "200"]', ''),
+    )
+    conn.commit()
+    conn.close()
+
+    result = prune_sources(100, db_path=db_path)
+    assert isinstance(result, Success)
+
+    entries = query_by_entity("Alice", db_path=db_path)
+    assert isinstance(entries, Success)
+    assert entries.value[0].sources == ["200"]  # deduped
