@@ -219,9 +219,9 @@ _Avoid_: "scan" alone (ambiguous with the daemon's vault scan)
 A separate quality axis on each knowledge entry measuring user-validated quality, distinct from the AI's own confidence. Ships in Phase 8 as an inert flat default (0.5) and is only moved by user corrections in a later phase; Phase 8 uses it as the top sort key when ranking which existing facts to show the AI.
 _Avoid_: conflating with "confidence" (confidence = AI certainty; trust = user validation — two independent loops)
 
-**retrieval_count:**
-A per-entry counter of how often a knowledge entry has been surfaced to the user-facing AI. Ships inert (default 0) in Phase 8 and is populated by a later retrieval phase; reserved as a future demand signal for ranking.
-_Avoid_: "view count", "hits"
+**retrieval_score (decaying):**
+A per-entry demand signal measuring how often a knowledge entry has been surfaced to the user-facing AI recently. On each injection (the entry appears in an MCP tool response): `score = score * decay_factor + 1.0`. A periodic sweep multiplies all scores by `decay_factor` to let old popularity fade. Prevents rich-get-richer lock-in where an entry surfaced early by luck dominates forever. Reinterprets the existing `retrieval_count` INT column (shipped inert in Phase 8, default 0) as a REAL — SQLite is type-flexible so no column rename is needed.
+_Avoid_: "view count", "hits", "popularity" (it decays — not a simple counter)
 
 **content reader:**
 The Slice A step that reads a document's stored text and chooses what to feed the classifier: the full extracted text when it fits under a configured token budget, otherwise the shorter summary. A pure size-based switch — no AI involved.
@@ -334,6 +334,38 @@ _Avoid_: "undescribed flag", "pending-description column" (there is no column �
 **reference-counted delete:**
 The blob-deletion rule: when a document row that references a blob is deleted, the blob in object storage is removed ONLY if no other document row still references the same object key. Because blobs are content-addressed, two rows with identical bytes share one blob, so deleting one row must not break the survivor. The document row is always deleted (hard delete, unchanged from 7A); only the blob's removal is conditional.
 _Avoid_: "garbage collection" (it is a synchronous count-then-delete at delete time, not a sweep), "cascade delete" (the blob is shared, so a plain cascade would corrupt the survivor)
+
+### Phase 9 — MCP Adaptation
+
+> Introduced by Phase 9 (`docs/1_design/phase9_mcp_adaptation.md`; grill at `docs/0_draft/P9_mcp_adaptation_grill.md`). Phase 9 rewrites the MCP server from vault-disk-reading to cloud-database-reading, replaces CLAUDE.md context injection with knowledge-entry fact injection, and changes the tool surface.
+
+**query facts:**
+`knowledge_entries` rows whose text matches the user's search query, found by hybrid search (semantic + keyword) on the new fact search index. A selection-time role, not a stored attribute — the same entry is a query fact in one search and an orientation fact in another.
+_Avoid_: "search results" (too generic — query facts are one tier of search results), "matching entries"
+
+**orientation facts:**
+Top-ranked `knowledge_entries` rows selected per dimension by the 4-key ranker (trust_score, retrieval_score, confidence, recency) to orient the consuming AI about the entities in scope, independent of any query text. Injected into `kms_vault_info` and `kms_search` responses.
+_Avoid_: "background facts" (acceptable shorthand but less precise), "context" (overloaded)
+
+**identity-dedup:**
+The rule that the same database row (fact row id or document row id) appears at most once in any MCP tool response. Distinct from content dedup: a fact bullet and a document summary that describe the same real-world event are both kept — they serve different purposes (targeted insight vs general digest). Applied per response and also conversation-level (orientation facts already injected earlier are not re-injected).
+_Avoid_: "content dedup", "hash dedup" (the old Phase 4 model — Phase 9 dedupes by row id, not by content hash)
+
+**fact hybrid index:**
+Two new search tables (`facts_fts` + `facts_vec`) that make the short fact text in `knowledge_entries` searchable by both keyword (BM25) and meaning (KNN embedding), using the same Reciprocal Rank Fusion technique as document search. Research gate: short one-liner facts may not separate well in embedding space — if separation is poor, the config-driven blend weight leans on keyword matching.
+_Avoid_: "fact search" (too vague — specify it is a hybrid index with two components)
+
+**three-tier resolve:**
+The three levels of detail the `kms_inspect` tool can return for any document, accessed by integer document id: **summary** (the structured 5-section digest, always available from DB), **text** (the full extracted raw text from `documents.full_body`, may be NULL for old rows or binaries without text — degrades to summary), **file** (the vault-relative path, laptop-dependent — the consuming AI handles availability). Replaces the old disk-based binary resolver.
+_Avoid_: "resolve modes", "inspect tiers" (use the canonical term "three-tier resolve")
+
+**dual-corpus search:**
+The `kms_search` strategy that runs two independent queries — one against `knowledge_entries` (fact hybrid index) and one against `documents` (existing `notes_fts` + `embeddings_vec`) — merges the results, and identity-dedupes. The document search is the recall safety-net: a freshly captured document is searchable by summary before the classify pipeline has extracted facts from it. ADR-0020.
+_Avoid_: "two-phase search" (it is not sequential — both corpora are queried in parallel), "combined search"
+
+**budget-capped injection:**
+The cap mechanism that limits how many orientation facts and entity names are injected into any MCP tool response. Controlled by two config knobs: `max_entities_per_dimension` (how many entity names in the structural map) and `max_orientation_facts_per_dimension` (how many fact bullets per dimension). No global token budget — the two per-dimension caps are sufficient for Phase 9.
+_Avoid_: "token limit", "context window management" (those are consumer-side concerns — this is server-side output capping)
 
 ### Phase 6 — Daemon Cache & Reconcile (Slice A2)
 
