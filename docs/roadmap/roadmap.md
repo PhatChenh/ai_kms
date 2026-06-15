@@ -1057,6 +1057,22 @@ User corrections feed back as learning signal to improve future extractions.
 - **Trust adjustment pure function** — `adjust_trust(current, action) → float`. Promote: +0.05, retire: -0.10, edit: set 0.6. Asymmetric (Hermes-inspired). Deltas in config (C-06).
 - **`min_trust` filtering activation** — config `mcp.context_injection.min_trust: 0.3` starts excluding entries once corrections move trust scores. Until then, all entries pass (flat 0.5 default).
 
+> These decisions were made during Phase 9's grill session and affect Phase 10. Full context: `docs/4_plans/phase9_mcp_adaptation.md`.
+
+| Item | Why deferred |
+|---|---|
+| `adjust_trust()` function + trust_score movement | All entries start at trust_score 0.5 in Phase 9 |
+| Classify overwrite guard (`trust_score > 0.5`) | `_should_overwrite` seam is placed but always returns True |
+| Pending requests system (table + tools + housekeeping) | Entire system deferred |
+| Corrections table reshape | Exists but inert and wrong-shaped |
+| Few-shot injector (recent corrections -> extraction prompts) | Needs corrections table |
+| `min_trust` filtering | No effect until trust_scores diverge from 0.5 |
+| Volatility flag (entries with >3 corrections) | Needs correction count tracking |
+| Web UI (conflict queue, comment feature, parked doc dashboard) | Future phase |
+| Content-level document dedup for `kms_write` | Fact-level dedup catches duplicates |
+| `retrieval_count` SQL column rename | Python reinterprets; no migration needed |
+| Global token budget for context injection | Two config knobs suffice |a migration for a rename.
+
 ### Design decisions deferred to this phase's `/grill`
 - Web UI tech stack (SPA vs server-rendered)
 - Hosting (same container as MCP server, or separate)

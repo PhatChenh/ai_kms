@@ -394,3 +394,39 @@ _Avoid_: "move timer", "debounce" (debounce coalesces repeated events on one pat
 **conservative delete (sweep):**
 The rule that a cloud-known file found missing during a single background sweep is NOT reported deleted immediately — it must stay gone across more than one sweep (default 2 confirmations) before the daemon scrubs the cloud row (grill D3). A transiently-missing file that reappears is never deleted. Distinct from a live delete, which clears within the move-correlation window.
 _Avoid_: "delayed delete", "soft delete" (the row is hard-deleted once confirmed; only the *decision* is delayed)
+
+### Phase 10 — Self-Learning & Reports
+
+> Introduced by Phase 10 (`docs/1_design/phase10_self_learning.md`; grill at `docs/0_draft/phase10/phase10_self_learning_grill.md`). Phase 10 closes the feedback loop: users can correct facts, and their corrections adjust trust, teach the AI, and generate health reports.
+
+**fact correction:**
+A record of a user saying a knowledge entry is right (confirm), wrong (reject), or needs fixing (revise). Stored in the `fact_corrections` table. One correction per row. Each records the operation, the reason category, optional user feedback, and snapshots of the old and new fact text and trust scores.
+_Avoid_: "learning signal" (broader concept — fact corrections are one specific signal type), "feedback" alone (too generic)
+
+**reason category:**
+A tag on a correction distinguishing WHY the fact was wrong. `ai_error` = the AI misread the source document (this teaches the AI via few-shot injection). `stale_source` = the source document was outdated or incorrect, but the AI extracted faithfully (NOT fed to few-shot — would teach the AI to ignore documents).
+_Avoid_: "error type", "correction type" (those describe the operation; reason category describes the root cause)
+
+**overwrite guard:**
+The rule that protects user-validated knowledge entries from being silently replaced by the classify pipeline. When an entry's `trust_score` exceeds a config threshold (default 0.5), `_should_overwrite()` in `classify_writer.py` returns `False`, and the pipeline writes a new `pending` entry instead of overwriting the trusted one. Both entries coexist, creating a detectable conflict.
+_Avoid_: "write lock", "trust gate" (the guard does not lock — it redirects the write to a new row)
+
+**few-shot injector:**
+A component that selects past `ai_error` corrections, formats them as bad-fact/good-fact example pairs, and injects them into the `entity_extract.yaml` prompt during classify runs. Selection is relevance-first: dimension match, entity overlap with the current document, then recency. Capped by config (`max_corrections_per_prompt`).
+_Avoid_: "training data", "fine-tuning" (it is in-context learning via prompt examples, not model training)
+
+**volatility flag:**
+An annotation appended to a knowledge entry's fact bullet in MCP context injection blocks when the entry has been corrected more than N times (config-driven, default 3). Signals to the consuming AI that the fact is contested or unstable.
+_Avoid_: "disputed fact", "unstable flag" (volatility is the measured signal; the interpretation is up to the consumer)
+
+**trust-floor filtering:**
+The rule that knowledge entries with `trust_score` below a config threshold (default 0.3) are excluded from MCP context injection orientation blocks. They remain searchable and visible in `kms_inspect` — they are just not proactively surfaced.
+_Avoid_: "hidden entries", "filtered out" (they are not hidden — they are deprioritized from proactive surfacing)
+
+**entry comment:**
+An additive human annotation on a knowledge entry, stored in `entry_comments`. No edit, no delete — comments only grow. Fed to the classify context loader so the AI considers human annotations during future extraction runs. Added via the `kms_comment` MCP tool.
+_Avoid_: "note" (overloaded with vault notes), "annotation" (acceptable but less specific)
+
+**report (knowledge report):**
+A synthesized summary of knowledge system health, generated on demand by the housekeeping AI. Defined by a YAML config block specifying filters (which data to gather) and a prompt (what to synthesize). Stored in the `reports` table with full provenance (prompt used, filters applied, source IDs). Adding a new report type is a config-only change.
+_Avoid_: "briefing" (that is a different Phase 8 concept), "dashboard" (there is no UI — reports are text)

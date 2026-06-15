@@ -355,3 +355,40 @@ def test_rerank_empty_candidates_returns_empty(seeded_docs_db):
 
     assert isinstance(result, Success), f"Expected Success, got {result}"
     assert result.value == [], f"Expected empty list, got {result.value}"
+
+
+# ---------------------------------------------------------------------------
+# P9-B-04: SearchResult.id is populated from DocumentRow.id
+# ---------------------------------------------------------------------------
+
+
+def test_rerank_results_have_id_populated(seeded_docs_db):
+    """rerank() output cards must have id populated from the document row."""
+    db_path, paths = seeded_docs_db
+
+    from retrieval.ranker import RankedResult
+    from retrieval.reranker import rerank
+
+    candidates = [
+        RankedResult(
+            vault_path=paths["budget"],
+            rrf_score=0.032,
+            snippet="budget snippet...",
+        ),
+        RankedResult(
+            vault_path=paths["stakeholder"],
+            rrf_score=0.028,
+            snippet="stakeholder snippet...",
+        ),
+    ]
+
+    result = rerank("budget", candidates, db_path=db_path)
+
+    assert isinstance(result, Success), f"Expected Success, got {result}"
+    cards = result.value
+    assert len(cards) == 2
+
+    for card in cards:
+        assert card.id is not None, f"Card for {card.vault_path} has id=None"
+        assert isinstance(card.id, int), f"id should be int, got {type(card.id)}"
+        assert card.id > 0, f"id should be positive, got {card.id}"

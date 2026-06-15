@@ -127,3 +127,141 @@
   origin: design
   granularity: outcome
   status: pending
+
+# ===========================================================================
+# Phase 10 — Self-Learning & Reports Backend
+# Generated: 2026-06-15 by /codebase-design-analysis
+# Origin: design (outcome-level success criteria)
+# ===========================================================================
+
+# --- Corrections System ---
+
+- id: P10-SL-01
+  description: "kms_correct supports confirm, reject, and revise operations that adjust trust_score on the target knowledge entry and record the correction in the fact_corrections table"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P10-SL-02
+  description: "Each correction records reason_category (ai_error or stale_source) and optional feedback text, preserving old_fact and new_fact snapshots alongside before/after trust scores"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P10-SL-03
+  description: "Confirm adds +0.05 to trust (config-driven delta), reject subtracts 0.10 (config-driven delta), and revise retires the old entry and creates a new entry at trust 0.6 (config-driven base)"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P10-SL-04
+  description: "fact_corrections table has ON DELETE CASCADE from knowledge_entries so corrections are cleaned up when an entry is hard-deleted"
+  origin: design
+  granularity: outcome
+  status: pending
+
+# --- Trust Mechanics ---
+
+- id: P10-SL-05
+  description: "adjust_trust is a pure function that reads deltas from SelfLearningConfig and never contains hardcoded float literals (C-06 compliant)"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P10-SL-06
+  description: "The overwrite guard in classify_writer._should_overwrite returns False when an existing entry has trust_score above the config threshold (default 0.5), causing the writer to insert a new pending entry instead of overwriting"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P10-SL-07
+  description: "When the overwrite guard blocks a write, both the trusted original and the new pending entry coexist in the knowledge_entries table, creating a detectable conflict pattern"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P10-SL-08
+  description: "Context injection excludes knowledge entries with trust_score below min_trust_for_context threshold (default 0.3) from orientation fact blocks (P9-dependent)"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P10-SL-09
+  description: "Knowledge entries with more corrections than the volatility threshold (default 3) have [frequently corrected] appended to their fact bullet in context injection blocks (P9-dependent)"
+  origin: design
+  granularity: outcome
+  status: pending
+
+# --- Few-Shot Injector ---
+
+- id: P10-SL-10
+  description: "The few-shot injector selects ai_error corrections ranked by relevance (dimension match, entity overlap, recency) and injects them as bad/good example pairs into the entity_extract.yaml prompt"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P10-SL-11
+  description: "stale_source corrections are excluded from few-shot injection to avoid teaching the AI to ignore documents"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P10-SL-12
+  description: "Few-shot injection is capped at max_corrections_per_prompt (default 5) from config, and the cap is config-driven not hardcoded (C-06)"
+  origin: design
+  granularity: outcome
+  status: pending
+
+# --- Reports System ---
+
+- id: P10-SL-13
+  description: "kms_reports generates a report on demand by loading a YAML-configured filter and prompt, gathering filtered data from knowledge_entries and documents, synthesizing via get_provider('synthesis'), and storing the result in the reports table"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P10-SL-14
+  description: "Adding a new report type requires only a YAML config block in reports.yaml, no code changes (extension point rule)"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P10-SL-15
+  description: "Five default report types ship in config: correction_summary, knowledge_health, volatile_entries, coverage_gaps, and conflicts"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P10-SL-16
+  description: "The conflicts report detects entries where the overwrite guard blocked a write, identifying same entity+dimension+tag pairs with both a trusted and a pending entry (P9-dependent)"
+  origin: design
+  granularity: outcome
+  status: pending
+
+# --- Comments ---
+
+- id: P10-SL-17
+  description: "kms_comment adds an additive comment to a knowledge entry, stored in entry_comments with ON DELETE CASCADE, and returns the comment id"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P10-SL-18
+  description: "Comments on knowledge entries are fed to the classify context loader so the AI sees human annotations during future extraction runs"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P10-SL-19
+  description: "kms_inspect includes entry comments in its response when returning knowledge entry details"
+  origin: design
+  granularity: outcome
+  status: pending
+
+# --- Bug Fix ---
+
+- id: P10-SL-20
+  description: "retire() in knowledge_entries.py no longer removes the entry from facts_fts and facts_vec search indexes, so retired entries remain searchable but are excluded from context injection at query time"
+  origin: design
+  granularity: outcome
+  status: pending

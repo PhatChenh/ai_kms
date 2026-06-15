@@ -85,6 +85,10 @@ def config_dir(tmp_path: Path, vault_dir: Path) -> Path:
                 "port": 3838,
                 "host": "0.0.0.0",
                 "enable_http": False,
+                "context_injection": {
+                    "max_entities_per_dimension": 15,
+                    "max_orientation_facts_per_dimension": 5,
+                },
             },
             "self_learning": {
                 "enabled": True,

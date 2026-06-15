@@ -255,9 +255,8 @@ class ClaudeCliConfig(BaseModel):
 class ContextInjectionConfig(BaseModel):
     """Controls how the MCP server injects vault context into LLM conversations."""
 
-    frequency_threshold: float = Field(0.3, ge=0.0, le=1.0)
-    max_context_files: int = Field(3, ge=1)
-    include_context_yaml: bool = True
+    max_entities_per_dimension: int = Field(15, ge=1)
+    max_orientation_facts_per_dimension: int = Field(5, ge=1)
 
 
 class MCPConfig(BaseModel):
@@ -269,6 +268,16 @@ class MCPConfig(BaseModel):
     context_injection: ContextInjectionConfig = Field(
         default_factory=ContextInjectionConfig
     )
+    retrieval_score: "RetrievalScoreConfig" = Field(
+        default_factory=lambda: RetrievalScoreConfig()
+    )
+
+
+class RetrievalScoreConfig(BaseModel):
+    """Retrieval score decay + sweep settings (Phase 9)."""
+
+    decay_factor: float = Field(0.95, ge=0.0, le=1.0)
+    sweep_interval_hours: int = Field(24, ge=1)
 
 
 class SelfLearningConfig(BaseModel):

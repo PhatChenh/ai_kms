@@ -46,7 +46,7 @@ def _seed_knowledge_entry(
     status: str = "confident",
     confidence: float = 0.9,
     trust_score: float = 0.8,
-    retrieval_count: int = 0,
+    retrieval_score: float = 0.0,
     reasoning: str = "test",
 ) -> int:
     """Insert a knowledge entry and return its id."""
@@ -67,7 +67,7 @@ def _seed_knowledge_entry(
             json.dumps(["test_source"]),
             reasoning,
             trust_score,
-            retrieval_count,
+            retrieval_score,
         ),
     )
     return cur.lastrowid

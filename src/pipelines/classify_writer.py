@@ -46,6 +46,15 @@ def _merge_reasoning(existing: str, new: str) -> str:
     return new if new else existing
 
 
+def _should_overwrite(existing_entry) -> bool:
+    """Decision point for whether classify may overwrite an existing entry.
+
+    Phase 9: always True (current behavior).
+    Phase 10: trust_score > 0.5 -> False (write conflicting new entry instead).
+    """
+    return True
+
+
 def _find_twin(
     entity: str, dimension: str, tag: str, *, db_path: Path | None = None
 ) -> Result[int | None]:
@@ -199,6 +208,11 @@ def write_entries(
 
             status = _compute_status(float(fact.get("confidence", 0.5)), band)
 
+            # Phase 10 seam — check if overwrite is permitted
+            if not _should_overwrite(entry):
+                # Phase 10: would write conflicting new entry instead
+                pass  # Phase 9: always overwrites
+
             up_result = ke_upsert(entry, status=status, band=band, db_path=db_path)
             if isinstance(up_result, Failure):
                 summary.clean = False
@@ -258,6 +272,11 @@ def write_entries(
                 )
 
                 status = _compute_status(confidence, band)
+
+                # Phase 10 seam — check if overwrite is permitted
+                if not _should_overwrite(twin_entry):
+                    # Phase 10: would write conflicting new entry instead
+                    pass  # Phase 9: always overwrites
 
                 up_result = ke_upsert(
                     twin_entry, status=status, band=band, db_path=db_path
