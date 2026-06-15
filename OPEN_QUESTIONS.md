@@ -156,6 +156,33 @@
 
 ---
 
+### OQ-P8B-01 · Find facts by a document id contained in the JSON `sources` column
+**Blocks:** Phase 8 Slice B Phase 9 (source-prune on document delete)
+**Status:** 🟢 Resolved (2026-06-15) — recommendation locked, non-blocking
+**Question:** A fact's source documents are stored as a single JSON list of id numbers inside the fact's row; there is no query that finds "every fact whose source list contains id 9". When a document is deleted, how do we locate the facts that name it as a source — scan every non-retired fact and filter in code, or use a SQLite JSON query?
+**Resolution:** Scan-and-filter in Python. Zero dependency risk at single-user vault scale; swappable for a `json_each`/`LIKE` query later without behavior change. Research confirmed the deployed `python:3.12-slim` image ships SQLite JSON1, so a JSON query is *available* — but scan-and-filter is chosen for simplicity.
+**Context:** Phase 8 Slice B design OQ-P8B-01; research 2026-06-15. See `docs/1_design/phase8/phase8_sliceB_extraction.md`.
+
+---
+
+### OQ-P8B-02 · Does a low-confidence update demote a previously-confident fact?
+**Blocks:** Phase 8 Slice B Entry Writer
+**Status:** 🟢 Resolved (2026-06-15) — recommendation locked, flag for observation
+**Question:** A fact's confident/pending status is re-computed from its confidence on every write (via `confidence_to_status`), including updates. If a new, lower-confidence mention updates a previously-confident fact, should the fact drop back to pending?
+**Resolution:** Re-gate on every write (the locked broad-grill behavior — confidence is a live signal). Flag for observation; if demotion thrashes in practice, add a "max confidence seen" rule as a later refinement.
+**Context:** Phase 8 Slice B design OQ-P8B-02. See `docs/1_design/phase8/phase8_sliceB_extraction.md`.
+
+---
+
+### OQ-P8B-03 · Should the startup catch-up scan page its enqueues?
+**Blocks:** Phase 8 Slice B startup scan (carries OQ-P8A-03)
+**Status:** 🟢 Resolved for Slice B (2026-06-15) — one burst + tech-debt note
+**Question:** The catch-up scan puts every unclassified document id onto the queue in one burst at startup. In Slice A that was free; in Slice B each item costs a paid AI call. Should the scan enqueue in pages/batches instead?
+**Resolution:** Keep one burst for Slice B. The sequential consumer drains one at a time, so token spend is naturally rate-limited; paging is a later optimization (tech-debt note, carried from OQ-P8A-03). Not a blocker.
+**Context:** Phase 8 Slice B design OQ-P8B-03; carries Phase 8 Slice A OQ-P8A-03. See `docs/1_design/phase8/phase8_sliceB_extraction.md`.
+
+---
+
 ## ✅ Closed
 
 ### OQ-001 · Move/rename detection when note is edited AND moved simultaneously
