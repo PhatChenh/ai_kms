@@ -1,59 +1,116 @@
-"""mcp_server/_resolve.py — Binary Resolver Helper (kms_inspect backing)
+"""mcp_server/_resolve.py — Three-Tier DB Resolver
 
-Given either a summary note's path or a binary's own path, find the real binary
-and return its raw extracted text — no AI, no re-summarising.
-
-Public API:
-    inspect(path: Path) -> Result[str]
+DB-first resolver with three modes:
+  "summary" — row.summary (always available)
+  "text"    — row.full_body with fallback to summary
+  "file"    — row.vault_path (for laptop access)
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
-import core.config
 from core.result import Failure, Result, Success
-from handlers.registry import HandlerRegistry
-from vault.reader import read_note
+from storage.documents import get_by_id
 
 
-def inspect(path: Path) -> Result[str]:
-    """Return raw text from a binary, resolving via attachment_path if needed.
+@dataclass(frozen=True)
+class ResolveResult:
+    doc_id: int
+    mode: str          # "summary" | "text" | "file"
+    content: str
+    title: str
+    degraded: bool     # True if text mode fell back to summary
+
+
+def resolve(
+    doc_ids: list[int],
+    mode: str = "summary",
+    *,
+    max_text_refs: int = 5,
+    db_path: Path | None = None,
+) -> Result[list[ResolveResult]]:
+    """DB-first three-tier resolver.
+
+    For each doc_id, fetch the document row via get_by_id() and return a
+    ResolveResult based on the requested mode.
 
     Args:
-        path: Either a sibling .md with attachment_path frontmatter, or the
-              binary file itself.
+        doc_ids:       List of document IDs to resolve in order.
+        mode:          One of "summary", "text", or "file".
+        max_text_refs: Max number of full_body results in text mode before
+                       degrading to summary.
+        db_path:       Optional override database path.
 
     Returns:
-        Success(raw_text) — the extracted plain text.
-        Failure(recoverable=False) — .md without attachment_path, unreadable
-        binary, no matching handler, or any extractor failure.
+        Success([ResolveResult, ...]) with one entry per found document.
+        Missing documents are silently skipped.
+        Failure when get_by_id returns a Failure.
     """
-    # If the path is a .md file, try to resolve via attachment_path frontmatter
-    if path.suffix.lower() == ".md":
-        match read_note(path):
-            case Success(note):
-                if note.metadata.attachment_path:
-                    binary_path = core.config.CONFIG.main.vault.root / note.metadata.attachment_path
+    results: list[ResolveResult] = []
+
+    for idx, doc_id in enumerate(doc_ids):
+        match get_by_id(doc_id, db_path=db_path):
+            case Success(None):
+                # Missing document — skip, not an error
+                continue
+            case Success(row):
+                title = row.title
+                if mode == "summary":
+                    content = row.summary or "[Summary pending]"
+                    degraded = False
+                elif mode == "text":
+                    if idx < max_text_refs and row.full_body is not None:
+                        content = row.full_body
+                        degraded = False
+                    else:
+                        content = row.summary or "[Summary pending]"
+                        degraded = True
+                elif mode == "file":
+                    content = row.vault_path
+                    degraded = False
                 else:
                     return Failure(
-                        error="Not a binary resolver target — no attachment_path "
-                        "in frontmatter",
+                        error=f"Unknown resolve mode: {mode!r}",
                         recoverable=False,
-                        context={"path": str(path)},
+                        context={"mode": mode},
                     )
+                results.append(
+                    ResolveResult(
+                        doc_id=doc_id,
+                        mode=mode,
+                        content=content,
+                        title=title,
+                        degraded=degraded,
+                    )
+                )
             case Failure() as f:
                 return f
-    else:
-        binary_path = path
 
-    # Resolve handler and extract text
-    match HandlerRegistry.resolve(binary_path):
-        case Success(handler):
-            match handler.extract(binary_path):
-                case Success(raw):
-                    return Success(raw.text)
-                case Failure() as f:
-                    return f
-        case Failure() as f:
-            return f
+    return Success(results)
+
+
+def resolve_dicts(
+    doc_ids: list[int],
+    mode: str = "summary",
+    *,
+    max_text_refs: int = 5,
+    db_path: Path | None = None,
+) -> list[dict]:
+    """Convenience wrapper: resolve() → list[dict] for the MCP shim layer.
+
+    Keeps tools.py C-14 clean by moving the dict-conversion loop here.
+    """
+    return [
+        {
+            "doc_id": r.doc_id,
+            "mode": r.mode,
+            "content": r.content,
+            "title": r.title,
+            "degraded": r.degraded,
+        }
+        for r in resolve(
+            doc_ids, mode, max_text_refs=max_text_refs, db_path=db_path
+        ).unwrap()
+    ]

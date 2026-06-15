@@ -9,11 +9,13 @@ from core.result import Failure, Success
 from storage.db import init_db
 from storage.knowledge_entries import (
     KnowledgeEntry,
+    bump_retrieval_score,
     get_confident_and_pending,
     query_by_dimension,
     query_by_entity,
     query_ranked_by_dimension,
     retire,
+    sweep_retrieval_scores,
     upsert,
 )
 
@@ -353,7 +355,7 @@ def test_upsert_round_trips_trust_score_and_retrieval_count(tmp_path):
     assert e.id == row_id
     # DB defaults: trust_score=0.5, retrieval_count=0
     assert e.trust_score == 0.5
-    assert e.retrieval_count == 0
+    assert e.retrieval_score == 0.0
 
     # Insert a second entry (also with defaults) and confirm
     entry2 = KnowledgeEntry(
@@ -369,7 +371,7 @@ def test_upsert_round_trips_trust_score_and_retrieval_count(tmp_path):
     assert results2.is_success()
     e2 = results2.value[0]
     assert e2.trust_score == 0.5
-    assert e2.retrieval_count == 0
+    assert e2.retrieval_score == 0.0
 
 
 def test_query_ranked_by_dimension_excludes_retired_orders_and_caps(tmp_path):
@@ -449,7 +451,7 @@ def test_query_ranked_by_dimension_excludes_retired_orders_and_caps(tmp_path):
         assert e.id is not None
         assert isinstance(e.id, int)
         assert isinstance(e.trust_score, float)
-        assert isinstance(e.retrieval_count, int)
+        assert isinstance(e.retrieval_score, float)
 
     # 5) The top entry should be the one with highest trust_score (Alice, 0.9)
     assert entries[0].trust_score == 0.9
@@ -585,3 +587,111 @@ def test_prune_sources_deduplicates_after_removal(tmp_path):
     entries = query_by_entity("Alice", db_path=db_path)
     assert isinstance(entries, Success)
     assert entries.value[0].sources == ["200"]  # deduped
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 — Retrieval score increment + sweep (Slice B)
+# ---------------------------------------------------------------------------
+
+
+def test_bump_retrieval_score_from_zero(tmp_path):
+    """bump_retrieval_score on entry with score 0.0 → score becomes 1.0."""
+    db_path = tmp_path / "kb.db"
+    init_db(db_path)
+
+    # Seed an entry with default retrieval_count=0
+    entry = KnowledgeEntry(
+        dimension="people",
+        entity="Alice",
+        tag="role",
+        fact="Engineering Manager",
+        confidence=0.9,
+    )
+    result = upsert(entry, db_path=db_path)
+    assert result.is_success()
+    entry_id = result.value
+
+    # Bump
+    bump_result = bump_retrieval_score(entry_id, db_path=db_path)
+    assert isinstance(bump_result, Success)
+    assert bump_result.value == 1  # 1 row affected
+
+    # Read back — score should be 1.0
+    entries = query_by_entity("Alice", db_path=db_path)
+    assert isinstance(entries, Success)
+    assert entries.value[0].retrieval_score == 1.0
+
+
+def test_bump_retrieval_score_with_decay(tmp_path):
+    """bump_retrieval_score on entry with score 5.0 (decay=0.95) → 5.75."""
+    db_path = tmp_path / "kb.db"
+    init_db(db_path)
+
+    import sqlite3
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        """INSERT INTO knowledge_entries
+           (dimension, entity, tag, fact, status, confidence, sources, reasoning, retrieval_count)
+           VALUES (?, ?, ?, ?, 'confident', 0.9, '[]', '', ?)""",
+        ("people", "Alice", "role", "Test fact", 5.0),
+    )
+    conn.commit()
+    entry_id = conn.execute(
+        "SELECT id FROM knowledge_entries WHERE entity='Alice'"
+    ).fetchone()[0]
+    conn.close()
+
+    # Bump with decay=0.95
+    bump_result = bump_retrieval_score(entry_id, decay_factor=0.95, db_path=db_path)
+    assert isinstance(bump_result, Success)
+    assert bump_result.value == 1
+
+    # Read back — 5.0 * 0.95 + 1.0 = 5.75
+    entries = query_by_entity("Alice", db_path=db_path)
+    assert isinstance(entries, Success)
+    assert entries.value[0].retrieval_score == 5.75
+
+
+def test_sweep_retrieval_scores_decays_all(tmp_path):
+    """sweep_retrieval_scores(decay_factor=0.95) decays all entries by 0.95."""
+    db_path = tmp_path / "kb.db"
+    init_db(db_path)
+
+    import sqlite3
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        """INSERT INTO knowledge_entries
+           (dimension, entity, tag, fact, status, confidence, sources, reasoning, retrieval_count)
+           VALUES (?, ?, ?, ?, 'confident', 0.9, '[]', '', ?)""",
+        ("people", "Alice", "role", "Fact A", 10.0),
+    )
+    conn.execute(
+        """INSERT INTO knowledge_entries
+           (dimension, entity, tag, fact, status, confidence, sources, reasoning, retrieval_count)
+           VALUES (?, ?, ?, ?, 'confident', 0.9, '[]', '', ?)""",
+        ("people", "Bob", "role", "Fact B", 20.0),
+    )
+    conn.commit()
+    conn.close()
+
+    # Sweep
+    sweep_result = sweep_retrieval_scores(decay_factor=0.95, db_path=db_path)
+    assert isinstance(sweep_result, Success)
+    assert sweep_result.value == 2  # 2 rows affected
+
+    # Verify: Alice 10*0.95=9.5, Bob 20*0.95=19.0
+    entries = query_by_dimension("people", db_path=db_path)
+    assert isinstance(entries, Success)
+    scores = {e.entity: e.retrieval_score for e in entries.value}
+    assert scores["Alice"] == 9.5
+    assert scores["Bob"] == 19.0
+
+
+def test_bump_retrieval_score_nonexistent_id(tmp_path):
+    """bump_retrieval_score on nonexistent id returns Success(rowcount=0)."""
+    db_path = tmp_path / "kb.db"
+    init_db(db_path)
+
+    result = bump_retrieval_score(9999, db_path=db_path)
+    assert isinstance(result, Success)
+    assert result.value == 0
