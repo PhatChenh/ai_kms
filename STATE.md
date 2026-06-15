@@ -1,27 +1,34 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-06-15 (Phase 8 Slice B — build-pipeline COMPLETE: spec→research→plan written, plan-only) · 2026-06-14 (Phase 8 Slice A — ALL 7 PHASES COMPLETE, merged to cloud-native)_
+_Last updated: 2026-06-15 (Phase 8 Issue Resolution COMPLETE: 20 issues resolved, classify decomposed, 5 items deferred to TD-P9-*) · 2026-06-15 (Phase 8 Slice B — ALL 10 PHASES COMPLETE, ~216 new tests) · 2026-06-14 (Phase 8 Slice A — ALL 7 PHASES COMPLETE, merged to cloud-native)_
 
 ## Current Position
-**Phase**: Phase 8 (Classify Redesign). **Slice A (Classify Infrastructure, no LLM) — ALL 7 PHASES COMPLETE (2026-06-14, ~55 new tests, merged to cloud-native) — last IMPLEMENTED phase.** **Slice B (Classify Extraction, LLM) — build-pipeline COMPLETE (design→spec→research→plan, 2026-06-15), PLAN-ONLY, NOT implemented. Ready for `/tdd-implement phase8_sliceB_extraction`.** (Prior: Phase 6 Daemon Slice A1+A2 COMPLETE; Slice B plan-written. Phase 7A+7B Capture Refactor COMPLETE. Phase 5 Slice 1+2 COMPLETE.)
+**Phase**: Phase 8 (Classify Redesign) — **ALL COMPLETE.** Slice A (infrastructure, no LLM) ✅ 2026-06-14. Slice B (extraction, LLM) ✅ 2026-06-15. **Issue Resolution ✅ 2026-06-15:** 20 issues from nuclear review resolved across 4 phases; `classify.py` decomposed from 984→222 lines into 4 modules (`classify.py`, `classify_extract.py`, `classify_writer.py`, `classify_orchestrator.py`); `documents_classify.py` extracted (6 functions, 194 lines); 5 perf/cleanup items logged as tech debt (TD-P9-PERF-01/02/03, TD-P9-CLEAN-01/02) for Phase 9 intake. **Next: Phase 9 (MCP Adaptation) or Phase 6 Slice B (installable daemon).** (Prior: Phase 6 Daemon Slice A1+A2 COMPLETE; Slice B plan-written. Phase 7A+7B Capture Refactor COMPLETE. Phase 5 Slice 1+2 COMPLETE.)
 
-**[Phase 8 Slice B — Classify Extraction (LLM) — Plan written 2026-06-15]** _(PENDING implementation)_:
-- [ ] Phase 0 — DeepSeek config pre-flight (verify `providers.classify` re-points to OpenAI-compat provider with model+endpoint before first real classify call)
-- [ ] Phase 1 — Migration 011 (`documents.classify_attempts` INTEGER + `classify_last_error` TEXT) + version-pin cascade 10→11 (`test_migration_007/008/009/010`)
-- [ ] Phase 2 — config `classify.max_retries` (K)
-- [ ] Phase 3 — `prompts/entity_extract.yaml` (existing-entries-with-ids + per-dimension guidance + `previous_attempt_feedback`)
-- [ ] Phase 4 — `find_unclassified` gains `status != 'needs-review'` filter + retry-state round-trip/helpers in `storage/documents.py`
-- [ ] Phase 5 — Entity Extractor (one `get_provider("classify", config).complete` per dimension; JSON parse; recoverable flags; truncate raw reply 200 chars)
-- [ ] Phase 6 — Entry Writer (new/update/retire; source read+append+dedupe on update; exact dimension+entity+tag dedup via `query_by_entity`; status re-gate via `confidence_to_status`; skip+log hallucinated id)
-- [ ] Phase 7 — Orchestrator (`new_correlation_id` → per-dimension extract→write→audit → `stamp_classified` once, gated on full success; on failure save error+increment, park as `needs-review` at attempts ≥ K)
-- [ ] Phase 8 — Live-enqueue seam (composed lifespan stores queue on `app.state.classify_queue`; upload handler `put_nowait(row_id)`; absent queue → skip)
-- [ ] Phase 9 — Source-prune on delete (`_delete_with_blob_cleanup`: lookup id by path before delete; remove id from each non-retired entry's `sources`; empty → `status='pending'`; never auto-delete/retire; scan-and-filter per research)
-- [ ] Phase 10 — Delete old folder-routing classify (`build_subject`/`build_folder_subject`/`_destination_names`/`ClassifyResult`/`classify`; delete `test_classify.py`; delete dead `_stub_classify` conftest block)
-- **Research:** 16 validated / 0 invalidated / 0 unverifiable (no loop-back). Body-level confirms: `pipelines.capture` has no `classify` attr (conftest monkeypatch dead → delete removes latent AttributeError); `upsert` overwrites `sources` wholesale (Writer merges in Python); `retire` never deletes; `audit.write` fails without `new_correlation_id()`; `needs-review` is write-only elsewhere (collision-free); schema_version=10 → migration 011 cascade.
+**[Phase 8 Issue Resolution — ✅ COMPLETE 2026-06-15]** _(20 issues from nuclear review resolved across 4 phases)_:
+- [x] Phase 1 — Quick wins: C4 (nested-dict config default), M10 (log format), L1-L4 (docstrings), M9 (constant rename)
+- [x] Phase 2 — DRY helper extraction: C3+M1+M2+M3 (`_merge_sources`, `_compute_status`, `_find_twin`), H2 (`_fail_and_record`), H4+H5 (`_handle_stamp`, `_handle_retry`), M4+M5 (kwarg simplification), H3 (separate stamp vs retry-record), M8 (WriteSummary dataclass)
+- [x] Phase 3 — File decomposition H1: `classify.py` 984→222 lines, split into `classify.py` (public API), `classify_extract.py` (extraction), `classify_writer.py` (entry writing), `classify_orchestrator.py` (orchestration+retry)
+- [x] Phase 4 — File decomposition H6: `documents_classify.py` extracted from `documents.py` (6 functions, 194 lines: `find_unclassified`, `stamp_classified`, `record_classify_failure`, `clear_classify_retry_state`, `park_document`, `load_classify_retry_state`)
+- **Deferred to tech debt (Phase 9 intake):** TD-P9-PERF-01 (dimensions loaded twice per doc), TD-P9-PERF-02 (context_loader re-queries DB per doc), TD-P9-PERF-03 (prune_sources O(N) memory), TD-P9-CLEAN-01 (redundant dedupe), TD-P9-CLEAN-02 (lifecycle comments)
+- **Artifact:** `docs/0_draft/phase8_issue_diagnosis.md` (issue inventory + resolution plan)
+
+**[Phase 8 Slice B — Classify Extraction (LLM) — ✅ COMPLETE 2026-06-15]** _(~216 new tests)_:
+- [x] Phase 0 — DeepSeek config pre-flight
+- [x] Phase 1 — Migration 011 (`documents.classify_attempts` INTEGER + `classify_last_error` TEXT) + version-pin cascade
+- [x] Phase 2 — config `classify.max_retries` (K)
+- [x] Phase 3 — `prompts/entity_extract.yaml`
+- [x] Phase 4 — `find_unclassified` gains `status != 'needs-review'` filter + retry-state helpers
+- [x] Phase 5 — Entity Extractor (per-dimension AI call, JSON parse, validation)
+- [x] Phase 6 — Entry Writer (new/update/retire routing, source-merge, exact-entity dedup, status re-gate)
+- [x] Phase 7 — Orchestrator (per-doc correlation id, per-dimension audit, stamp on all-clean, park at max_retries)
+- [x] Phase 8 — Live-enqueue seam (`app.state.classify_queue`, upload handler `put_nowait`)
+- [x] Phase 9 — Source-prune on delete (`prune_sources()`, empty→pending)
+- [x] Phase 10 — Delete old folder-routing classify code
+- **Research:** 16 validated / 0 invalidated / 0 unverifiable (no loop-back).
 - **Decisions:** A1 queue on `app.state`; B1 retry state on `documents` columns + park=`needs-review`; reuse `classify` LLM task re-pointed at DeepSeek; orchestrator/queue/worker stay in `pipelines/classify.py`. ADR-0018 (bounded self-correcting retry) + ADR-0019 (live-enqueue seam + exact-entity write-time dedup).
 - **Artifacts:** design `docs/1_design/phase8/phase8_sliceB_extraction.md` · spec `docs/2_specs/phase8/phase8_sliceB_extraction.md` · research `docs/3_research/phase8/phase8_sliceB_extraction.md` · plan `docs/4_plans/phase8/phase8_sliceB_extraction.md` · grill `docs/0_draft/phase8/phase8_sliceB_extraction_grill.md`
-- **Open (non-blocking, resolved):** OQ-P8B-01 find-by-source-id (scan-and-filter), OQ-P8B-02 demote-on-update (re-gate every write + observe), OQ-P8B-03 paged enqueue (one-burst + TD).
-- **Tech-debt raised in priority (now each = paid AI call):** `context_loader` per-doc re-query of dimensions+facts; hardcoded `dimensions.yaml` path. Plus deferred: TD-066 cross-doc batching, TD-067 prompt caching (research-gated), TD-068 cross-dimension context, entity resolution, catch-up paging.
+- **Tech-debt raised:** TD-066 cross-doc batching, TD-067 prompt caching, TD-068 cross-dimension context, TD-069 context_loader per-doc re-query, TD-070 hardcoded dimensions.yaml path.
 
 **[Phase 8 Slice A — Classify Infrastructure (no LLM) — ✅ COMPLETE 2026-06-14]** _(9 commits, merged to cloud-native)_:
 - [x] Phase 1 — Migration 010 (`documents.classify_content_hash`; `knowledge_entries.trust_score` DEFAULT 0.5, `retrieval_count` DEFAULT 0; 2 indexes) + version-pin cascade 9→10 (`test_migration_007/008/009`) [P8-CLS-A-01]

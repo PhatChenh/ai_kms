@@ -45,6 +45,7 @@ class _FakeProvider:
 
 def _cfg(tmp_path: Path, max_retries: int = 3) -> "MainConfig":
     from core.config import MainConfig, VaultConfig, ClassifyConfig
+
     return MainConfig(
         vault=VaultConfig(root=str(tmp_path)),
         classify=ClassifyConfig(max_retries=max_retries),
@@ -67,8 +68,16 @@ def _seed_doc(
         """INSERT INTO documents (vault_path, title, full_body, content_hash,
            classify_attempts, classify_last_error, status, classify_content_hash)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (vault_path, vault_path, full_body, content_hash,
-         classify_attempts, classify_last_error, status, classify_content_hash),
+        (
+            vault_path,
+            vault_path,
+            full_body,
+            content_hash,
+            classify_attempts,
+            classify_last_error,
+            status,
+            classify_content_hash,
+        ),
     )
     conn.commit()
     doc_id = conn.execute(
@@ -81,13 +90,15 @@ def _seed_doc(
 def _valid_extract_reply(facts: list[dict] | None = None) -> str:
     """Return a valid entity_extract JSON reply."""
     if facts is None:
-        facts = [{
-            "action": "new",
-            "entity": "Anthony",
-            "tag": "other",
-            "fact": "Anthony leads Movie Q2.",
-            "confidence": 0.9,
-        }]
+        facts = [
+            {
+                "action": "new",
+                "entity": "Anthony",
+                "tag": "other",
+                "fact": "Anthony leads Movie Q2.",
+                "confidence": 0.9,
+            }
+        ]
     return json.dumps(facts)
 
 
@@ -106,21 +117,29 @@ class TestOrchestratorHappyPath:
 
         doc_id = _seed_doc(db_path)
 
-        from pipelines.classify import orchestrate
+        from pipelines.classify_orchestrator import orchestrate
 
         # Fake provider returning valid facts for every dimension call
-        import pipelines.classify as _pc
-        provider = _FakeProvider(replies=[_valid_extract_reply(), _valid_extract_reply(), _valid_extract_reply()])
+        import pipelines.classify_extract as _pc
+
+        provider = _FakeProvider(
+            replies=[
+                _valid_extract_reply(),
+                _valid_extract_reply(),
+                _valid_extract_reply(),
+            ]
+        )
         _pc.get_provider = lambda task, cfg: provider
 
         config = _cfg(tmp_path)
 
         from core.config import ConfidenceBand
+
         band = ConfidenceBand(auto=0.85, suggest=0.60)
 
         # Verify the patch is in effect
         assert _pc.get_provider("classify", config) is provider
-        result = await _pc.orchestrate(doc_id, config=config, db_path=db_path, band=band)
+        result = await orchestrate(doc_id, config=config, db_path=db_path, band=band)
 
         assert isinstance(result, Success), f"Expected Success, got {result}"
         assert result.value == "stamped", f"Expected 'stamped', got {result.value!r}"
@@ -129,25 +148,35 @@ class TestOrchestratorHappyPath:
         conn = sqlite3.connect(str(db_path))
         row = conn.execute(
             "SELECT classify_content_hash, classify_attempts, classify_last_error "
-            "FROM documents WHERE id = ?", (doc_id,)
+            "FROM documents WHERE id = ?",
+            (doc_id,),
         ).fetchone()
         conn.close()
         assert row[0] == "abc123", "classify_content_hash should equal content_hash"
         assert row[1] == 0, "classify_attempts should be cleared"
         assert row[2] is None, "classify_last_error should be None"
 
-    async def test_doc_not_returned_by_find_unclassified_after_stamp(self, tmp_path, monkeypatch):
+    async def test_doc_not_returned_by_find_unclassified_after_stamp(
+        self, tmp_path, monkeypatch
+    ):
         """After a clean orchestrate, find_unclassified no longer returns the doc."""
         db_path = tmp_path / "test.db"
         init_db(db_path)
 
         doc_id = _seed_doc(db_path)
 
-        from pipelines.classify import orchestrate
-        from storage.documents import find_unclassified
+        from pipelines.classify_orchestrator import orchestrate
+        from storage.documents_classify import find_unclassified
 
-        provider = _FakeProvider(replies=[_valid_extract_reply(), _valid_extract_reply(), _valid_extract_reply()])
-        import pipelines.classify as _pc
+        provider = _FakeProvider(
+            replies=[
+                _valid_extract_reply(),
+                _valid_extract_reply(),
+                _valid_extract_reply(),
+            ]
+        )
+        import pipelines.classify_extract as _pc
+
         _pc.get_provider = lambda task, cfg: provider
 
         config = _cfg(tmp_path)
@@ -162,33 +191,41 @@ class TestOrchestratorHappyPath:
 class TestOrchestratorRetryPath:
     """Phase 7 — retry and park paths."""
 
-    async def test_failure_increments_attempts_and_saves_error(self, tmp_path, monkeypatch):
+    async def test_failure_increments_attempts_and_saves_error(
+        self, tmp_path, monkeypatch
+    ):
         """A failed dimension → no stamp, attempts++, error saved, still discoverable."""
         db_path = tmp_path / "test.db"
         init_db(db_path)
 
         doc_id = _seed_doc(db_path)
 
-        from pipelines.classify import orchestrate
-        from storage.documents import find_unclassified
+        from pipelines.classify_orchestrator import orchestrate
+        from storage.documents_classify import find_unclassified
 
         # First dimension: gives unparseable reply
-        provider = _FakeProvider(replies=[
-            "not valid json!",  # first dimension fails
-            _valid_extract_reply(),  # second dimension succeeds (but all_clean stays False)
-        ])
-        import pipelines.classify as _pc
+        provider = _FakeProvider(
+            replies=[
+                "not valid json!",  # first dimension fails
+                _valid_extract_reply(),  # second dimension succeeds (but all_clean stays False)
+            ]
+        )
+        import pipelines.classify_extract as _pc
+
         _pc.get_provider = lambda task, cfg: provider
 
         config = _cfg(tmp_path)
         result = await orchestrate(doc_id, config=config, db_path=db_path)
-        assert isinstance(result, Success)  # orchestrate itself succeeds (retry state saved)
+        assert isinstance(
+            result, Success
+        )  # orchestrate itself succeeds (retry state saved)
 
         # No stamp
         conn = sqlite3.connect(str(db_path))
         row = conn.execute(
             "SELECT classify_content_hash, classify_attempts, classify_last_error "
-            "FROM documents WHERE id = ?", (doc_id,)
+            "FROM documents WHERE id = ?",
+            (doc_id,),
         ).fetchone()
         conn.close()
         assert row[0] is None or row[0] != "abc123", "should NOT be stamped"
@@ -211,14 +248,17 @@ class TestOrchestratorRetryPath:
             classify_last_error="Previous parse error",
         )
 
-        from pipelines.classify import orchestrate
-        from storage.documents import find_unclassified
+        from pipelines.classify_orchestrator import orchestrate
+        from storage.documents_classify import find_unclassified
 
-        provider = _FakeProvider(replies=[
-            "bad json!",  # fail
-            _valid_extract_reply(),
-        ])
-        import pipelines.classify as _pc
+        provider = _FakeProvider(
+            replies=[
+                "bad json!",  # fail
+                _valid_extract_reply(),
+            ]
+        )
+        import pipelines.classify_extract as _pc
+
         _pc.get_provider = lambda task, cfg: provider
 
         config = _cfg(tmp_path, max_retries=3)
@@ -249,57 +289,68 @@ class TestOrchestratorRetryPath:
             classify_last_error="JSON parse error: trailing comma",
         )
 
-        from pipelines.classify import orchestrate
+        from pipelines.classify_orchestrator import orchestrate
 
-        provider = _FakeProvider(replies=[
-            _valid_extract_reply(),
-            _valid_extract_reply(),
-        ])
+        provider = _FakeProvider(
+            replies=[
+                _valid_extract_reply(),
+                _valid_extract_reply(),
+            ]
+        )
 
         # Spy on extract to capture feedback
         captured_feedback = []
 
-        import pipelines.classify as _pc
+        import pipelines.classify_extract as _pc
+
         _pc.get_provider = lambda task, cfg: provider
 
-        # Save original extract before patching
-        import pipelines.classify as classify_mod
-        _original_extract = classify_mod.extract
+        # Patch extract on classify_orchestrator (where it's bound at import time)
+        import pipelines.classify_orchestrator as classify_orch_mod
 
-        async def spy_extract(dimension, text, existing_facts, guidance, feedback, config):
+        _original_extract = classify_orch_mod.extract
+
+        async def spy_extract(
+            dimension, text, existing_facts, guidance, feedback, config
+        ):
             captured_feedback.append(feedback)
             return await _original_extract(
                 dimension, text, existing_facts, guidance, feedback, config
             )
 
-        classify_mod.extract = spy_extract
+        classify_orch_mod.extract = spy_extract
 
         config = _cfg(tmp_path)
         await orchestrate(doc_id, config=config, db_path=db_path)
 
         # At least one call should have the saved error as feedback
-        assert any(
-            "JSON parse error" in fb for fb in captured_feedback if fb
-        ), f"Feedback not passed: {captured_feedback}"
+        assert any("JSON parse error" in fb for fb in captured_feedback if fb), (
+            f"Feedback not passed: {captured_feedback}"
+        )
 
 
 class TestOrchestratorCorrelationId:
     """Phase 7 — correlation id guard."""
 
-    async def test_new_correlation_id_is_called_before_audit(self, tmp_path, monkeypatch):
+    async def test_new_correlation_id_is_called_before_audit(
+        self, tmp_path, monkeypatch
+    ):
         """orchestrate calls new_correlation_id() before any audit write."""
         db_path = tmp_path / "test.db"
         init_db(db_path)
 
         doc_id = _seed_doc(db_path)
 
-        from pipelines.classify import orchestrate
+        from pipelines.classify_orchestrator import orchestrate
 
-        provider = _FakeProvider(replies=[
-            _valid_extract_reply(),
-            _valid_extract_reply(),
-        ])
-        import pipelines.classify as _pc
+        provider = _FakeProvider(
+            replies=[
+                _valid_extract_reply(),
+                _valid_extract_reply(),
+            ]
+        )
+        import pipelines.classify_extract as _pc
+
         _pc.get_provider = lambda task, cfg: provider
 
         # Spy on new_correlation_id
@@ -313,9 +364,7 @@ class TestOrchestratorCorrelationId:
             call_count += 1
             return _orig_new_cid()
 
-        monkeypatch.setattr(
-            core.logging_setup, "new_correlation_id", spy_new_cid
-        )
+        monkeypatch.setattr(core.logging_setup, "new_correlation_id", spy_new_cid)
 
         config = _cfg(tmp_path)
         await orchestrate(doc_id, config=config, db_path=db_path)
@@ -338,12 +387,15 @@ class TestConsumerSeam:
         from pipelines.classify import consumer
         import asyncio
 
-        provider = _FakeProvider(replies=[
-            _valid_extract_reply(),
-            _valid_extract_reply(),
-            _valid_extract_reply(),
-        ])
-        import pipelines.classify as _pc
+        provider = _FakeProvider(
+            replies=[
+                _valid_extract_reply(),
+                _valid_extract_reply(),
+                _valid_extract_reply(),
+            ]
+        )
+        import pipelines.classify_extract as _pc
+
         _pc.get_provider = lambda task, cfg: provider
 
         config = _cfg(tmp_path)

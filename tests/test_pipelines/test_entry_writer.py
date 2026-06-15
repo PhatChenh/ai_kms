@@ -20,6 +20,7 @@ from storage.knowledge_entries import KnowledgeEntry, upsert, retire, query_by_e
 
 def _cfg(tmp_path: Path) -> MainConfig:
     from core.config import VaultConfig
+
     return MainConfig(
         vault=VaultConfig(root=str(tmp_path)),
         classify=ClassifyConfig(max_retries=3),
@@ -65,15 +66,17 @@ class TestEntryWriter:
         db_path = tmp_path / "test.db"
         init_db(db_path)
 
-        from pipelines.classify import write_entries
+        from pipelines.classify_writer import write_entries
 
-        facts = [{
-            "action": "new",
-            "entity": "Anthony",
-            "tag": "other",
-            "fact": "Anthony leads Movie Q2.",
-            "confidence": 0.9,
-        }]
+        facts = [
+            {
+                "action": "new",
+                "entity": "Anthony",
+                "tag": "other",
+                "fact": "Anthony leads Movie Q2.",
+                "confidence": 0.9,
+            }
+        ]
 
         summary = write_entries(
             facts=facts,
@@ -110,15 +113,17 @@ class TestEntryWriter:
             sources=["10"],
         )
 
-        from pipelines.classify import write_entries
+        from pipelines.classify_writer import write_entries
 
-        facts = [{
-            "action": "new",
-            "entity": "Anthony",
-            "tag": "other",
-            "fact": "Anthony leads Movie Q2.",
-            "confidence": 0.85,
-        }]
+        facts = [
+            {
+                "action": "new",
+                "entity": "Anthony",
+                "tag": "other",
+                "fact": "Anthony leads Movie Q2.",
+                "confidence": 0.85,
+            }
+        ]
 
         summary = write_entries(
             facts=facts,
@@ -156,15 +161,17 @@ class TestEntryWriter:
             sources=["10"],
         )
 
-        from pipelines.classify import write_entries
+        from pipelines.classify_writer import write_entries
 
-        facts = [{
-            "action": "new",
-            "entity": "Anthony",
-            "tag": "other",
-            "fact": "Anthony leads Movie Q2.",
-            "confidence": 0.9,
-        }]
+        facts = [
+            {
+                "action": "new",
+                "entity": "Anthony",
+                "tag": "other",
+                "fact": "Anthony leads Movie Q2.",
+                "confidence": 0.9,
+            }
+        ]
 
         summary = write_entries(
             facts=facts,
@@ -200,16 +207,18 @@ class TestEntryWriter:
             sources=["10", "20"],
         )
 
-        from pipelines.classify import write_entries
+        from pipelines.classify_writer import write_entries
 
-        facts = [{
-            "action": "update",
-            "id": existing_id,
-            "entity": "Anthony",
-            "tag": "other",
-            "fact": "Anthony works in the Movies division.",
-            "confidence": 0.8,
-        }]
+        facts = [
+            {
+                "action": "update",
+                "id": existing_id,
+                "entity": "Anthony",
+                "tag": "other",
+                "fact": "Anthony works in the Movies division.",
+                "confidence": 0.8,
+            }
+        ]
 
         summary = write_entries(
             facts=facts,
@@ -245,16 +254,18 @@ class TestEntryWriter:
             sources=["100", "200"],
         )
 
-        from pipelines.classify import write_entries
+        from pipelines.classify_writer import write_entries
 
-        facts = [{
-            "action": "update",
-            "id": existing_id,
-            "entity": "Anthony",
-            "tag": "other",
-            "fact": "Anthony works in Movies.",
-            "confidence": 0.9,
-        }]
+        facts = [
+            {
+                "action": "update",
+                "id": existing_id,
+                "entity": "Anthony",
+                "tag": "other",
+                "fact": "Anthony works in Movies.",
+                "confidence": 0.9,
+            }
+        ]
 
         summary = write_entries(
             facts=facts,
@@ -283,14 +294,16 @@ class TestEntryWriter:
             fact="Old fact.",
         )
 
-        from pipelines.classify import write_entries
+        from pipelines.classify_writer import write_entries
         from storage.knowledge_entries import query_by_entity
 
-        facts = [{
-            "action": "retire",
-            "id": existing_id,
-            "reason": "No longer relevant.",
-        }]
+        facts = [
+            {
+                "action": "retire",
+                "id": existing_id,
+                "reason": "No longer relevant.",
+            }
+        ]
 
         summary = write_entries(
             facts=facts,
@@ -314,16 +327,18 @@ class TestEntryWriter:
         db_path = tmp_path / "test.db"
         init_db(db_path)
 
-        from pipelines.classify import write_entries
+        from pipelines.classify_writer import write_entries
 
-        facts = [{
-            "action": "update",
-            "id": 99999,  # Doesn't exist
-            "entity": "Anthony",
-            "tag": "other",
-            "fact": "Updated fact.",
-            "confidence": 0.9,
-        }]
+        facts = [
+            {
+                "action": "update",
+                "id": 99999,  # Doesn't exist
+                "entity": "Anthony",
+                "tag": "other",
+                "fact": "Updated fact.",
+                "confidence": 0.9,
+            }
+        ]
 
         summary = write_entries(
             facts=facts,
@@ -352,7 +367,7 @@ class TestEntryWriter:
             sources=["10"],
         )
 
-        from pipelines.classify import write_entries
+        from pipelines.classify_writer import write_entries
 
         facts = [
             {
@@ -406,7 +421,7 @@ class TestEntryWriter:
         db_path = tmp_path / "test.db"
         init_db(db_path)
 
-        from pipelines.classify import write_entries
+        from pipelines.classify_writer import write_entries
 
         # Also need a ConfidenceBand for the re-gate
         from core.config import ConfidenceBand
@@ -414,13 +429,15 @@ class TestEntryWriter:
         band = ConfidenceBand(auto=0.85, suggest=0.60)
 
         # High confidence → should be "confident"
-        facts_high = [{
-            "action": "new",
-            "entity": "Anthony",
-            "tag": "other",
-            "fact": "High confidence fact.",
-            "confidence": 0.95,
-        }]
+        facts_high = [
+            {
+                "action": "new",
+                "entity": "Anthony",
+                "tag": "other",
+                "fact": "High confidence fact.",
+                "confidence": 0.95,
+            }
+        ]
 
         summary = write_entries(
             facts=facts_high,
@@ -434,13 +451,15 @@ class TestEntryWriter:
         assert entries.value[0].status == "confident"
 
         # Low confidence → should be "pending"
-        facts_low = [{
-            "action": "new",
-            "entity": "Bob",
-            "tag": "other",
-            "fact": "Low confidence fact.",
-            "confidence": 0.3,
-        }]
+        facts_low = [
+            {
+                "action": "new",
+                "entity": "Bob",
+                "tag": "other",
+                "fact": "Low confidence fact.",
+                "confidence": 0.3,
+            }
+        ]
 
         summary2 = write_entries(
             facts=facts_low,
@@ -458,7 +477,7 @@ class TestEntryWriter:
         db_path = tmp_path / "test.db"
         init_db(db_path)
 
-        from pipelines.classify import write_entries
+        from pipelines.classify_writer import write_entries
 
         summary = write_entries(
             facts=[],

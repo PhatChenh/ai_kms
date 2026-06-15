@@ -41,7 +41,13 @@ _CONFIG_DIR = _PROJECT_ROOT / "config"
 # ---------------------------------------------------------------------------
 type Provider = Literal["claude", "claude_cli", "ollama", "openai"]
 type Task = Literal[
-    "classify", "synthesis", "documentation", "embeddings", "self_learn", "capture", "vision"
+    "classify",
+    "synthesis",
+    "documentation",
+    "embeddings",
+    "self_learn",
+    "capture",
+    "vision",
 ]
 type LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 type Env = Literal["dev", "prod", "test"]
@@ -342,7 +348,7 @@ class ClassifyConfig(BaseModel):
 
     max_content_tokens: int = Field(10000, ge=1)
     max_entries_per_dimension: int = Field(50, ge=1)
-    max_retries: int = Field(default=3, ge=1)
+    max_retries: int = Field(default=3, ge=1, le=20)
 
 
 class TestingConfig(BaseModel):

@@ -42,7 +42,6 @@ def _push_to_classify_queue(request: Request, document_id: int) -> None:
     cloud_entry.py.  When absent (CLI / tests), skip silently — the
     catch-up scan is the safety net.
     """
-    import asyncio
     queue = getattr(request.app.state, "classify_queue", None)
     if queue is not None:
         try:

@@ -123,7 +123,8 @@ class TestConsumer:
             _seed_knowledge_entry(conn)
 
         # Put all doc ids into the queue
-        from storage.documents import find_unclassified
+        from storage.documents_classify import find_unclassified
+
         result = find_unclassified(db_path=db_path)
         assert isinstance(result, Success)
         for doc_id in result.value:
@@ -147,6 +148,7 @@ class TestConsumer:
                 try:
                     # We simulate the consumer body inline to track concurrency
                     from pipelines.classify import content_reader, context_loader
+
                     cr = content_reader(doc_id, config=config, db_path=db_path)
                     cl = context_loader(config=config, db_path=db_path)
                     # Both must succeed for valid docs
@@ -189,7 +191,8 @@ class TestConsumer:
                 )
             _seed_knowledge_entry(conn)
 
-        from storage.documents import find_unclassified
+        from storage.documents_classify import find_unclassified
+
         result = find_unclassified(db_path=db_path)
         assert isinstance(result, Success)
         ids = result.value
@@ -273,7 +276,8 @@ class TestConsumer:
             )
             _seed_knowledge_entry(conn)
 
-        from storage.documents import find_unclassified
+        from storage.documents_classify import find_unclassified
+
         result = find_unclassified(db_path=db_path)
         assert isinstance(result, Success)
         good_ids = result.value
@@ -371,9 +375,7 @@ class TestCatchUpScan:
         while not queue.empty():
             ids.append(queue.get_nowait())
 
-        assert len(ids) == 1, (
-            f"Expected only 1 unclassified doc, got {ids}"
-        )
+        assert len(ids) == 1, f"Expected only 1 unclassified doc, got {ids}"
 
     @pytest.mark.asyncio
     async def test_scan_does_not_block(self, db_path: Path):
@@ -396,9 +398,7 @@ class TestCatchUpScan:
         elapsed = time.monotonic() - start
 
         # 100 documents should enqueue in well under 5 seconds
-        assert elapsed < 5.0, (
-            f"catch_up_scan took {elapsed:.2f}s for 100 docs"
-        )
+        assert elapsed < 5.0, f"catch_up_scan took {elapsed:.2f}s for 100 docs"
 
 
 # ============================================================================
