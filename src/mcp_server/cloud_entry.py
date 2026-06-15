@@ -110,6 +110,7 @@ def _wrap_lifespan(app: Starlette, db_path: Path | None) -> None:
 
     from core.config import CONFIG
     from pipelines.classify import catch_up_scan, consumer
+    from storage.knowledge_entries import sweep_retrieval_scores
 
     inner = app.router.lifespan_context  # session_manager.run()
 
@@ -121,19 +122,57 @@ def _wrap_lifespan(app: Starlette, db_path: Path | None) -> None:
             queue  # COUPLING: consumed by api.py upload_handler
         )
         worker = asyncio.create_task(consumer(queue, db_path, CONFIG.main))
+        sweep_worker = asyncio.create_task(
+            _retrieval_sweep_worker(db_path, CONFIG.main)
+        )
         try:
             await catch_up_scan(queue, db_path)
             async with inner(app_ref):
                 yield
         finally:
             worker.cancel()
+            sweep_worker.cancel()
             try:
                 await worker
+            except asyncio.CancelledError:
+                pass
+            try:
+                await sweep_worker
             except asyncio.CancelledError:
                 pass
             _log.debug("classify_worker_task_cancelled")
 
     app.router.lifespan_context = _composed  # reassign IN PLACE
+
+
+async def _retrieval_sweep_worker(
+    db_path: Path | None,
+    main_config: object,
+) -> None:
+    """Background task that periodically decays all retrieval scores.
+
+    Sleeps for ``sweep_interval_hours`` between sweeps.
+    The config is accessed via ``main_config.mcp.retrieval_score``.
+    """
+    import asyncio
+
+    # Access config safely — fall back to defaults if structure is missing.
+    try:
+        rs_cfg = main_config.mcp.retrieval_score
+        decay = rs_cfg.decay_factor
+        interval_hours = rs_cfg.sweep_interval_hours
+    except AttributeError:
+        decay = 0.95
+        interval_hours = 24
+
+    interval_seconds = interval_hours * 3600.0
+    while True:
+        await asyncio.sleep(interval_seconds)
+        result = sweep_retrieval_scores(decay_factor=decay, db_path=db_path)
+        if result.is_success():
+            _log.debug("retrieval_sweep_done rows=%d", result.value)
+        else:
+            _log.error("retrieval_sweep_failed error=%s", result.error)
 
 
 # ---------------------------------------------------------------------------
@@ -179,3 +218,9 @@ def _obscure(text: str) -> str:
     if len(text) <= 8:
         return text[:2] + "***"
     return text[:4] + "***" + text[-4:]
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(build_app(), host="0.0.0.0", port=8080)
+

@@ -51,6 +51,13 @@ class BlobStore(ABC):
         """Check whether key exists.  Returns Success(True/False) or Failure."""
         ...
 
+    # ------------------------------------------------------------------
+    # async wrappers — for use from async pipelines
+    # ------------------------------------------------------------------
+
+    async def async_put(self, key: str, data: bytes, mime_type: str) -> Result[None]:
+        """Async wrapper around put() — never blocks the event loop."""
+        return await asyncio.to_thread(self.put, key, data, mime_type)
 
 # ---------------------------------------------------------------------------
 # Local filesystem adapter — for tests
@@ -181,9 +188,6 @@ class S3BlobStore(BlobStore):
 
     The constructor takes plain credentials; the caller is responsible for
     reading them from environment variables.
-
-    Async wrappers (async_put, async_get, …) use asyncio.to_thread so they
-    can be awaited from async pipelines without blocking the event loop.
     """
 
     def __init__(
@@ -309,18 +313,4 @@ class S3BlobStore(BlobStore):
                 context={"key": key, "operation": "exists"},
             )
 
-    # ------------------------------------------------------------------
-    # async wrappers — for use from async pipelines
-    # ------------------------------------------------------------------
 
-    async def async_put(self, key: str, data: bytes, mime_type: str) -> Result[None]:
-        return await asyncio.to_thread(self.put, key, data, mime_type)
-
-    async def async_get(self, key: str) -> Result[bytes]:
-        return await asyncio.to_thread(self.get, key)
-
-    async def async_delete(self, key: str) -> Result[None]:
-        return await asyncio.to_thread(self.delete, key)
-
-    async def async_exists(self, key: str) -> Result[bool]:
-        return await asyncio.to_thread(self.exists, key)

@@ -1,137 +1,327 @@
-"""tests/test_mcp_server/test_resolve.py — Binary Resolver Helper (Component 8)
+"""tests/test_mcp_server/test_resolve.py — Three-Tier DB Resolver
 
-TDD: RED → GREEN complete. Four tests for inspect().
+TDD for P9-D-01: resolve() with summary, text, and file modes.
 """
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
-from core.result import Failure, Success
+import pytest
 
-FIXTURE_PDF = Path(__file__).parent.parent / "fixtures" / "sample_text.pdf"
-FIXTURE_SIBLING_MD = (
-    Path(__file__).parent.parent / "fixtures" / "sibling_inspect_pdf.md"
-)
-FIXTURE_PLAIN_NOTE = (
-    Path(__file__).parent.parent / "fixtures" / "plain_note_no_attachment.md"
-)
+from storage.db import init_db, get_connection
+from core.result import Success, Failure
+from mcp_server._resolve import resolve, ResolveResult
 
 
-# ---------------------------------------------------------------------------
-# RED Test 1 — inspect(sibling .md) resolves via attachment_path
-# ---------------------------------------------------------------------------
+# ============================================================================
+# Shared fixture
+# ============================================================================
 
 
-class TestInspectFromSiblingMd:
-    """inspect() on a sibling .md resolves attachment_path -> extracts binary text."""
-
-    def test_inspect_sibling_returns_binary_text(self, vault_dir: Path):
-        """Given sibling .md with attachment_path, return text from the binary."""
-        # Copy PDF fixture into vault at the path referenced by attachment_path
-        binary_dir = vault_dir / "Projects" / "Alpha" / "attachment"
-        binary_dir.mkdir(parents=True, exist_ok=True)
-        binary_path = binary_dir / "sample_text.pdf"
-        shutil.copy2(FIXTURE_PDF, binary_path)
-
-        # Copy sibling .md into .summaries/ next to the binary
-        summaries_dir = binary_dir / ".summaries"
-        summaries_dir.mkdir(parents=True, exist_ok=True)
-        sibling_md = summaries_dir / "sample_text.pdf.md"
-        shutil.copy2(FIXTURE_SIBLING_MD, sibling_md)
-
-        from mcp_server._resolve import inspect
-
-        result = inspect(sibling_md)
-
-        assert isinstance(result, Success)
-        assert "Sample text fixture" in result.value
+@pytest.fixture()
+def db(tmp_path: Path) -> Path:
+    """Fresh temp database with the full schema applied."""
+    db_path = tmp_path / "kb.db"
+    init_db(db_path)
+    return db_path
 
 
-# ---------------------------------------------------------------------------
-# RED Test 2 — inspect(binary directly) returns same text
-# ---------------------------------------------------------------------------
+# ============================================================================
+# Test helpers
+# ============================================================================
 
 
-class TestInspectFromBinaryDirect:
-    """inspect() on a binary path returns extracted text directly."""
-
-    def test_inspect_binary_direct_returns_text(self, vault_dir: Path):
-        """Given binary path directly, return extracted text."""
-        binary_dir = vault_dir / "Projects" / "Beta" / "attachment"
-        binary_dir.mkdir(parents=True, exist_ok=True)
-        binary_path = binary_dir / "sample_text.pdf"
-        shutil.copy2(FIXTURE_PDF, binary_path)
-
-        from mcp_server._resolve import inspect
-
-        result = inspect(binary_path)
-
-        assert isinstance(result, Success)
-        assert "Sample text fixture" in result.value
+_counter: int = 0
 
 
-# ---------------------------------------------------------------------------
-# RED Test 3 — no AI call (no provider, no prompt load)
-# ---------------------------------------------------------------------------
+def _insert_row(
+    db_path: Path,
+    vault_path: str | None = None,
+    title: str = "Test Note",
+    summary: str | None = "A test summary.",
+    full_body: str | None = "Full body text content.",
+) -> int:
+    """Insert a minimal document row and return its id.
+
+    If vault_path is not provided, a unique one is generated.
+    """
+    global _counter
+    _counter += 1
+    if vault_path is None:
+        vault_path = f"test/note_{_counter}.md"
+    with get_connection(db_path) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO documents (vault_path, title, summary, full_body)
+            VALUES (?, ?, ?, ?)
+            """,
+            (vault_path, title, summary, full_body),
+        )
+        return cur.lastrowid
 
 
-class TestNoAiCall:
-    """inspect() must not invoke any LLM provider or prompt loader."""
+# ============================================================================
+# RED 1 — resolve([42], "summary") returns summary text
+# ============================================================================
 
-    def test_inspect_does_not_call_llm(self, vault_dir: Path, monkeypatch):
-        """Patch get_provider and assert it is never called."""
-        import llm.provider as prov
 
-        called = False
+class TestResolveSummary:
+    """resolve() in summary mode returns row.summary."""
 
-        def _fake_get_provider(*args, **kwargs):
-            nonlocal called
-            called = True
-            raise RuntimeError("LLM provider should never be invoked")
-
-        monkeypatch.setattr(prov, "get_provider", _fake_get_provider)
-
-        # Set up a binary in the vault with sibling .md.
-        # NOTE: fixture sibling_inspect_pdf.md hardcodes
-        #   attachment_path: Projects/Alpha/attachment/sample_text.pdf
-        # so the binary MUST be placed at Projects/Alpha/, not Gamma/.
-        binary_dir = vault_dir / "Projects" / "Alpha" / "attachment"
-        binary_dir.mkdir(parents=True, exist_ok=True)
-        binary_path = binary_dir / "sample_text.pdf"
-        shutil.copy2(FIXTURE_PDF, binary_path)
-
-        summaries_dir = binary_dir / ".summaries"
-        summaries_dir.mkdir(parents=True, exist_ok=True)
-        sibling_md = summaries_dir / "sample_text.pdf.md"
-        shutil.copy2(FIXTURE_SIBLING_MD, sibling_md)
-
-        from mcp_server._resolve import inspect
-
-        result = inspect(sibling_md)
+    def test_summary_mode_returns_summary(self, db: Path):
+        """Given a document with summary, resolve returns it with degraded=False."""
+        doc_id = _insert_row(db, summary="The summary.", title="Doc A")
+        result = resolve([doc_id], "summary", db_path=db)
 
         assert isinstance(result, Success)
-        assert not called, "LLM provider should never be invoked during inspect"
+        assert len(result.value) == 1
+        entry = result.value[0]
+        assert entry.doc_id == doc_id
+        assert entry.mode == "summary"
+        assert entry.content == "The summary."
+        assert entry.title == "Doc A"
+        assert entry.degraded is False
+
+    def test_summary_mode_null_summary_returns_placeholder(self, db: Path):
+        """Given a document with NULL summary, resolve returns placeholder."""
+        doc_id = _insert_row(db, summary=None, title="Doc B")
+        result = resolve([doc_id], "summary", db_path=db)
+
+        assert isinstance(result, Success)
+        assert len(result.value) == 1
+        entry = result.value[0]
+        assert entry.content == "[Summary pending]"
+        assert entry.degraded is False
+
+    def test_summary_mode_multiple_docs(self, db: Path):
+        """Resolve multiple doc_ids in summary mode returns all found."""
+        id1 = _insert_row(db, summary="S1", title="T1", vault_path="test/doc_a.md")
+        id2 = _insert_row(db, summary="S2", title="T2", vault_path="test/doc_b.md")
+        result = resolve([id1, id2], "summary", db_path=db)
+
+        assert isinstance(result, Success)
+        assert len(result.value) == 2
+        assert result.value[0].content == "S1"
+        assert result.value[1].content == "S2"
 
 
-# ---------------------------------------------------------------------------
-# RED Test 4 — .md without attachment_path -> Failure
-# ---------------------------------------------------------------------------
+# ============================================================================
+# RED 2 — resolve([42], "text") returns full_body
+# ============================================================================
 
 
-class TestMdWithoutAttachmentPath:
-    """A .md that is not a sibling (no attachment_path) returns a clear Failure."""
+class TestResolveText:
+    """resolve() in text mode returns row.full_body."""
 
-    def test_md_without_attachment_path_returns_failure(self, vault_dir: Path):
-        """A plain .md note without attachment_path should fail, not crash."""
-        note_path = vault_dir / "Projects" / "Delta" / "plain_note.md"
-        note_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(FIXTURE_PLAIN_NOTE, note_path)
+    def test_text_mode_returns_full_body(self, db: Path):
+        """Given a document with full_body, text mode returns it."""
+        doc_id = _insert_row(
+            db, full_body="Complete body text.", summary="Summary.", title="Doc C"
+        )
+        result = resolve([doc_id], "text", db_path=db)
 
-        from mcp_server._resolve import inspect
+        assert isinstance(result, Success)
+        assert len(result.value) == 1
+        entry = result.value[0]
+        assert entry.mode == "text"
+        assert entry.content == "Complete body text."
+        assert entry.title == "Doc C"
+        assert entry.degraded is False
 
-        result = inspect(note_path)
+    def test_text_mode_null_full_body_degrades(self, db: Path):
+        """Given a document with NULL full_body, text mode degrades to summary."""
+        doc_id = _insert_row(
+            db, full_body=None, summary="Only summary.", title="Doc D"
+        )
+        result = resolve([doc_id], "text", db_path=db)
+
+        assert isinstance(result, Success)
+        assert len(result.value) == 1
+        entry = result.value[0]
+        assert entry.content == "Only summary."
+        assert entry.degraded is True
+
+    def test_text_mode_null_full_body_null_summary(self, db: Path):
+        """Given NULL full_body AND NULL summary, text mode returns placeholder."""
+        doc_id = _insert_row(
+            db, full_body=None, summary=None, title="Doc E"
+        )
+        result = resolve([doc_id], "text", db_path=db)
+
+        assert isinstance(result, Success)
+        assert len(result.value) == 1
+        entry = result.value[0]
+        assert entry.content == "[Summary pending]"
+        assert entry.degraded is True
+
+
+# ============================================================================
+# RED 3 — resolve([42], "file") returns vault_path
+# ============================================================================
+
+
+class TestResolveFile:
+    """resolve() in file mode returns vault_path."""
+
+    def test_file_mode_returns_vault_path(self, db: Path):
+        """Given a document, file mode returns its vault_path."""
+        doc_id = _insert_row(
+            db, vault_path="Projects/Alpha/note.md", title="Doc F"
+        )
+        result = resolve([doc_id], "file", db_path=db)
+
+        assert isinstance(result, Success)
+        assert len(result.value) == 1
+        entry = result.value[0]
+        assert entry.mode == "file"
+        assert entry.content == "Projects/Alpha/note.md"
+        assert entry.title == "Doc F"
+        assert entry.degraded is False
+
+
+# ============================================================================
+# RED 4 — nonexistent id returns empty list
+# ============================================================================
+
+
+class TestMissingDoc:
+    """resolve() silently skips missing document ids."""
+
+    def test_nonexistent_id_returns_empty(self, db: Path):
+        """Calling resolve with a nonexistent doc_id returns empty list."""
+        result = resolve([999], "summary", db_path=db)
+        assert isinstance(result, Success)
+        assert result.value == []
+
+    def test_mixed_existing_and_missing(self, db: Path):
+        """Missing ids are silently skipped; existing ones are included."""
+        id1 = _insert_row(db, summary="S1", title="T1")
+        result = resolve([id1, 999, 1000], "summary", db_path=db)
+
+        assert isinstance(result, Success)
+        assert len(result.value) == 1
+        assert result.value[0].doc_id == id1
+
+
+# ============================================================================
+# RED 5 — max_text_refs limit
+# ============================================================================
+
+
+class TestMaxTextRefs:
+    """Text mode respects max_text_refs."""
+
+    def test_beyond_max_text_refs_degrades_to_summary(self, db: Path):
+        """Documents beyond max_text_refs degrade to summary even with full_body."""
+        ids = []
+        for i in range(6):
+            doc_id = _insert_row(
+                db,
+                vault_path=f"test/doc{i}.md",
+                title=f"Doc {i}",
+                summary=f"Summary {i}",
+                full_body=f"Full body {i}",
+            )
+            ids.append(doc_id)
+
+        result = resolve(ids, "text", max_text_refs=5, db_path=db)
+
+        assert isinstance(result, Success)
+        assert len(result.value) == 6
+
+        # First 5 get full_body, not degraded
+        for i in range(5):
+            assert result.value[i].content == f"Full body {i}"
+            assert result.value[i].degraded is False
+
+        # 6th gets summary, degraded
+        assert result.value[5].content == "Summary 5"
+        assert result.value[5].degraded is True
+
+    def test_exactly_max_text_refs_all_text(self, db: Path):
+        """When doc count equals max_text_refs, all get full_body."""
+        ids = []
+        for i in range(3):
+            doc_id = _insert_row(
+                db,
+                vault_path=f"test/doc{i}.md",
+                title=f"Doc {i}",
+                summary=f"Summary {i}",
+                full_body=f"Full body {i}",
+            )
+            ids.append(doc_id)
+
+        result = resolve(ids, "text", max_text_refs=3, db_path=db)
+
+        assert isinstance(result, Success)
+        assert len(result.value) == 3
+        for i in range(3):
+            assert result.value[i].content == f"Full body {i}"
+            assert result.value[i].degraded is False
+
+
+# ============================================================================
+# RED 6 — empty list input
+# ============================================================================
+
+
+class TestEmptyInput:
+    """resolve([]) returns an empty list."""
+
+    def test_empty_ids_returns_empty_list(self, db: Path):
+        """Calling resolve with empty list returns Success([])."""
+        result = resolve([], "summary", db_path=db)
+        assert isinstance(result, Success)
+        assert result.value == []
+
+
+# ============================================================================
+# RED 7 — invalid mode returns Failure
+# ============================================================================
+
+
+class TestInvalidMode:
+    """resolve() with unknown mode returns a Failure."""
+
+    def test_invalid_mode_returns_failure(self, db: Path):
+        """Passing an invalid mode string returns Failure."""
+        doc_id = _insert_row(db)
+        result = resolve([doc_id], "unknown_mode", db_path=db)
 
         assert isinstance(result, Failure)
         assert result.recoverable is False
+        assert "unknown_mode" in result.error
+
+
+# ============================================================================
+# RED 8 — degraded flag semantics
+# ============================================================================
+
+
+class TestDegradedSemantics:
+    """degraded flag is True only when text mode falls back."""
+
+    def test_summary_never_degraded(self, db: Path):
+        """Summary mode is always degraded=False, even with NULL summary."""
+        doc_id = _insert_row(db, summary=None, full_body="Body")
+        result = resolve([doc_id], "summary", db_path=db)
+        assert result.value[0].degraded is False
+
+    def test_file_never_degraded(self, db: Path):
+        """File mode is always degraded=False."""
+        doc_id = _insert_row(db)
+        result = resolve([doc_id], "file", db_path=db)
+        assert result.value[0].degraded is False
+
+    def test_text_with_body_not_degraded(self, db: Path):
+        """Text mode with full_body is degraded=False."""
+        doc_id = _insert_row(db, full_body="Body", summary="Sum")
+        result = resolve([doc_id], "text", db_path=db)
+        assert result.value[0].degraded is False
+
+    def test_text_without_body_degraded(self, db: Path):
+        """Text mode without full_body is degraded=True."""
+        doc_id = _insert_row(db, full_body=None, summary="Sum")
+        result = resolve([doc_id], "text", db_path=db)
+        assert result.value[0].degraded is True
