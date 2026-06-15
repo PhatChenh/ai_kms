@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sample2",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "7823", "--directory", "/Users/lap14806/Vibe-coding-workflow/workflow"],
+      "port": 7823
+    }
+  ]
+}

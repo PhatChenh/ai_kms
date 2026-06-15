@@ -1,0 +1,129 @@
+# Behavior Inventory — Phase 9 MCP Adaptation
+# Generated: 2026-06-15 by design step
+# Origin: design (outcome-level success criteria)
+
+- id: P9-MCP-01
+  description: "kms_vault_info returns a structural overview of all known entities grouped by dimension, plus per-dimension orientation fact bullets, without reading any vault disk files or CLAUDE.md"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P9-MCP-02
+  description: "kms_search returns query facts from the knowledge_entries fact hybrid index plus structured summaries of top-K source documents from the documents table, merged and identity-deduped, with orientation facts prepended"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P9-MCP-03
+  description: "kms_search returns document summary results for freshly-captured documents that have not yet been classified (dual-corpus recall safety-net)"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P9-MCP-04
+  description: "kms_inspect accepts batched integer document ids and a uniform mode per call (summary, text, or file), defaulting to summary, and returns the requested tier from the database"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P9-MCP-05
+  description: "kms_inspect text mode degrades gracefully to summary with a note when documents.full_body is NULL"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P9-MCP-06
+  description: "kms_write sends consumer-provided content through the cloud capture pipeline (5-section summary + classify), creates a new document with source_type=chat_session, and returns the new document id"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P9-MCP-07
+  description: "kms_correct patches an existing knowledge_entries row by id — supporting edit fact, change tag, change entity, promote (pending to confident), and retire (with required reason) — and logs every mutation to audit_log with pipeline=correct"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P9-MCP-08
+  description: "kms_correct returns a clear Failure when given a nonexistent entry id"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P9-MCP-09
+  description: "Context injection engine assembles fact bullets from knowledge_entries ranked by trust_score DESC, retrieval_score DESC, confidence DESC, updated_at DESC, budget-capped per dimension, with zero CLAUDE.md or vault disk reads"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P9-MCP-10
+  description: "Conversation-level identity dedup prevents the same orientation fact (by row id) from being re-injected in the same conversation"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P9-MCP-11
+  description: "Fact hybrid index (facts_fts + facts_vec) enables keyword and semantic search over knowledge_entries.fact text, with config-driven blend weight between the two"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P9-MCP-12
+  description: "retrieval_score is incremented (score * decay_factor + 1.0) each time a fact is surfaced in an MCP tool response, and a periodic sweep decays all scores, preventing rich-get-richer lock-in"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P9-MCP-13
+  description: "Three-tier resolve (summary/text/file) serves document content from the database by integer id, with file mode returning the vault path for laptop-dependent access"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P9-MCP-14
+  description: "kms_move tool and _move.py are deleted; kms_read tool is removed (functionality folded into kms_search and kms_inspect)"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P9-MCP-15
+  description: "classify_writer.py contains an explicit _should_overwrite() decision point in the update path that always returns True in Phase 9, structured for Phase 10 to slot the trust guard into"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P9-MCP-16
+  description: "Container boots correctly via cloud_entry.py __main__ block (L2 bug fix restored)"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P9-MCP-17
+  description: "API key is read once at startup, not on every request (C1 bug fix)"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P9-MCP-18
+  description: "Blob store put and delete operations do not block the async event loop (C2, C3 bug fixes)"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P9-MCP-19
+  description: "AI_INSTRUCTIONS.md documents the 5-tool surface, facts-vs-summary model, correct-vs-write routing, and behavioral stance (write=proactive, correct=confirm-first)"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P9-MCP-20
+  description: "documents.get_by_id lookup exists and returns Result[DocumentRow | None] for any integer document id"
+  origin: design
+  granularity: outcome
+  status: pending
+
+- id: P9-MCP-21
+  description: "Search result cards expose the integer document id alongside vault_path so consumers can use id-based references"
+  origin: design
+  granularity: outcome
+  status: pending
