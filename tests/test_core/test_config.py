@@ -846,12 +846,28 @@ class TestClassifyConfig:
         c = ClassifyConfig(max_entries_per_dimension=25)
         assert c.max_entries_per_dimension == 25
 
+    def test_default_max_retries(self):
+        c = ClassifyConfig()
+        assert c.max_retries == 3
+
+    def test_custom_max_retries(self):
+        c = ClassifyConfig(max_retries=5)
+        assert c.max_retries == 5
+
+    def test_max_retries_rejects_zero(self, vault_dir: Path):
+        """max_retries=0 rejected by ge=1 validator."""
+        import pytest as pt
+        from pydantic import ValidationError
+        with pt.raises(ValidationError):
+            ClassifyConfig(max_retries=0)
+
     def test_accessible_from_main_config(self, vault_dir: Path):
         """MainConfig.classify should be a ClassifyConfig with defaults."""
         cfg = MainConfig(vault={"root": str(vault_dir)})
         assert isinstance(cfg.classify, ClassifyConfig)
         assert cfg.classify.max_content_tokens == 10000
         assert cfg.classify.max_entries_per_dimension == 50
+        assert cfg.classify.max_retries == 3
 
 
 class TestClaudeCliConfig:
@@ -1117,6 +1133,7 @@ class TestLoadConfig:
         cfg = loaded_config
         assert cfg.main.classify.max_content_tokens == 10000
         assert cfg.main.classify.max_entries_per_dimension == 50
+        assert cfg.main.classify.max_retries == 3
 
     def test_classify_config_overrides_from_yaml(self, monkeypatch, config_dir):
         """A classify: block in config.yaml overrides the defaults."""
@@ -1131,12 +1148,14 @@ class TestLoadConfig:
         data["classify"] = {
             "max_content_tokens": 5000,
             "max_entries_per_dimension": 25,
+            "max_retries": 5,
         }
         (config_dir / "config.yaml").write_text(_yaml.dump(data))
 
         cfg = cfg_module.load_config()
         assert cfg.main.classify.max_content_tokens == 5000
         assert cfg.main.classify.max_entries_per_dimension == 25
+        assert cfg.main.classify.max_retries == 5
 
 
 # ===========================================================================

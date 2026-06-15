@@ -342,6 +342,7 @@ class ClassifyConfig(BaseModel):
 
     max_content_tokens: int = Field(10000, ge=1)
     max_entries_per_dimension: int = Field(50, ge=1)
+    max_retries: int = Field(default=3, ge=1)
 
 
 class TestingConfig(BaseModel):
