@@ -654,6 +654,61 @@ Note: `MetadataResult.ai_domain` is **kept** as internal pipeline state — `app
 
 ---
 
+### TD-P9-PERF-01 · Dimensions loaded twice per document
+**Status:** OPEN
+**Phase:** Phase 9 (MCP Adaptation)
+**Risk if triggered early:** Low — correctness unaffected. For N documents, `context_loader()` and `orchestrate()` both parse `dimensions.yaml` independently, producing 2N redundant file reads. Waste scales linearly with document count.
+**What:** Load dimensions once in `consumer()` before the loop, pass the loaded rulebook through to both `context_loader()` and `orchestrate()` as a parameter.
+**Why deferred:** Correctness is unaffected; the optimization is clean but touches the consumer→orchestrator→context_loader call chain. Phase 8 issue diagnosis C1.
+**Files:** `src/pipelines/classify.py`, `src/pipelines/classify_orchestrator.py`.
+**Source:** Phase 8 issue diagnosis (2026-06-15), finding C1.
+
+---
+
+### TD-P9-PERF-02 · Context loader re-queries DB per document
+**Status:** OPEN
+**Phase:** Phase 9 (MCP Adaptation)
+**Risk if triggered early:** Low — correctness unaffected. `context_loader()` queries `knowledge_entries` once per document per dimension (N×D queries). Between documents, only modified dimensions need re-query.
+**What:** Cache facts per consumer session, invalidate per dimension after `write_entries()`. Between documents, only dimensions whose entries were written need a fresh query.
+**Why deferred:** Correctness is unaffected; the optimization requires a session-level cache object passed through the consumer loop. Phase 8 issue diagnosis C2.
+**Files:** `src/pipelines/classify.py`.
+**Source:** Phase 8 issue diagnosis (2026-06-15), finding C2.
+
+---
+
+### TD-P9-PERF-03 · prune_sources loads ALL entries into memory
+**Status:** OPEN
+**Phase:** Phase 9 (MCP Adaptation)
+**Risk if triggered early:** Low for single-user vault. `prune_sources()` fetches every non-retired entry, parses JSON in Python, filters by doc_id. O(N) memory where N = total entries.
+**What:** Use SQLite JSON1 extension or LIKE pre-filter to narrow the result set before loading into Python. Reduces memory from O(all entries) to O(entries referencing the deleted doc).
+**Why deferred:** Single-user vault has modest entry counts; the O(N) scan is acceptable. Phase 8 issue diagnosis M6.
+**Files:** `src/storage/knowledge_entries.py`.
+**Source:** Phase 8 issue diagnosis (2026-06-15), finding M6.
+
+---
+
+### TD-P9-CLEAN-01 · Redundant dedupe in prune_sources
+**Status:** OPEN
+**Phase:** Phase 9 (MCP Adaptation)
+**Risk if triggered early:** None — defensive code, not a bug. After removing a source ID, `prune_sources()` dedupes the remaining list. But `write_entries()` already dedupes on every write. The extra dedupe is harmless but unnecessary for normal code paths.
+**What:** Remove the redundant dedupe in `prune_sources()` or add a comment explaining why it exists (defense against future `write_entries()` changes).
+**Why deferred:** No correctness impact. Phase 8 issue diagnosis M7.
+**Files:** `src/storage/knowledge_entries.py`.
+**Source:** Phase 8 issue diagnosis (2026-06-15), finding M7.
+
+---
+
+### TD-P9-CLEAN-02 · Defensive column checks in _row_to_entry need lifecycle comment
+**Status:** OPEN
+**Phase:** Phase 9 (MCP Adaptation)
+**Risk if triggered early:** None — defensive code, not a bug. `_row_to_entry()` in `knowledge_entries.py` has 2 defensive `"x" in row.keys()` checks for pre-migration-010 databases. Without a lifecycle comment, future readers won't know when it's safe to remove them.
+**What:** Add lifecycle comment: "Backcompat for pre-migration-010 — remove when all deployments have migrated."
+**Why deferred:** Documentation-only change, no urgency. Phase 8 issue diagnosis L5.
+**Files:** `src/storage/knowledge_entries.py`.
+**Source:** Phase 8 issue diagnosis (2026-06-15), finding L5.
+
+---
+
 ## Archive
 
 ### TD-001 · core/pipeline.py

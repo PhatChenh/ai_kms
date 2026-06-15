@@ -117,16 +117,20 @@ def _wrap_lifespan(app: Starlette, db_path: Path | None) -> None:
     async def _composed(app_ref):
         queue: asyncio.Queue[int] = asyncio.Queue()
         # Publish the queue on app.state so upload_handler can push to it
-        app_ref.state.classify_queue = queue  # COUPLING: consumed by api.py upload_handler
-        worker = asyncio.create_task(
-            consumer(queue, db_path, CONFIG.main)
+        app_ref.state.classify_queue = (
+            queue  # COUPLING: consumed by api.py upload_handler
         )
+        worker = asyncio.create_task(consumer(queue, db_path, CONFIG.main))
         try:
             await catch_up_scan(queue, db_path)
             async with inner(app_ref):
                 yield
         finally:
             worker.cancel()
+            try:
+                await worker
+            except asyncio.CancelledError:
+                pass
             _log.debug("classify_worker_task_cancelled")
 
     app.router.lifespan_context = _composed  # reassign IN PLACE

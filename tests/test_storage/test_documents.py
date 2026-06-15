@@ -402,7 +402,16 @@ def test_work_finder_returns_unclassified_and_stale(db: Path):
                 updated_at, updated_by_human, content_hash, key_topics,
                 classify_content_hash)
                VALUES (?, ?, ?, ?, ?, datetime('now'), 0, ?, ?, ?)""",
-            ("inbox/doc2.md", "Doc2", "s", "note", 0.9, "hash_def", json.dumps([]), "old_hash"),
+            (
+                "inbox/doc2.md",
+                "Doc2",
+                "s",
+                "note",
+                0.9,
+                "hash_def",
+                json.dumps([]),
+                "old_hash",
+            ),
         )
         # Doc 3: classify_content_hash == content_hash (up-to-date, should NOT be returned)
         conn.execute(
@@ -411,13 +420,22 @@ def test_work_finder_returns_unclassified_and_stale(db: Path):
                 updated_at, updated_by_human, content_hash, key_topics,
                 classify_content_hash)
                VALUES (?, ?, ?, ?, ?, datetime('now'), 0, ?, ?, ?)""",
-            ("inbox/doc3.md", "Doc3", "s", "note", 0.9, "hash_ghi", json.dumps([]), "hash_ghi"),
+            (
+                "inbox/doc3.md",
+                "Doc3",
+                "s",
+                "note",
+                0.9,
+                "hash_ghi",
+                json.dumps([]),
+                "hash_ghi",
+            ),
         )
         conn.commit()
     finally:
         conn.close()
 
-    from storage.documents import find_unclassified
+    from storage.documents_classify import find_unclassified
 
     result = find_unclassified(db_path=db)
     assert isinstance(result, Success)
@@ -461,13 +479,22 @@ def test_stamp_classified_removes_from_work_finder(db: Path):
                 updated_at, updated_by_human, content_hash, key_topics,
                 classify_content_hash)
                VALUES (?, ?, ?, ?, ?, datetime('now'), 0, ?, ?, ?)""",
-            ("inbox/docB.md", "DocB", "s", "note", 0.9, "hash_b", json.dumps([]), "old_b"),
+            (
+                "inbox/docB.md",
+                "DocB",
+                "s",
+                "note",
+                0.9,
+                "hash_b",
+                json.dumps([]),
+                "old_b",
+            ),
         )
         conn.commit()
     finally:
         conn.close()
 
-    from storage.documents import find_unclassified, stamp_classified
+    from storage.documents_classify import find_unclassified, stamp_classified
 
     # Get docA's id
     conn2 = sqlite3.connect(str(db))
@@ -499,7 +526,7 @@ def test_stamp_classified_removes_from_work_finder(db: Path):
 
 def test_stamp_classified_missing_id_returns_zero(db: Path):
     """Classified-Stamp on a missing id returns Success(0)."""
-    from storage.documents import stamp_classified
+    from storage.documents_classify import stamp_classified
 
     result = stamp_classified(99999, db_path=db)
     assert isinstance(result, Success)
@@ -521,7 +548,16 @@ def test_document_row_classify_content_hash_round_trips(db: Path):
                 updated_at, updated_by_human, content_hash, key_topics,
                 classify_content_hash)
                VALUES (?, ?, ?, ?, ?, datetime('now'), 0, ?, ?, ?)""",
-            ("inbox/roundtrip.md", "RT", "s", "note", 0.9, "hash_rt", json.dumps([]), "classify_rt"),
+            (
+                "inbox/roundtrip.md",
+                "RT",
+                "s",
+                "note",
+                0.9,
+                "hash_rt",
+                json.dumps([]),
+                "classify_rt",
+            ),
         )
         conn.commit()
     finally:
@@ -555,7 +591,7 @@ def test_document_row_classify_content_hash_default():
 
 def test_find_unclassified_empty_db(db: Path):
     """Work Finder on an empty DB returns an empty list."""
-    from storage.documents import find_unclassified
+    from storage.documents_classify import find_unclassified
 
     result = find_unclassified(db_path=db)
     assert isinstance(result, Success)
@@ -564,7 +600,7 @@ def test_find_unclassified_empty_db(db: Path):
 
 def test_find_unclassified_db_error(tmp_path):
     """Work Finder on non-existent DB returns Failure."""
-    from storage.documents import find_unclassified
+    from storage.documents_classify import find_unclassified
 
     bad_db = tmp_path / "nonexistent" / "kb.db"
     result = find_unclassified(db_path=bad_db)
@@ -580,7 +616,7 @@ def test_find_unclassified_db_error(tmp_path):
 def test_work_finder_excludes_needs_review(db: Path):
     """find_unclassified skips documents with status='needs-review' even
     when their classify fingerprint is NULL."""
-    from storage.documents import find_unclassified
+    from storage.documents_classify import find_unclassified
 
     conn = sqlite3.connect(str(db))
     # Seed: parked doc (NULL fingerprint + status=needs-review)
@@ -680,7 +716,10 @@ def test_document_row_retry_fields_default(db: Path):
 
 def test_record_classify_failure_increments_and_saves_error(db: Path):
     """record_classify_failure bumps attempts and stores the error string."""
-    from storage.documents import record_classify_failure, load_classify_retry_state
+    from storage.documents_classify import (
+        record_classify_failure,
+        load_classify_retry_state,
+    )
 
     doc_id = _seed(vault_path="test.md", content_hash="h1", db=db)
 
@@ -706,7 +745,7 @@ def test_record_classify_failure_increments_and_saves_error(db: Path):
 
 def test_clear_classify_retry_state_resets_both(db: Path):
     """clear_classify_retry_state resets attempts to 0 and error to None."""
-    from storage.documents import (
+    from storage.documents_classify import (
         clear_classify_retry_state,
         load_classify_retry_state,
         record_classify_failure,
@@ -726,7 +765,8 @@ def test_clear_classify_retry_state_resets_both(db: Path):
 
 def test_park_document_sets_needs_review_status(db: Path):
     """park_document sets status='needs-review'."""
-    from storage.documents import park_document, get_by_path
+    from storage.documents import get_by_path
+    from storage.documents_classify import park_document
 
     doc_id = _seed(vault_path="test.md", content_hash="h1", db=db)
 
@@ -743,7 +783,7 @@ def test_park_document_sets_needs_review_status(db: Path):
 
 def test_load_classify_retry_state_missing_id_returns_defaults(db: Path):
     """load_classify_retry_state for a non-existent id returns (0, None)."""
-    from storage.documents import load_classify_retry_state
+    from storage.documents_classify import load_classify_retry_state
 
     result = load_classify_retry_state(99999, db_path=db)
     assert isinstance(result, Success)
@@ -752,7 +792,7 @@ def test_load_classify_retry_state_missing_id_returns_defaults(db: Path):
 
 def test_record_classify_failure_missing_id_returns_zero(db: Path):
     """record_classify_failure for a non-existent id returns 0 rowcount."""
-    from storage.documents import record_classify_failure
+    from storage.documents_classify import record_classify_failure
 
     result = record_classify_failure(99999, "error", db_path=db)
     assert isinstance(result, Success)

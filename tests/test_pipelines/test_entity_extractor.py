@@ -1,4 +1,4 @@
-"""Tests for entity extractor — extract() function in pipelines/classify.py."""
+"""Tests for entity extractor — extract() function in pipelines/classify_extract.py."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from core.result import Failure, Success
 @dataclass
 class _FakeCompleteResult:
     """Mimics the return value of provider.complete()."""
+
     content: str
 
 
@@ -58,41 +59,45 @@ def _make_config(vault_dir: str) -> MainConfig:
 
 def _valid_reply() -> str:
     """Return a valid JSON reply per the entity_extract schema."""
-    return json.dumps([
-        {
-            "action": "new",
-            "entity": "Anthony",
-            "tag": "other",
-            "fact": "Anthony leads the Movie Q2 project.",
-            "confidence": 0.9,
-        },
-    ])
+    return json.dumps(
+        [
+            {
+                "action": "new",
+                "entity": "Anthony",
+                "tag": "other",
+                "fact": "Anthony leads the Movie Q2 project.",
+                "confidence": 0.9,
+            },
+        ]
+    )
 
 
 def _valid_reply_multiple() -> str:
     """Return a valid reply with multiple actions."""
-    return json.dumps([
-        {
-            "action": "new",
-            "entity": "Anthony",
-            "tag": "other",
-            "fact": "Anthony leads Movie Q2.",
-            "confidence": 0.9,
-        },
-        {
-            "action": "update",
-            "id": 1,
-            "entity": "Anthony",
-            "tag": "other",
-            "fact": "Anthony works in the Movies division.",
-            "confidence": 0.85,
-        },
-        {
-            "action": "retire",
-            "id": 2,
-            "reason": "No longer relevant — project completed.",
-        },
-    ])
+    return json.dumps(
+        [
+            {
+                "action": "new",
+                "entity": "Anthony",
+                "tag": "other",
+                "fact": "Anthony leads Movie Q2.",
+                "confidence": 0.9,
+            },
+            {
+                "action": "update",
+                "id": 1,
+                "entity": "Anthony",
+                "tag": "other",
+                "fact": "Anthony works in the Movies division.",
+                "confidence": 0.85,
+            },
+            {
+                "action": "retire",
+                "id": 2,
+                "reason": "No longer relevant — project completed.",
+            },
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -105,11 +110,11 @@ class TestEntityExtractor:
 
     async def test_valid_reply_returns_parsed_facts(self, tmp_path, monkeypatch):
         """A valid JSON reply is parsed into a list of fact dicts."""
-        from pipelines.classify import extract
+        from pipelines.classify_extract import extract
 
         provider = _FakeProvider(reply=_valid_reply())
         monkeypatch.setattr(
-            "pipelines.classify.get_provider", lambda task, cfg: provider
+            "pipelines.classify_extract.get_provider", lambda task, cfg: provider
         )
 
         result = await extract(
@@ -133,11 +138,11 @@ class TestEntityExtractor:
 
     async def test_reply_with_multiple_actions_returns_all(self, tmp_path, monkeypatch):
         """Multiple actions (new, update, retire) are all returned."""
-        from pipelines.classify import extract
+        from pipelines.classify_extract import extract
 
         provider = _FakeProvider(reply=_valid_reply_multiple())
         monkeypatch.setattr(
-            "pipelines.classify.get_provider", lambda task, cfg: provider
+            "pipelines.classify_extract.get_provider", lambda task, cfg: provider
         )
 
         result = await extract(
@@ -157,19 +162,23 @@ class TestEntityExtractor:
 
     async def test_update_action_carries_id(self, tmp_path, monkeypatch):
         """Update actions must carry the referenced id."""
-        from pipelines.classify import extract
+        from pipelines.classify_extract import extract
 
-        reply = json.dumps([{
-            "action": "update",
-            "id": 42,
-            "entity": "Anthony",
-            "tag": "other",
-            "fact": "Updated fact.",
-            "confidence": 0.8,
-        }])
+        reply = json.dumps(
+            [
+                {
+                    "action": "update",
+                    "id": 42,
+                    "entity": "Anthony",
+                    "tag": "other",
+                    "fact": "Updated fact.",
+                    "confidence": 0.8,
+                }
+            ]
+        )
         provider = _FakeProvider(reply=reply)
         monkeypatch.setattr(
-            "pipelines.classify.get_provider", lambda task, cfg: provider
+            "pipelines.classify_extract.get_provider", lambda task, cfg: provider
         )
 
         result = await extract(
@@ -188,16 +197,20 @@ class TestEntityExtractor:
 
     async def test_retire_action_requires_reason(self, tmp_path, monkeypatch):
         """Retire actions must carry a reason field."""
-        from pipelines.classify import extract
+        from pipelines.classify_extract import extract
 
-        reply = json.dumps([{
-            "action": "retire",
-            "id": 5,
-            "reason": "Fact is outdated.",
-        }])
+        reply = json.dumps(
+            [
+                {
+                    "action": "retire",
+                    "id": 5,
+                    "reason": "Fact is outdated.",
+                }
+            ]
+        )
         provider = _FakeProvider(reply=reply)
         monkeypatch.setattr(
-            "pipelines.classify.get_provider", lambda task, cfg: provider
+            "pipelines.classify_extract.get_provider", lambda task, cfg: provider
         )
 
         result = await extract(
@@ -215,13 +228,15 @@ class TestEntityExtractor:
         assert fact["id"] == 5
         assert fact["reason"] == "Fact is outdated."
 
-    async def test_unparseable_reply_returns_recoverable_failure(self, tmp_path, monkeypatch):
+    async def test_unparseable_reply_returns_recoverable_failure(
+        self, tmp_path, monkeypatch
+    ):
         """An unparseable (non-JSON) reply → recoverable Failure."""
-        from pipelines.classify import extract
+        from pipelines.classify_extract import extract
 
         provider = _FakeProvider(reply="not valid json at all")
         monkeypatch.setattr(
-            "pipelines.classify.get_provider", lambda task, cfg: provider
+            "pipelines.classify_extract.get_provider", lambda task, cfg: provider
         )
 
         result = await extract(
@@ -239,14 +254,18 @@ class TestEntityExtractor:
         raw = result.context.get("raw", "") if result.context else ""
         assert len(raw) <= 200
 
-    async def test_missing_required_fields_returns_recoverable_failure(self, tmp_path, monkeypatch):
+    async def test_missing_required_fields_returns_recoverable_failure(
+        self, tmp_path, monkeypatch
+    ):
         """A new fact missing 'entity' → recoverable Failure."""
-        from pipelines.classify import extract
+        from pipelines.classify_extract import extract
 
-        reply = json.dumps([{"action": "new", "tag": "other", "fact": "x", "confidence": 0.5}])
+        reply = json.dumps(
+            [{"action": "new", "tag": "other", "fact": "x", "confidence": 0.5}]
+        )
         provider = _FakeProvider(reply=reply)
         monkeypatch.setattr(
-            "pipelines.classify.get_provider", lambda task, cfg: provider
+            "pipelines.classify_extract.get_provider", lambda task, cfg: provider
         )
 
         result = await extract(
@@ -261,20 +280,26 @@ class TestEntityExtractor:
         assert isinstance(result, Failure)
         assert result.recoverable is True
 
-    async def test_update_missing_id_returns_recoverable_failure(self, tmp_path, monkeypatch):
+    async def test_update_missing_id_returns_recoverable_failure(
+        self, tmp_path, monkeypatch
+    ):
         """An 'update' action without an id → recoverable Failure."""
-        from pipelines.classify import extract
+        from pipelines.classify_extract import extract
 
-        reply = json.dumps([{
-            "action": "update",
-            "entity": "Anthony",
-            "tag": "other",
-            "fact": "x",
-            "confidence": 0.5,
-        }])
+        reply = json.dumps(
+            [
+                {
+                    "action": "update",
+                    "entity": "Anthony",
+                    "tag": "other",
+                    "fact": "x",
+                    "confidence": 0.5,
+                }
+            ]
+        )
         provider = _FakeProvider(reply=reply)
         monkeypatch.setattr(
-            "pipelines.classify.get_provider", lambda task, cfg: provider
+            "pipelines.classify_extract.get_provider", lambda task, cfg: provider
         )
 
         result = await extract(
@@ -289,13 +314,15 @@ class TestEntityExtractor:
         assert isinstance(result, Failure)
         assert result.recoverable is True
 
-    async def test_provider_failure_returns_recoverable_failure(self, tmp_path, monkeypatch):
+    async def test_provider_failure_returns_recoverable_failure(
+        self, tmp_path, monkeypatch
+    ):
         """A provider that returns Failure → recoverable Failure."""
-        from pipelines.classify import extract
+        from pipelines.classify_extract import extract
 
         provider = _FakeProvider(reply=None)  # None → Failure
         monkeypatch.setattr(
-            "pipelines.classify.get_provider", lambda task, cfg: provider
+            "pipelines.classify_extract.get_provider", lambda task, cfg: provider
         )
 
         result = await extract(
@@ -313,7 +340,7 @@ class TestEntityExtractor:
     async def test_uses_provider_factory(self, tmp_path, monkeypatch):
         """The extractor calls get_provider('classify', config) — never
         instantiates a provider directly."""
-        from pipelines.classify import extract
+        from pipelines.classify_extract import extract
 
         provider = _FakeProvider(reply=_valid_reply())
 
@@ -325,7 +352,7 @@ class TestEntityExtractor:
             return provider
 
         monkeypatch.setattr(
-            "pipelines.classify.get_provider", fake_get_provider
+            "pipelines.classify_extract.get_provider", fake_get_provider
         )
 
         await extract(
@@ -342,11 +369,11 @@ class TestEntityExtractor:
 
     async def test_feedback_is_passed_to_prompt(self, tmp_path, monkeypatch):
         """The feedback string is rendered into the prompt."""
-        from pipelines.classify import extract
+        from pipelines.classify_extract import extract
 
         provider = _FakeProvider(reply=_valid_reply())
         monkeypatch.setattr(
-            "pipelines.classify.get_provider", lambda task, cfg: provider
+            "pipelines.classify_extract.get_provider", lambda task, cfg: provider
         )
 
         result = await extract(
@@ -364,11 +391,11 @@ class TestEntityExtractor:
 
     async def test_empty_array_reply_is_valid(self, tmp_path, monkeypatch):
         """An empty JSON array is a valid response (no facts for this dimension)."""
-        from pipelines.classify import extract
+        from pipelines.classify_extract import extract
 
         provider = _FakeProvider(reply="[]")
         monkeypatch.setattr(
-            "pipelines.classify.get_provider", lambda task, cfg: provider
+            "pipelines.classify_extract.get_provider", lambda task, cfg: provider
         )
 
         result = await extract(
@@ -383,13 +410,15 @@ class TestEntityExtractor:
         assert isinstance(result, Success)
         assert result.value == []
 
-    async def test_reply_not_a_list_returns_recoverable_failure(self, tmp_path, monkeypatch):
+    async def test_reply_not_a_list_returns_recoverable_failure(
+        self, tmp_path, monkeypatch
+    ):
         """A JSON object (not an array) → recoverable Failure."""
-        from pipelines.classify import extract
+        from pipelines.classify_extract import extract
 
         provider = _FakeProvider(reply='{"action": "new"}')
         monkeypatch.setattr(
-            "pipelines.classify.get_provider", lambda task, cfg: provider
+            "pipelines.classify_extract.get_provider", lambda task, cfg: provider
         )
 
         result = await extract(
@@ -406,19 +435,23 @@ class TestEntityExtractor:
 
     async def test_new_fact_with_spurious_id_is_rejected(self, tmp_path, monkeypatch):
         """I6 — A 'new' action with an 'id' field → recoverable Failure."""
-        from pipelines.classify import extract
+        from pipelines.classify_extract import extract
 
-        reply = json.dumps([{
-            "action": "new",
-            "id": 99,
-            "entity": "Anthony",
-            "tag": "other",
-            "fact": "Test.",
-            "confidence": 0.9,
-        }])
+        reply = json.dumps(
+            [
+                {
+                    "action": "new",
+                    "id": 99,
+                    "entity": "Anthony",
+                    "tag": "other",
+                    "fact": "Test.",
+                    "confidence": 0.9,
+                }
+            ]
+        )
         provider = _FakeProvider(reply=reply)
         monkeypatch.setattr(
-            "pipelines.classify.get_provider", lambda task, cfg: provider
+            "pipelines.classify_extract.get_provider", lambda task, cfg: provider
         )
 
         result = await extract(
@@ -435,18 +468,22 @@ class TestEntityExtractor:
 
     async def test_confidence_out_of_range_is_rejected(self, tmp_path, monkeypatch):
         """I4 — confidence outside [0.0, 1.0] → recoverable Failure."""
-        from pipelines.classify import extract
+        from pipelines.classify_extract import extract
 
-        reply = json.dumps([{
-            "action": "new",
-            "entity": "Anthony",
-            "tag": "other",
-            "fact": "Test.",
-            "confidence": 2.5,
-        }])
+        reply = json.dumps(
+            [
+                {
+                    "action": "new",
+                    "entity": "Anthony",
+                    "tag": "other",
+                    "fact": "Test.",
+                    "confidence": 2.5,
+                }
+            ]
+        )
         provider = _FakeProvider(reply=reply)
         monkeypatch.setattr(
-            "pipelines.classify.get_provider", lambda task, cfg: provider
+            "pipelines.classify_extract.get_provider", lambda task, cfg: provider
         )
 
         result = await extract(
@@ -463,7 +500,7 @@ class TestEntityExtractor:
 
     async def test_empty_entity_tag_or_fact_is_rejected(self, tmp_path, monkeypatch):
         """M5 — empty string for entity, tag, or fact → recoverable Failure."""
-        from pipelines.classify import extract
+        from pipelines.classify_extract import extract
 
         for bad_field, bad_value in [("entity", ""), ("tag", ""), ("fact", "")]:
             item = {
@@ -477,7 +514,7 @@ class TestEntityExtractor:
             reply = json.dumps([item])
             provider = _FakeProvider(reply=reply)
             monkeypatch.setattr(
-                "pipelines.classify.get_provider", lambda task, cfg: provider
+                "pipelines.classify_extract.get_provider", lambda task, cfg: provider
             )
 
             result = await extract(

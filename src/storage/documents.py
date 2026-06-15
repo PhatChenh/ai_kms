@@ -59,7 +59,12 @@ class DocumentRow:
     classify_last_error: str | None = None
 
 
+def _col(row: sqlite3.Row, name: str, default=None):
+    return row[name] if name in row.keys() else default
+
+
 def _row_from_sqlite(row: sqlite3.Row) -> DocumentRow:
+    kt = _col(row, "key_topics")
     return DocumentRow(
         id=row["id"],
         vault_path=row["vault_path"],
@@ -71,32 +76,18 @@ def _row_from_sqlite(row: sqlite3.Row) -> DocumentRow:
         updated_at=row["updated_at"],
         updated_by_human=bool(row["updated_by_human"]),
         content_hash=row["content_hash"],
-        batch_id=row["batch_id"] if "batch_id" in row.keys() else None,
-        project=row["project"] if "project" in row.keys() else None,
-        status=row["status"] if "status" in row.keys() else None,
-        key_topics=(
-            json.loads(row["key_topics"])
-            if "key_topics" in row.keys() and row["key_topics"]
-            else []
-        ),
-        full_body=row["full_body"] if "full_body" in row.keys() else None,
-        original_filename=row["original_filename"]
-        if "original_filename" in row.keys()
-        else None,
-        file_size_bytes=row["file_size_bytes"]
-        if "file_size_bytes" in row.keys()
-        else None,
-        blob_ref=row["blob_ref"] if "blob_ref" in row.keys() else None,
-        mime_type=row["mime_type"] if "mime_type" in row.keys() else None,
-        classify_content_hash=row["classify_content_hash"]
-        if "classify_content_hash" in row.keys()
-        else None,
-        classify_attempts=row["classify_attempts"]
-        if "classify_attempts" in row.keys()
-        else 0,
-        classify_last_error=row["classify_last_error"]
-        if "classify_last_error" in row.keys()
-        else None,
+        batch_id=_col(row, "batch_id"),
+        project=_col(row, "project"),
+        status=_col(row, "status"),
+        key_topics=json.loads(kt) if kt else [],
+        full_body=_col(row, "full_body"),
+        original_filename=_col(row, "original_filename"),
+        file_size_bytes=_col(row, "file_size_bytes"),
+        blob_ref=_col(row, "blob_ref"),
+        mime_type=_col(row, "mime_type"),
+        classify_content_hash=_col(row, "classify_content_hash"),
+        classify_attempts=_col(row, "classify_attempts", 0),
+        classify_last_error=_col(row, "classify_last_error"),
     )
 
 
@@ -631,181 +622,6 @@ def filter_paths(
             error=str(exc),
             recoverable=False,
             context={"project": project, "op": "filter_paths"},
-        )
-
-
-# ---------------------------------------------------------------------------
-# Phase 5 — Work Finder + Classified-Stamp
-# ---------------------------------------------------------------------------
-
-
-def find_unclassified(*, db_path: Path | None = None) -> Result[list[int]]:
-    """Return ids of documents whose classify_content_hash is NULL or stale.
-
-    Work-discovery query for the classify subsystem: a document needs
-    classification when it has never been classified (NULL) or its content
-    has changed since it was last classified (classify_content_hash !=
-    content_hash).
-    """
-    try:
-        with get_connection(db_path, readonly=True) as conn:
-            cur = conn.execute(
-                """SELECT id FROM documents
-                   WHERE (classify_content_hash IS NULL
-                      OR classify_content_hash != content_hash)
-                     AND (status IS NULL OR status != 'needs-review')"""
-            )
-            ids: list[int] = [row[0] for row in cur.fetchall()]
-        return Success(ids)
-    except sqlite3.Error as exc:
-        return Failure(
-            error=str(exc),
-            recoverable=False,
-            context={"op": "find_unclassified"},
-        )
-
-
-def stamp_classified(doc_id: int, *, db_path: Path | None = None) -> Result[int]:
-    """Mark a document as classified by setting its classify_content_hash to
-    its current content_hash.
-
-    Returns Success(rowcount) — 1 if the row was updated, 0 if no row with
-    that id exists.  In Slice A this function is built and unit-tested but
-    not called on the happy path until Slice B (no AI = no successful
-    classify).
-    """
-    try:
-        with get_connection(db_path) as conn:
-            cur = conn.execute(
-                """UPDATE documents
-                   SET classify_content_hash = content_hash
-                   WHERE id = ?""",
-                (doc_id,),
-            )
-            return Success(cur.rowcount)
-    except sqlite3.Error as exc:
-        return Failure(
-            error=str(exc),
-            recoverable=False,
-            context={"doc_id": doc_id, "op": "stamp_classified"},
-        )
-
-
-# ---------------------------------------------------------------------------
-# Phase 4 — Retry-state helpers (Slice B)
-# ---------------------------------------------------------------------------
-
-
-def record_classify_failure(
-    doc_id: int,
-    error: str,
-    *,
-    db_path: Path | None = None,
-) -> Result[int]:
-    """Increment classify_attempts and save the last error for *doc_id*.
-
-    Returns Success(rowcount) — 1 if updated, 0 if id not found.
-    """
-    try:
-        with get_connection(db_path) as conn:
-            cur = conn.execute(
-                """UPDATE documents
-                   SET classify_attempts = classify_attempts + 1,
-                       classify_last_error = ?
-                   WHERE id = ?""",
-                (error, doc_id),
-            )
-            return Success(cur.rowcount)
-    except sqlite3.Error as exc:
-        return Failure(
-            error=str(exc),
-            recoverable=False,
-            context={"doc_id": doc_id, "op": "record_classify_failure"},
-        )
-
-
-def clear_classify_retry_state(
-    doc_id: int,
-    *,
-    db_path: Path | None = None,
-) -> Result[int]:
-    """Reset classify_attempts to 0 and classify_last_error to NULL.
-
-    Returns Success(rowcount) — 1 if updated, 0 if id not found.
-    """
-    try:
-        with get_connection(db_path) as conn:
-            cur = conn.execute(
-                """UPDATE documents
-                   SET classify_attempts = 0,
-                       classify_last_error = NULL
-                   WHERE id = ?""",
-                (doc_id,),
-            )
-            return Success(cur.rowcount)
-    except sqlite3.Error as exc:
-        return Failure(
-            error=str(exc),
-            recoverable=False,
-            context={"doc_id": doc_id, "op": "clear_classify_retry_state"},
-        )
-
-
-def park_document(
-    doc_id: int,
-    *,
-    db_path: Path | None = None,
-) -> Result[int]:
-    """Set status='needs-review' on *doc_id*.  The work finder will skip it.
-
-    NOTE: classify_attempts is NOT reset here.  If a human manually un-parks
-    a document (clears status), they must also reset classify_attempts to 0
-    via clear_classify_retry_state — otherwise the next orchestrate run will
-    re-park after a single failure.
-
-    Returns Success(rowcount) — 1 if updated, 0 if id not found.
-    """
-    try:
-        with get_connection(db_path) as conn:
-            cur = conn.execute(
-                """UPDATE documents
-                   SET status = 'needs-review'
-                   WHERE id = ?""",
-                (doc_id,),
-            )
-            return Success(cur.rowcount)
-    except sqlite3.Error as exc:
-        return Failure(
-            error=str(exc),
-            recoverable=False,
-            context={"doc_id": doc_id, "op": "park_document"},
-        )
-
-
-def load_classify_retry_state(
-    doc_id: int,
-    *,
-    db_path: Path | None = None,
-) -> Result[tuple[int, str | None]]:
-    """Return (classify_attempts, classify_last_error) for *doc_id*.
-
-    Returns Success((0, None)) if the row is not found (treat as first attempt).
-    """
-    try:
-        with get_connection(db_path, readonly=True) as conn:
-            row = conn.execute(
-                """SELECT classify_attempts, classify_last_error
-                   FROM documents WHERE id = ?""",
-                (doc_id,),
-            ).fetchone()
-        if row is None:
-            return Success((0, None))
-        return Success((row[0] or 0, row[1]))
-    except sqlite3.Error as exc:
-        return Failure(
-            error=str(exc),
-            recoverable=False,
-            context={"doc_id": doc_id, "op": "load_classify_retry_state"},
         )
 
 
