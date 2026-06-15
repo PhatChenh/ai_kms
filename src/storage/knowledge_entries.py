@@ -232,3 +232,77 @@ def query_ranked_by_dimension(
             recoverable=False,
             context={"dimension": dimension, "limit": limit},
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 — Source-prune on delete (Slice B)
+# ---------------------------------------------------------------------------
+
+
+def prune_sources(
+    doc_id: int,
+    *,
+    db_path: Path | None = None,
+) -> Result[int]:
+    """Remove *doc_id* from the ``sources`` list of every non-retired
+    knowledge entry.  If an entry is left with an empty sources list,
+    its status is set to ``'pending'`` — the fact is never auto-deleted.
+
+    Returns the number of entries touched.  OQ-P8B-01: scan-and-filter
+    in Python (swappable for a JSON1 query later).
+    """
+    import json as _json
+
+    touched = 0
+    sid = str(doc_id)
+
+    try:
+        with get_connection(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """SELECT id, sources FROM knowledge_entries
+                   WHERE status != 'retired'"""
+            ).fetchall()
+
+            for row in rows:
+                sources: list[str] = (
+                    _json.loads(row["sources"]) if row["sources"] else []
+                )
+                if sid not in sources:
+                    continue
+
+                # Remove the doc id and dedupe
+                new_sources = [s for s in sources if s != sid]
+                # Dedupe preserving order
+                seen: set[str] = set()
+                deduped: list[str] = []
+                for s in new_sources:
+                    if s not in seen:
+                        seen.add(s)
+                        deduped.append(s)
+
+                if not deduped:
+                    # Empty sources → flag pending, never delete
+                    conn.execute(
+                        """UPDATE knowledge_entries
+                           SET sources = '[]', status = 'pending',
+                               updated_at = datetime('now')
+                           WHERE id = ?""",
+                        (row["id"],),
+                    )
+                else:
+                    conn.execute(
+                        """UPDATE knowledge_entries
+                           SET sources = ?, updated_at = datetime('now')
+                           WHERE id = ?""",
+                        (_json.dumps(deduped), row["id"]),
+                    )
+                touched += 1
+
+        return Success(touched)
+    except sqlite3.Error as exc:
+        return Failure(
+            str(exc),
+            recoverable=False,
+            context={"doc_id": doc_id, "op": "prune_sources"},
+        )
