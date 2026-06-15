@@ -47,14 +47,13 @@ def _push_to_classify_queue(request: Request, document_id: int) -> None:
     if queue is not None:
         try:
             queue.put_nowait(document_id)
-        except asyncio.QueueFull:
+        except Exception:
             _log.warning(
-                "classify_queue full — doc_id=%s will be picked up by next "
+                "classify_queue push failed — doc_id=%s will be picked up by next "
                 "catch-up scan",
                 document_id,
             )
 
-_log = logging.getLogger(__name__)
 
 # Testability injection point — set this to an explicit Path in tests to
 # override the default CONFIG-derived database path.  None = use CONFIG.

@@ -758,6 +758,11 @@ def park_document(
 ) -> Result[int]:
     """Set status='needs-review' on *doc_id*.  The work finder will skip it.
 
+    NOTE: classify_attempts is NOT reset here.  If a human manually un-parks
+    a document (clears status), they must also reset classify_attempts to 0
+    via clear_classify_retry_state — otherwise the next orchestrate run will
+    re-park after a single failure.
+
     Returns Success(rowcount) — 1 if updated, 0 if id not found.
     """
     try:
