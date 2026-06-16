@@ -43,6 +43,9 @@ COPY src/prompts/ /usr/local/lib/python3.12/site-packages/prompts/
 COPY scripts/ /app/scripts/
 COPY litestream.yml /etc/litestream.yml
 
+# Pre-download cross-encoder model so container doesn't hit HuggingFace at runtime
+RUN python -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
+
 ENV PYTHONPATH=/app
 EXPOSE 8080
 ENTRYPOINT ["/app/scripts/start.sh"]
