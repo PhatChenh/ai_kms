@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from core.result import Failure, Result, Success
 
@@ -225,6 +224,11 @@ class ContextInjectionEngine:
                         "fact": fact.fact,
                         "confidence": fact.confidence,
                         "trust_score": fact.trust_score,
+                        # TD-071: retired facts stay searchable; surface status
+                        # so the consuming AI/user can tell superseded knowledge
+                        # apart from current. Orientation blocks (step 2) still
+                        # exclude retired.
+                        "status": fact.status,
                         "score": fact.score,
                     }
                 )

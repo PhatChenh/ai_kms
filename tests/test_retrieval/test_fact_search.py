@@ -188,8 +188,10 @@ def test_search_facts_keyword_match(seeded_fact_db):
     )
 
 
-def test_search_facts_keyword_retired_excluded(seeded_fact_db):
-    """Retired facts should never appear in search_facts results."""
+def test_search_facts_keyword_retired_included_and_marked(seeded_fact_db):
+    """TD-071: retired facts ARE returned by search_facts (so superseded
+    knowledge stays traceable) and carry status='retired' so callers can
+    flag them as not-current."""
     db_path, ids = seeded_fact_db
 
     from retrieval.fact_search import search_facts
@@ -198,9 +200,13 @@ def test_search_facts_keyword_retired_excluded(seeded_fact_db):
 
     assert isinstance(result, Success), f"Expected Success, got {result}"
     facts = result.value
-    entry_ids = {f.entry_id for f in facts}
-    assert ids["retired"] not in entry_ids, (
-        f"Retired fact {ids['retired']} should be excluded"
+    by_id = {f.entry_id: f for f in facts}
+    assert ids["retired"] in by_id, (
+        f"Retired fact {ids['retired']} should be searchable (TD-071), got {set(by_id)}"
+    )
+    assert by_id[ids["retired"]].status == "retired", (
+        "Retired fact must carry status='retired' so it isn't mistaken "
+        "for current knowledge"
     )
 
 

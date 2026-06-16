@@ -10,7 +10,10 @@ Key behaviours:
 - Missing rank penalty: ``max_candidates + 1`` (standard RRF).
 - Identity dedup: when the same ``entry_id`` appears in both keyword and
   semantic results, it is fused into a single result instead of duplicated.
-- Only non-retired entries are returned (filtered via the JOIN).
+- Retired entries ARE returned (so superseded knowledge stays traceable —
+  TD-071); each result carries its ``status`` so callers can distinguish
+  retired facts from current ones. Context injection excludes retired facts
+  via its own orientation queries (``mcp_server/context.py``), not here.
 
 Research spike note (Phase 9 P9-B-06):
   With the ``greennode-embedding-large-1007`` model (1024-dim) and a small set of
@@ -54,6 +57,10 @@ class FactResult:
         trust_score:      Inert trust score (DB default 0.5).
         retrieval_score:  Retrieval count (decayed increment).
         sources:          JSON array string of source document IDs.
+        status:           Entry status (e.g. "confident", "pending",
+                          "retired"). Retired facts are still returned so
+                          superseded knowledge stays traceable (TD-071);
+                          callers use this to mark them as not-current.
         score:            Weighted RRF fusion score (higher = better).
     """
 
@@ -65,6 +72,7 @@ class FactResult:
     trust_score: float
     retrieval_score: float
     sources: str
+    status: str
     score: float
 
 
@@ -255,8 +263,10 @@ def _join_entries(
 ) -> Result[list[FactResult]]:
     """Join fused (entry_id, score) pairs back to ``knowledge_entries``.
 
-    Only non-retired entries are returned.  Entries that cannot be found
-    (e.g. retired between search and join) are silently skipped.
+    Retired entries ARE returned (TD-071) — each result carries its
+    ``status`` so callers can flag superseded knowledge.  Entries that
+    cannot be found (e.g. hard-deleted between search and join) are
+    silently skipped.
     """
     entry_ids = [eid for eid, _ in fused]
     id_to_score = dict(fused)
@@ -267,10 +277,9 @@ def _join_entries(
             placeholders = ", ".join("?" for _ in entry_ids)
             rows = conn.execute(
                 f"""SELECT id, dimension, entity, fact, confidence,
-                           trust_score, retrieval_count, sources
+                           trust_score, retrieval_count, sources, status
                     FROM knowledge_entries
-                    WHERE id IN ({placeholders})
-                      AND status != 'retired'""",
+                    WHERE id IN ({placeholders})""",
                 entry_ids,
             ).fetchall()
     except sqlite3.Error as exc:
@@ -299,6 +308,7 @@ def _join_entries(
                 if row["retrieval_count"] is not None
                 else 0.0,
                 sources=row["sources"] or "[]",
+                status=row["status"] or "",
                 score=id_to_score[eid],
             )
         )
