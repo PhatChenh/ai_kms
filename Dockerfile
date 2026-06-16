@@ -39,6 +39,7 @@ COPY src/ /app/src/
 COPY src/storage/schema.sql /usr/local/lib/python3.12/site-packages/storage/schema.sql
 COPY src/storage/migrations/ /usr/local/lib/python3.12/site-packages/storage/migrations/
 COPY config/ /usr/local/lib/python3.12/site-packages/config/
+COPY src/config/ /usr/local/lib/python3.12/site-packages/config/
 COPY src/prompts/ /usr/local/lib/python3.12/site-packages/prompts/
 COPY scripts/ /app/scripts/
 COPY litestream.yml /etc/litestream.yml
