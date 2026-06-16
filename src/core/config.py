@@ -238,6 +238,9 @@ class OpenAICompatConfig(BaseModel):
     max_tokens: int = 1024
     timeout: int = 60
     api_key_env: str = "FIREWORKS_API_KEY"  # name of the env var holding the key
+    max_retries: int = Field(
+        default=5, ge=0, le=20
+    )  # openai SDK's built-in 429/5xx backoff
 
 
 class ClaudeCliConfig(BaseModel):
