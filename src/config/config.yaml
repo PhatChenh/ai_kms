@@ -100,6 +100,6 @@ vault:
   domain_dir: Domain
   inbox_dir: inbox
   projects_dir: Projects
-  root: /Users/phatchenh/ai_kms_test_vault/actual_test_vault
+  root: /Users/lap14806/demo_vault
   synthesis_dir: Synthesis
   no_edit_extensions: [".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"]

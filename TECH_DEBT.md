@@ -2,13 +2,25 @@
 
 ## Active
 
-### TD-071 · Retired facts excluded from fact_search (intent: searchable, traceable)
+### TD-072 · Local reranker model + stale `search.embedding_model` config in cloud deployment
 **Status:** OPEN
+**Phase:** Post-M2 (revisit when AgentBase adds a reranker endpoint, or if Docker image size / startup latency bites)
+**Risk if triggered early:** Low for correctness — reranker works fine locally and in Docker. Risk is operational: (1) first request after container start downloads ~80MB `cross-encoder/ms-marco-MiniLM-L-6-v2` from HuggingFace (cold-start latency + requires outbound internet); (2) `sentence-transformers` + PyTorch in the Docker image add ~500MB+ to image size solely for reranking (embeddings already wired to cloud via `providers.embeddings: openai` → greennode API).
+**What:** Two linked items:
+  1. **`search.reranker_model`** (`config/config.yaml:82`) hardcodes a local `sentence-transformers` CrossEncoder (`cross-encoder/ms-marco-MiniLM-L-6-v2`). `retrieval/reranker.py:69-72` loads it locally. No cloud/API alternative exists on AgentBase MaaS today. If/when AgentBase adds a reranker or cross-encoder endpoint, wire it through the provider abstraction (same pattern as embeddings: `providers.reranker: openai` → API call, fallback to local).
+  2. **`search.embedding_model`** (`config/config.yaml:81`) is `all-MiniLM-L6-v2` — a local SentenceTransformer model. This value is DEAD when `providers.embeddings == "openai"` (the current prod config). Only fires as fallback for non-openai provider (`retrieval/embeddings.py:57-60`). Misleading to readers — should be annotated or removed.
+**Mitigation (no code change needed now):** Pre-download reranker model in Dockerfile to eliminate cold-start HuggingFace fetch: `RUN python -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"`. Do this if cold-start latency becomes a problem.
+**Note:** Reranker and embedding model dimensions are INDEPENDENT — cross-encoder takes `(query, text)` pairs and outputs a scalar relevance score, not a vector. Mixing cloud embeddings (greennode 1024-dim) with local reranker is architecturally valid.
+**Why deferred:** AgentBase MaaS has no reranker API. Local CrossEncoder works in Docker. Deadline pressure (M2 ~30 May target). Ship as-is, optimize later.
+**Touches when revisited:** `config/config.yaml` (search block), `src/retrieval/reranker.py`, `src/retrieval/embeddings.py` (fallback path), `Dockerfile` (optional model pre-download), `pyproject.toml` (sentence-transformers dep — removable only if both embedding fallback AND reranker are fully cloud-wired).
+**Source:** Cloud deployment review 2026-06-16; config/embeddings audit.
+
+---
+
+### TD-071 · Retired facts excluded from fact_search (intent: searchable, traceable)
+**Status:** RESOLVED (2026-06-16)
 **Phase:** Phase 10 follow-up — surfaced during phase10→cloud-native merge (2026-06-16).
-**Risk if triggered early:** None to correctness. Retired facts are simply not retrievable via `fact_search`, so the consuming AI / user cannot trace old knowledge once a fact is superseded.
-**What:** Owner decision at merge time: a retired fact should **stay searchable** (so users / consuming AI can trace superseded knowledge) and only be excluded from **context injection**. The merge took phase10's `retire()` (drops the `_delete_search_indexes` purge → rows survive in `facts_fts`/`facts_vec`), but `retrieval/fact_search.py` still filters `AND status != 'retired'` at the JOIN (line ~258, header line 13), so retired facts remain unsearchable. To deliver the intent: relax/parameterize the `status != 'retired'` filter in `fact_search.py` so retired facts surface in search, while keeping `mcp_server/context.py` excluding them from context injection (it already filters retired at the orientation queries). Decide how retired facts are marked in search results so they aren't mistaken for current knowledge.
-**Why deferred:** Out of scope for the merge (user in a hurry; merge-only chosen). The merge stops the index purge; making retired actually searchable is a new `fact_search` change.
-**Touches when revisited:** `src/retrieval/fact_search.py` (JOIN status filter), `src/mcp_server/context.py` (keep excluding retired). Note: `_delete_search_indexes` in `src/storage/knowledge_entries.py` is now an unused private helper (only caller was `retire()`) — remove or repurpose when revisiting.
+**Resolution:** Chose "always include + status marker." `retrieval/fact_search.py::_join_entries` no longer filters `AND status != 'retired'` — retired facts surface in `search_facts`/`search_dual` so superseded knowledge stays traceable. `FactResult` gained a `status` field (added to the JOIN `SELECT`), and `mcp_server/context.py::build_search_response` now stamps `status` onto each `fact_result` block so the consuming AI/user can tell retired from current. Context injection still excludes retired: the orientation queries (`context.py:275,327`) keep their own `status != 'retired'` filter and do NOT go through `search_facts`. Dead `_delete_search_indexes` (only caller was the pre-merge `retire()`) deleted from `storage/knowledge_entries.py`. Tests updated: `test_knowledge_entries_search_sync.py` retire tests flipped to assert retired SURVIVES in `facts_fts`/`facts_vec`; `test_fact_search.py::test_search_facts_keyword_retired_included_and_marked` asserts retired is returned with `status='retired'`.
 **Source:** phase10-self-learning → cloud-native merge, conflict ③ resolution (2026-06-16).
 
 ---

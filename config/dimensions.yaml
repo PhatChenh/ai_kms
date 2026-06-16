@@ -3,20 +3,126 @@
 # Dimension order matches the knowledge_entries extraction prompt.
 # Shape: dim → {tags: [...], guidance: "..."}  (Phase 8 Slice A nested shape)
 
+# ai-kms extraction schema
+# Shape per dimension: tags (categories to fill) + guidance (extraction prompt).
+# 'other' is a mandatory catch-all on every dimension.
+
 people:
   tags:
+    - name
     - role
+    - scope-of-work
+    - relationship-to-me
+    - working-preference
+    - observed-pattern
     - other
-  guidance: "Look for who leads or owns the topic — name, title, org, or persona."
+  guidance: "Extract people mentioned. 'role' is title or relationship (CTO, manager, college friend). 'scope-of-work' is what they actually own — projects, responsibilities, domain. 'relationship-to-me' is one of: manager, report, peer, stakeholder, external, mentor. 'working-preference' is how they like things done (conclusion-first, Slack over email). 'observed-pattern' replaces personality: record only a SPECIFIC behavior with the line that shows it (e.g. 'pushed back on scope in the Q2 review') — never a bare trait like 'detail-oriented'. Merge nicknames/aliases onto one name. 'other' is a mandatory catch-all: any relevant fact about the person that fits no tag above goes here so nothing is dropped."
 
 projects:
   tags:
+    - objective
     - status
-    - timeline
+    - deadline
+    - PIC
+    - vertical
+    - blocker
+    - next-action
+    - last-updated
     - other
-  guidance: "Look for project status, timeline, milestones, or deliverable references."
+  guidance: "'objective' is the one-sentence point. 'status' is point-in-time — one of: idea, planning, active, blocked, shipped, paused, killed. 'deadline' is a concrete date. 'PIC' is the person accountable. 'vertical' is one of lottery/billing/telco/game/movie/travel/entertainment. 'blocker' is what's stopping progress and what it depends on. 'next-action' is one concrete next step (your old to-do-list, but one actionable item each). 'last-updated' is the date of the source document. When a newer document contradicts an older status, take the newer one by last-updated — do not keep both as if both are current. 'other' is a mandatory catch-all: any relevant project fact fitting no tag above goes here so nothing is dropped."
 
 domains:
   tags:
+    - area
+    - type
+    - insight
+    - evidence
+    - confidence
     - other
-  guidance: "Look for the domain or functional area the knowledge belongs to."
+  guidance: "Durable knowledge tied to a business area or topic — learnings that outlive any single project. 'area' is the vertical, function, or subject (Telco, BI, CAPM, PySpark). 'type' is one of: market-insight, technical-pattern, mental-model, heuristic. 'insight' is the claim stated cleanly. 'evidence' is what supports it. 'confidence' is high/medium/low. Extract a stated learning, not every passing mention of a topic. 'other' is a mandatory catch-all: relevant knowledge fitting no tag above goes here so nothing is dropped."
+
+decisions:
+  tags:
+    - decision
+    - rationale
+    - decided-by
+    - date
+    - supersedes
+    - status
+    - other
+  guidance: "Capture decisions wherever they surface — chat, email, meeting note. ALWAYS fill rationale; a decision without its reasoning is useless when you later weigh reversing it. 'supersedes' names a prior decision this replaces or reverses. 'status' is active/superseded/reversed. Highest-value dimension for strategy work — prioritise it. 'other' is a mandatory catch-all: any relevant fact about the decision fitting no tag above goes here so nothing is dropped."
+
+commitments:
+  tags:
+    - commitment
+    - owner
+    - counterparty
+    - deadline
+    - status
+    - other
+  guidance: "Open loops with a person attached — distinct from a project next-action because it has a counterparty and a social obligation. 'owner' does it; 'counterparty' is owed it. Surface leadership asks here: anything ChiNTL or ChiLL requested, and anything you promised upward. 'status' is open/done/slipped/dropped. Feeds the explicit-leadership-asks section of your reports. 'other' is a mandatory catch-all: any relevant fact fitting no tag above goes here so nothing is dropped."
+
+open-questions:
+  tags:
+    - question
+    - area
+    - raised-by
+    - status
+    - answer
+    - other
+  guidance: "An unresolved unknown — not a task. Capture what is flagged as uncertain, needing investigation, or 'we don't know yet'. 'status' is open/answered/abandoned; fill 'answer' when resolved. The value is being shown your own open loops across months. 'other' is a mandatory catch-all: any relevant fact fitting no tag above goes here so nothing is dropped."
+
+risks:
+  tags:
+    - risk
+    - likelihood
+    - impact
+    - mitigation
+    - owner
+    - status
+    - other
+  guidance: "Risks stated or clearly implied in planning/strategy docs. 'likelihood' and 'impact' are low/medium/high. 'status' is open/mitigated/materialised/closed. A risk is often the rationale behind a decision — cross-reference. Serves your no-blank-risk-section report rule. 'other' is a mandatory catch-all: any relevant fact fitting no tag above goes here so nothing is dropped."
+
+themes:
+  tags:
+    - theme
+    - related-projects
+    - related-decisions
+    - other
+  guidance: "Higher-order threads you circle across many documents without naming (e.g. 'non-coder AI adoption friction', 'Europe relocation prep'). Propose a theme only when it recurs across at least two distinct sources — do not manufacture one from a single mention. The extractor suggests; you curate. 'other' is a mandatory catch-all: any relevant fact fitting no tag above goes here so nothing is dropped."
+
+glossary:
+  tags:
+    - term
+    - expansion
+    - area
+    - other
+  guidance: "Internal shorthand — DGS, FA, NPU/FPU/RPU, ZLP, dgs-monitor. Capture the moment a term is defined or used resolvably, so later documents can be disambiguated instead of guessed. 'other' is a mandatory catch-all: any relevant fact about the term fitting no tag above goes here so nothing is dropped."
+
+relationships:
+  tags:
+    - subject
+    - relationship
+    - object
+    - other
+  guidance: "Edges the flat dimensions can't hold. 'relationship' is one of: owns, reports-to, manages, collaborates-with, blocked-by, stakeholder-of, depends-on. E.g. subject=ChiNTL, relationship=stakeholder-of, object=dgs-monitor. This is where 'who is blocked on what' becomes answerable. 'other' is a mandatory catch-all: any relevant fact about the edge fitting no tag above goes here so nothing is dropped."
+
+# --- OPTIONAL: include only if you want them in scope ---
+
+metrics:
+  tags:
+    - metric
+    - target
+    - concern
+    - vertical
+    - other
+  guidance: "Narrative ABOUT KPIs, not the live numbers — those rot within a day and belong in your Spark/Excel pipelines. 'concern' is commentary, risk-to-target, or the explanation of a miss. 'Movie DGS tracking 12% below FA forecast on a campaign slip' is worth keeping; the daily figure is not. 'other' is a mandatory catch-all: any relevant fact fitting no tag above goes here so nothing is dropped."
+
+personal:
+  tags:
+    - area
+    - goal
+    - current-state
+    - next-action
+    - other
+  guidance: "Only if you want one system across work and life. 'area' is fitness/language/style/reading/finance/career. Drop this dimension entirely if you want personal facts walled off from colleague and project records. 'other' is a mandatory catch-all: any relevant personal fact fitting no tag above goes here so nothing is dropped."

@@ -8,6 +8,7 @@ from llm.prompt_loader import PROMPTS
 @dataclass
 class _FakeFact:
     """Minimal fact stub for prompt rendering tests."""
+
     id: int
     entity: str
     tag: str
@@ -25,10 +26,16 @@ class TestEntityExtractPrompt:
             document_text="Anthony leads the Movie Q2 project.",
             dimension_guidance="Tag: status — extract project status facts.",
             existing_facts=[
-                _FakeFact(id=1, entity="Anthony", tag="other",
-                          fact="Anthony works in engineering.", confidence=0.9),
+                _FakeFact(
+                    id=1,
+                    entity="Anthony",
+                    tag="other",
+                    fact="Anthony works in engineering.",
+                    confidence=0.9,
+                ),
             ],
             previous_attempt_feedback="",
+            few_shot_corrections="",
         )
         assert isinstance(system, str)
         assert isinstance(user, str)
@@ -43,10 +50,16 @@ class TestEntityExtractPrompt:
             document_text="Some text.",
             dimension_guidance="Tag: status",
             existing_facts=[
-                _FakeFact(id=42, entity="Anthony", tag="other",
-                          fact="Test fact.", confidence=0.8),
+                _FakeFact(
+                    id=42,
+                    entity="Anthony",
+                    tag="other",
+                    fact="Test fact.",
+                    confidence=0.8,
+                ),
             ],
             previous_attempt_feedback="",
+            few_shot_corrections="",
         )
         assert "42" in user, "Rendered user should contain fact id 42"
         assert "[id=42]" in user, "Rendered user should show [id=42] marker"
@@ -59,6 +72,7 @@ class TestEntityExtractPrompt:
             dimension_guidance="Tag: people — extract people-related facts.",
             existing_facts=[],
             previous_attempt_feedback="",
+            few_shot_corrections="",
         )
         assert "Tag: people" in user
         assert "extract people-related facts" in user
@@ -72,6 +86,7 @@ class TestEntityExtractPrompt:
             dimension_guidance="Tag: status",
             existing_facts=[],
             previous_attempt_feedback="JSON parse error: trailing comma at line 12",
+            few_shot_corrections="",
         )
         assert "JSON parse error" in user
         assert "Avoid repeating the same mistake" in user
@@ -84,6 +99,7 @@ class TestEntityExtractPrompt:
             dimension_guidance="Tag: status",
             existing_facts=[],
             previous_attempt_feedback="",
+            few_shot_corrections="",
         )
         # No leftover template syntax
         assert "{%" not in user, "No Jinja2 tags should remain"
@@ -99,6 +115,7 @@ class TestEntityExtractPrompt:
             dimension_guidance="Tag: status",
             existing_facts=[],
             previous_attempt_feedback="",
+            few_shot_corrections="",
         )
         combined = system + user
         assert "JSON" in combined, "Prompt should mention JSON output"

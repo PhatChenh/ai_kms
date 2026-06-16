@@ -65,12 +65,6 @@ def _sync_search_indexes(
         )
 
 
-def _delete_search_indexes(conn, entry_id: int) -> None:
-    """Remove an entry from facts_fts + facts_vec."""
-    conn.execute("DELETE FROM facts_fts WHERE rowid = ?", (entry_id,))
-    conn.execute("DELETE FROM facts_vec WHERE entry_id = ?", (entry_id,))
-
-
 def _embed_fact(fact_text: str) -> Result[bytes]:
     """Encode *fact_text* into a float32 embedding blob.
 

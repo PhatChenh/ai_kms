@@ -209,8 +209,10 @@ def test_upsert_update_syncs_facts_vec(tmp_path, mock_embedder_1024):
 # ---------------------------------------------------------------------------
 
 
-def test_retire_removes_from_facts_fts(tmp_path, mock_embedder_1024):
-    """After retire(entry_id), facts_fts has no rows for that id."""
+def test_retire_keeps_entry_in_facts_fts(tmp_path, mock_embedder_1024):
+    """TD-071: after retire(entry_id), facts_fts STILL matches that id so the
+    superseded fact stays searchable/traceable. Retired facts are excluded
+    only from context injection, not from search."""
     db_path = tmp_path / "kb.db"
     init_db(db_path)
     band = ConfidenceBand(auto=0.8, suggest=0.5)
@@ -234,19 +236,20 @@ def test_retire_removes_from_facts_fts(tmp_path, mock_embedder_1024):
     retire_result = retire(entry_id, "no longer relevant", db_path=db_path)
     assert retire_result.is_success()
 
-    # MATCH on the old entity text should no longer find this entry
-    assert entry_id not in _fts_match(db_path, "Charlie"), (
-        "Retired entry should not appear in facts_fts MATCH on entity"
+    # MATCH on the old entity text should STILL find this entry (TD-071)
+    assert entry_id in _fts_match(db_path, "Charlie"), (
+        "Retired entry should remain searchable in facts_fts MATCH on entity"
     )
 
-    # MATCH on the old fact text should no longer find this entry
-    assert entry_id not in _fts_match(db_path, "Temporary"), (
-        "Retired entry should not appear in facts_fts MATCH on fact"
+    # MATCH on the old fact text should STILL find this entry (TD-071)
+    assert entry_id in _fts_match(db_path, "Temporary"), (
+        "Retired entry should remain searchable in facts_fts MATCH on fact"
     )
 
 
-def test_retire_removes_from_facts_vec(tmp_path, mock_embedder_1024):
-    """After retire(entry_id), facts_vec has no rows for that id."""
+def test_retire_keeps_entry_in_facts_vec(tmp_path, mock_embedder_1024):
+    """TD-071: after retire(entry_id), facts_vec STILL has the row so the
+    superseded fact stays semantically searchable."""
     db_path = tmp_path / "kb.db"
     init_db(db_path)
     band = ConfidenceBand(auto=0.8, suggest=0.5)
@@ -269,9 +272,9 @@ def test_retire_removes_from_facts_vec(tmp_path, mock_embedder_1024):
     retire_result = retire(entry_id, "outdated", db_path=db_path)
     assert retire_result.is_success()
 
-    # Should be gone from facts_vec
-    assert _count_facts_vec(db_path, entry_id) == 0
-    assert _get_embedding_blob(db_path, entry_id) is None
+    # Should STILL be in facts_vec (TD-071: retired stays searchable)
+    assert _count_facts_vec(db_path, entry_id) == 1
+    assert _get_embedding_blob(db_path, entry_id) is not None
 
 
 def test_retire_nonexistent_does_not_crash(tmp_path, mock_embedder_1024):

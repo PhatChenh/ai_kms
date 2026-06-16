@@ -14,7 +14,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from core.config import ConfidenceBand, CONFIG
+from core.config import ConfidenceBand
 from core.result import Failure, Result, Success
 
 _writer_log = logging.getLogger(__name__)
@@ -86,6 +86,8 @@ def _insert_competing(
 
     Returns True if the caller should ``continue`` (skip the normal upsert).
     """
+    from core.config import CONFIG  # noqa: C0415 -- lazy import
+
     competing = KnowledgeEntry(
         dimension=dimension,
         entity=fact.get("entity", ""),
@@ -147,6 +149,7 @@ def write_entries(
         Success(WriteSummary) -- clean=True when every fact was applied
         without skipping.
     """
+    from core.config import CONFIG  # noqa: C0415 -- lazy import
     from storage.db import get_connection
     from storage.knowledge_entries import (
         KnowledgeEntry,

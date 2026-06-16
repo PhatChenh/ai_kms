@@ -323,7 +323,20 @@ class TestCaptureUpload:
 
     @pytest.mark.asyncio
     async def test_classify_ready_log_emitted(self, db, monkeypatch, capsys):
-        """P7-CAP-08: Successful capture emits classify_ready log line."""
+        """P7-CAP-08: Successful capture emits classify_ready log line.
+
+        Pins logging to dev_mode (ConsoleRenderer → stdout) so the assertion
+        is deterministic regardless of run order. Without this the test relies
+        on structlog's default PrintLogger (writes to stdout only while
+        structlog is *unconfigured*); once any earlier test calls
+        ``setup_logging`` that assumption breaks and stdout is empty. Calling
+        ``setup_logging`` here (after capsys has swapped sys.stdout) binds the
+        console StreamHandler to capsys's stream.
+        """
+        from core.logging_setup import setup_logging
+
+        setup_logging(log_level="DEBUG", dev_mode=True)
+
         monkeypatch.setattr(
             "pipelines.capture._summarize_upload", _stub_summarize_success
         )
@@ -337,9 +350,9 @@ class TestCaptureUpload:
         )
 
         captured = capsys.readouterr()
-        clean = re.sub(r"\x1b\[[0-9;]*m", "", captured.out)
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", captured.out + captured.err)
         assert "capture.classify_ready" in clean, (
-            f"Expected classify_ready in stdout, got: {clean[:500]}"
+            f"Expected classify_ready in console output, got: {clean[:500]}"
         )
         assert "vault_path=inbox/classify_log_test.md" in clean
 
