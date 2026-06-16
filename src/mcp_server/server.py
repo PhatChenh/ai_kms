@@ -128,7 +128,7 @@ async def _lifespan(app: FastMCP):
 
 from mcp.server.fastmcp import FastMCP  # noqa: E402
 
-mcp = FastMCP("kms", lifespan=_lifespan)
+mcp = FastMCP("kms", lifespan=_lifespan, host="0.0.0.0")
 
 # ---- Register the five KMS tools (Phase 6 / Component 7) ----
 from mcp_server.tools import register_tools  # noqa: E402

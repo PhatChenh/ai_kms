@@ -19,6 +19,8 @@ is a static placeholder. That was deliberate (1-day, UI-only scope, user
 explicitly said "no moving component, no flow, interactive component" for
 this pass).
 
+reference: https://mainline-astro-template.vercel.app/#
+
 ## What's built (read the code, this is just a map)
 
 - `src/pages/index.astro` — single page. `features` array at top (4 items:
