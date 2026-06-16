@@ -5,13 +5,18 @@
 FROM python:3.12-slim AS builder
 WORKDIR /build
 
-# Copy all source and metadata needed to install the project
+# 1. Install uv + copy only dependency metadata (cached unless deps change)
 COPY pyproject.toml README.md ./
-COPY src/ ./src/
-COPY config/ ./config/
+RUN pip install uv --quiet
 
-# Install project and its dependencies (production only)
-RUN pip install uv --quiet && uv sync --no-dev --no-editable
+# 2. Create minimal src layout so uv sync can find the package
+RUN mkdir -p src/core && touch src/core/__init__.py
+COPY config/ ./config/
+RUN uv sync --no-dev --no-editable 2>/dev/null || true
+
+# 3. Copy real source and re-sync (fast — deps already cached)
+COPY src/ ./src/
+RUN uv sync --no-dev --no-editable
 
 # ---- Runtime stage ----
 FROM python:3.12-slim
@@ -34,6 +39,7 @@ COPY src/ /app/src/
 COPY src/storage/schema.sql /usr/local/lib/python3.12/site-packages/storage/schema.sql
 COPY src/storage/migrations/ /usr/local/lib/python3.12/site-packages/storage/migrations/
 COPY config/ /usr/local/lib/python3.12/site-packages/config/
+COPY src/prompts/ /usr/local/lib/python3.12/site-packages/prompts/
 COPY scripts/ /app/scripts/
 COPY litestream.yml /etc/litestream.yml
 
