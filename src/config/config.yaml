@@ -1,5 +1,5 @@
 capture:
-  cooldown_seconds: 0 # original: 60, change for testing
+  cooldown_seconds: 60 # original: 60, change for testing
   max_urls_per_note: 3
   rename_gate:
     office_extensions: [".md", ".docx", ".xlsx", ".pptx", ".txt"]
@@ -42,13 +42,18 @@ mcp:
   retrieval_score:
     decay_factor: 0.95
     sweep_interval_hours: 24
+  inspect:
+    max_text_refs: 5
+  fact_search:
+    keyword_weight: 0.5
+    max_results: 20
 openai_compat:
-  api_key_env: FIREWORKS_API_KEY
-  base_url: https://api.fireworks.ai/inference/v1
+  api_key_env: LLM_API_KEY
+  base_url: https://maas-llm-aiplatform-hcm.api.vngcloud.vn/v1
   max_tokens: 1024
-  model: accounts/fireworks/models/gpt-oss-20b
-  synthesis_model: accounts/fireworks/models/llama-v3p1-70b-instruct
-  embedding_model: nomic-ai/nomic-embed-text-v1.5
+  model: deepseek/deepseek-v4-pro
+  synthesis_model: deepseek/deepseek-v4-pro
+  embedding_model: greennode/greennode-embedding-large-1007
   timeout: 60
 ollama:
   base_url: http://localhost:11434
@@ -61,23 +66,31 @@ ollama:
 para_context_path: /Users/phatchenh/Library/Mobile Documents/iCloud~md~obsidian/Documents/Claude
   Brain/para-context.yaml
 providers:
-  capture: claude_cli # originally claude, changed to use Fireworks via openai_compat provider
-  classify: claude_cli
-  embeddings: ollama
-  self_learn: claude
-  synthesis: claude
+  capture: openai # originally claude, changed to use Fireworks via openai provider
+  classify: openai
+  embeddings: openai
+  self_learn: openai
+  synthesis: openai
 self_learning:
   confidence_threshold: 0.8
   enabled: true
   include_examples_in_prompt: true
   max_examples: 5
   min_evaluations: 20
+  # Phase 10 trust mechanics
+  trust_confirm_delta: 0.05
+  trust_reject_delta: -0.10
+  trust_revise_base: 0.6
+  overwrite_trust_threshold: 0.5
+  min_trust_for_context: 0.3
+  volatility_correction_count: 3
+  max_corrections_per_prompt: 5
 search:
   embedding_model: "all-MiniLM-L6-v2"
   reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
   max_candidates: 20
   max_results: 10
-env: test   # dev | prod = use vault.root | test = use testing.vault_path below
+env: prod   # dev | prod = use vault.root | test = use testing.vault_path below
 testing:
   vault_path: /tmp/ai_kms_test_vault  # isolated vault for manual testing guide runs — never the real vault
 vault:

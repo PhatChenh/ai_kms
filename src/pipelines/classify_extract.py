@@ -85,6 +85,7 @@ async def extract(
     guidance: str,
     feedback: str,
     config: MainConfig,
+    few_shot_corrections: str = "",
 ) -> Result[list[dict]]:
     """Ask the AI to extract structured facts from *text* for *dimension*.
 
@@ -100,6 +101,8 @@ async def extract(
         guidance:      The dimension's guidance text from dimensions.yaml.
         feedback:      The previous failure reason (empty string on first attempt).
         config:        Validated MainConfig.
+        few_shot_corrections: Formatted few-shot examples from past corrections
+                              (Phase 10). Empty string on first extraction.
 
     Returns:
         Success(list[dict]) with parsed facts, or Failure with a recoverable
@@ -112,6 +115,7 @@ async def extract(
             dimension_guidance=guidance,
             existing_facts=existing_facts,
             previous_attempt_feedback=feedback,
+            few_shot_corrections=few_shot_corrections,
         )
     except Exception as exc:
         return Failure(

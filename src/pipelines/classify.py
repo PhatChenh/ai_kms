@@ -146,6 +146,45 @@ def context_loader(
             )
         result[dim_name] = ranked.value
 
+    # Phase 10: Enrich entries with comments (best-effort, non-mutating)
+    import sqlite3 as _sqlite3
+    from dataclasses import replace as _replace
+    from storage.db import get_connection as _get_conn
+
+    try:
+        with _get_conn(db_path, readonly=True) as conn:
+            conn.row_factory = _sqlite3.Row
+            all_ids: list[int] = []
+            for entries in result.values():
+                all_ids.extend(e.id for e in entries if e.id is not None)
+
+            if all_ids:
+                placeholders = ", ".join("?" for _ in all_ids)
+                rows = conn.execute(
+                    f"SELECT entry_id, comment_text FROM entry_comments WHERE entry_id IN ({placeholders}) ORDER BY entry_id, created_at",
+                    all_ids,
+                ).fetchall()
+                from collections import defaultdict
+
+                by_entry: dict[int, list[str]] = defaultdict(list)
+                for r in rows:
+                    by_entry[r["entry_id"]].append(r["comment_text"])
+                if by_entry:
+                    for dim_name, entries in result.items():
+                        result[dim_name] = [
+                            _replace(
+                                e,
+                                reasoning=(e.reasoning or "")
+                                + "\nComments: "
+                                + "; ".join(by_entry[e.id]),
+                            )
+                            if e.id in by_entry
+                            else e
+                            for e in entries
+                        ]
+    except _sqlite3.Error:
+        pass  # Best-effort — comments are supplementary context
+
     return Success(result)
 
 

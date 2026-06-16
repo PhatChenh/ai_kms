@@ -40,8 +40,39 @@ class KnowledgeEntry:
     retrieval_score: float = 0.0
 
 
+def _sync_search_indexes(
+    conn, entry_id: int, entity: str, fact: str, *, delete_old: bool = False
+) -> None:
+    """Best-effort sync of facts_fts + facts_vec for a single entry.
+
+    If *delete_old* is True, removes existing rows before inserting.
+    Embedding failure is silently swallowed — the entry is still stored
+    in knowledge_entries even when search indexes cannot be populated.
+    """
+    embedding_result = _embed_fact(fact)
+    if isinstance(embedding_result, Success):
+        if delete_old:
+            conn.execute("DELETE FROM facts_fts WHERE rowid = ?", (entry_id,))
+            conn.execute("DELETE FROM facts_vec WHERE entry_id = ?", (entry_id,))
+        blob = embedding_result.value
+        conn.execute(
+            "INSERT INTO facts_fts(rowid, entry_id, entity, fact) VALUES(?, ?, ?, ?)",
+            (entry_id, entry_id, entity, fact),
+        )
+        conn.execute(
+            "INSERT INTO facts_vec(entry_id, embedding) VALUES(?, ?)",
+            (entry_id, blob),
+        )
+
+
+def _delete_search_indexes(conn, entry_id: int) -> None:
+    """Remove an entry from facts_fts + facts_vec."""
+    conn.execute("DELETE FROM facts_fts WHERE rowid = ?", (entry_id,))
+    conn.execute("DELETE FROM facts_vec WHERE entry_id = ?", (entry_id,))
+
+
 def _embed_fact(fact_text: str) -> Result[bytes]:
-    """Encode *fact_text* into a 384-dim float32 embedding blob.
+    """Encode *fact_text* into a float32 embedding blob.
 
     Lazy-imports ``_get_model`` from ``retrieval.embeddings`` and returns
     the numpy array serialized as raw bytes (same pattern as
@@ -81,9 +112,14 @@ def _row_to_entry(row: sqlite3.Row) -> KnowledgeEntry:
         reasoning=row["reasoning"] or "",
         created_at=row["created_at"] or "",
         updated_at=row["updated_at"] or "",
-        trust_score=row["trust_score"] if "trust_score" in row.keys() else 0.5,
-        retrieval_score=float(row["retrieval_count"]) if "retrieval_count" in row.keys() else 0.0,
+        trust_score=row["trust_score"]
+        if "trust_score" in row.keys() and row["trust_score"] is not None
+        else 0.5,
+        retrieval_score=float(row["retrieval_count"])
+        if "retrieval_count" in row.keys()
+        else 0.0,
     )
+
 
 def get_entry_by_id(
     entry_id: int, *, db_path: Path | None = None
@@ -100,9 +136,7 @@ def get_entry_by_id(
                 return Success(None)
             return Success(_row_to_entry(row))
     except sqlite3.Error as exc:
-        return Failure(
-            str(exc), recoverable=False, context={"entry_id": entry_id}
-        )
+        return Failure(str(exc), recoverable=False, context={"entry_id": entry_id})
 
 
 def upsert(
@@ -137,6 +171,7 @@ def upsert(
                     """UPDATE knowledge_entries
                        SET dimension=?, entity=?, tag=?, fact=?, status=?,
                            confidence=?, sources=?, reasoning=?,
+                           trust_score=?,
                            updated_at=datetime('now')
                        WHERE id=?""",
                     (
@@ -148,6 +183,7 @@ def upsert(
                         entry.confidence,
                         sources_json,
                         entry.reasoning,
+                        entry.trust_score,
                         entry.id,
                     ),
                 )
@@ -158,37 +194,21 @@ def upsert(
                         context={"entry_id": entry.id},
                     )
 
-                # Sync search tables: best-effort embedding
-                embedding_result = _embed_fact(entry.fact)
-                if isinstance(embedding_result, Success):
-                    embedding_blob = embedding_result.value
-                    # Delete old search entries
-                    if old:
-                        conn.execute(
-                            "DELETE FROM facts_fts WHERE rowid = ?",
-                            (entry.id,),
-                        )
-                        conn.execute(
-                            "DELETE FROM facts_vec WHERE entry_id = ?", (entry.id,)
-                        )
-                    # Re-insert with new values
-                    conn.execute(
-                        "INSERT INTO facts_fts(rowid, entry_id, entity, fact) "
-                        "VALUES(?, ?, ?, ?)",
-                        (entry.id, entry.id, entry.entity, entry.fact),
-                    )
-                    conn.execute(
-                        "INSERT INTO facts_vec(entry_id, embedding) VALUES(?, ?)",
-                        (entry.id, embedding_blob),
-                    )
+                _sync_search_indexes(
+                    conn,
+                    entry.id,
+                    entry.entity,
+                    entry.fact,
+                    delete_old=bool(old),
+                )
 
                 return Success(entry.id)
             else:
                 cursor = conn.execute(
                     """INSERT INTO knowledge_entries
                        (dimension, entity, tag, fact, status, confidence,
-                        sources, reasoning)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        sources, reasoning, trust_score)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         entry.dimension,
                         entry.entity,
@@ -198,22 +218,16 @@ def upsert(
                         entry.confidence,
                         sources_json,
                         entry.reasoning,
+                        entry.trust_score,
                     ),
                 )
 
-                # Sync search tables for new entry — best-effort embedding
-                embedding_result = _embed_fact(entry.fact)
-                if isinstance(embedding_result, Success):
-                    embedding_blob = embedding_result.value
-                    conn.execute(
-                        "INSERT INTO facts_fts(rowid, entry_id, entity, fact) "
-                        "VALUES(?, ?, ?, ?)",
-                        (cursor.lastrowid, cursor.lastrowid, entry.entity, entry.fact),
-                    )
-                    conn.execute(
-                        "INSERT INTO facts_vec(entry_id, embedding) VALUES(?, ?)",
-                        (cursor.lastrowid, embedding_blob),
-                    )
+                _sync_search_indexes(
+                    conn,
+                    cursor.lastrowid,
+                    entry.entity,
+                    entry.fact,
+                )
 
                 return Success(cursor.lastrowid)
     except sqlite3.Error as exc:
@@ -259,17 +273,12 @@ def query_by_entity(
 def retire(entry_id: int, reason: str, *, db_path: Path | None = None) -> Result[int]:
     """Retire a knowledge entry (never delete). Returns rowcount.
 
-    Also removes the entry from ``facts_fts`` and ``facts_vec`` search
-    indexes so retired facts are no longer searchable.
+    Retired entries remain in search indexes so they are still findable.
+    Search consumers that should exclude retired entries do so via
+    ``WHERE status != 'retired'`` in their queries.
     """
     try:
         with get_connection(db_path) as conn:
-            # Read old entity+fact for search table cleanup
-            old = conn.execute(
-                "SELECT entity, fact FROM knowledge_entries WHERE id = ?",
-                (entry_id,),
-            ).fetchone()
-
             cursor = conn.execute(
                 """UPDATE knowledge_entries
                    SET status='retired', reasoning=?,
@@ -277,16 +286,6 @@ def retire(entry_id: int, reason: str, *, db_path: Path | None = None) -> Result
                    WHERE id=?""",
                 (reason, entry_id),
             )
-
-            # Remove from search indexes
-            if old:
-                conn.execute(
-                    "DELETE FROM facts_fts WHERE rowid = ?",
-                    (entry_id,),
-                )
-                conn.execute(
-                    "DELETE FROM facts_vec WHERE entry_id = ?", (entry_id,)
-                )
 
             return Success(cursor.rowcount)
     except sqlite3.Error as exc:
@@ -365,6 +364,7 @@ def query_ranked_for_orientation(
     dimension: str | None = None,
     entity: str | None = None,
     limit: int = 5,
+    min_trust: float | None = None,
     db_path: Path | None = None,
 ) -> Result[list[KnowledgeEntry]]:
     """Return non-retired entries ranked by a 4-key sort for orientation.
@@ -375,17 +375,19 @@ def query_ranked_for_orientation(
         3. confidence DESC
         4. updated_at DESC
 
-    Optionally filtered by *dimension* and/or *entity*.
-    Capped at *limit* (default 5).
+    Optionally filtered by *dimension*, *entity*, and/or *min_trust*
+    (Phase 10 trust-floor). Capped at *limit* (default 5).
     """
     try:
         with get_connection(db_path, readonly=True) as conn:
             conn.row_factory = sqlite3.Row
 
-            query = (
-                "SELECT * FROM knowledge_entries WHERE status != 'retired'"
-            )
+            query = "SELECT * FROM knowledge_entries WHERE status != 'retired'"
             params: list[str] = []
+
+            if min_trust is not None:
+                query += " AND trust_score >= ?"
+                params.append(str(min_trust))
 
             if dimension is not None:
                 query += " AND dimension = ?"

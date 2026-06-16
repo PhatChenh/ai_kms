@@ -1,0 +1,56 @@
+report_types:
+  correction_summary:
+    title: "Correction Summary"
+    prompt: |
+      Analyze the following correction data and produce a concise report covering:
+      - Total corrections by type (confirm, reject, revise)
+      - Most-corrected entities
+      - Accuracy trend (are corrections decreasing over time?)
+      Provide specific numbers and actionable insights.
+    sources: [corrections]
+    filters: {}
+
+  knowledge_health:
+    title: "Knowledge Health Report"
+    prompt: |
+      Analyze the following knowledge base data and produce a health report covering:
+      - Total facts by dimension
+      - Count of pending vs confident vs retired entries
+      - Coverage metrics (dimensions with few facts)
+      - Overall knowledge base quality assessment
+    sources: [facts]
+    filters: {}
+
+  volatile_entries:
+    title: "Volatile Entries Report"
+    prompt: |
+      Analyze the following entries that have been corrected multiple times.
+      For each volatile entry, explain:
+      - How many times it was corrected and why
+      - Whether the current value seems stable
+      - Whether the entry should be reviewed by a human
+    sources: [corrections, facts]
+    filters: {}
+
+  coverage_gaps:
+    title: "Coverage Gaps Report"
+    prompt: |
+      Analyze the following data about documents and extracted knowledge.
+      Identify:
+      - Documents with zero knowledge entries extracted
+      - Dimensions with significantly fewer facts than others
+      - Entities mentioned in documents but absent from the knowledge base
+    sources: [facts, summaries]
+    filters: {}
+
+  conflicts:
+    title: "Conflicts Report"
+    prompt: |
+      Analyze the following pairs of knowledge entries where conflicts exist
+      (same entity + dimension + tag with both trusted and pending status).
+      For each conflict:
+      - Show both the trusted and pending versions
+      - Explain the likely source of the conflict
+      - Recommend which version to keep
+    sources: [facts]
+    filters: { detect_conflicts: true }

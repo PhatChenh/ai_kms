@@ -97,6 +97,11 @@ _log = structlog.get_logger("mcp_server")
 # Lifespan — creates one engine per conversation (one process under stdio)
 # ---------------------------------------------------------------------------
 
+# Shared state — set by cloud_entry._wrap_lifespan before the inner
+# (per-session) lifespan runs, so tool handlers can access them.
+_classify_queue = None
+_db_path = None
+
 
 @asynccontextmanager
 async def _lifespan(app: FastMCP):
@@ -109,7 +114,10 @@ async def _lifespan(app: FastMCP):
 
     _log.info("mcp_server.lifespan_start")
     try:
-        yield {"engine": ContextInjectionEngine()}
+        ctx: dict = {"engine": ContextInjectionEngine(db_path=_db_path)}
+        if _classify_queue is not None:
+            ctx["classify_queue"] = _classify_queue
+        yield ctx
     finally:
         _log.info("mcp_server.lifespan_end")
 

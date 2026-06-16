@@ -36,9 +36,16 @@ def _seed_knowledge_entries(db_path: Path) -> dict[str, int]:
                 trust_score, retrieval_count, reasoning)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                "people", "Alice", "role",
+                "people",
+                "Alice",
+                "role",
                 "Alice is the Engineering Manager responsible for the platform team.",
-                "confident", 0.95, '["100"]', 0.9, 10.0, "stated in org chart",
+                "confident",
+                0.95,
+                '["100"]',
+                0.9,
+                10.0,
+                "stated in org chart",
             ),
         )
         alice_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -49,9 +56,16 @@ def _seed_knowledge_entries(db_path: Path) -> dict[str, int]:
                 trust_score, retrieval_count, reasoning)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                "process", "standup", "schedule",
+                "process",
+                "standup",
+                "schedule",
                 "Daily standup happens at 9:30 AM every weekday.",
-                "confident", 0.85, '["200"]', 0.7, 5.0, "from team agreement",
+                "confident",
+                0.85,
+                '["200"]',
+                0.7,
+                5.0,
+                "from team agreement",
             ),
         )
         standup_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -62,9 +76,16 @@ def _seed_knowledge_entries(db_path: Path) -> dict[str, int]:
                 trust_score, retrieval_count, reasoning)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                "tools", "deploy", "pipeline",
+                "tools",
+                "deploy",
+                "pipeline",
                 "Deployments go through GitHub Actions CI/CD pipeline.",
-                "pending", 0.5, '["300"]', 0.5, 0.0, "",
+                "pending",
+                0.5,
+                '["300"]',
+                0.5,
+                0.0,
+                "",
             ),
         )
         deploy_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -75,9 +96,16 @@ def _seed_knowledge_entries(db_path: Path) -> dict[str, int]:
                 trust_score, retrieval_count, reasoning)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                "people", "Bob", "role",
+                "people",
+                "Bob",
+                "role",
                 "Bob is a retired fact that should never appear in search.",
-                "retired", 0.3, '["400"]', 0.1, 0.0, "outdated",
+                "retired",
+                0.3,
+                '["400"]',
+                0.1,
+                0.0,
+                "outdated",
             ),
         )
         retired_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -89,10 +117,18 @@ def _seed_knowledge_entries(db_path: Path) -> dict[str, int]:
 
     # Build embedding and index for each fact
     entries = [
-        (alice_id, "Alice", "Alice is the Engineering Manager responsible for the platform team."),
+        (
+            alice_id,
+            "Alice",
+            "Alice is the Engineering Manager responsible for the platform team.",
+        ),
         (standup_id, "standup", "Daily standup happens at 9:30 AM every weekday."),
         (deploy_id, "deploy", "Deployments go through GitHub Actions CI/CD pipeline."),
-        (retired_id, "Bob", "Bob is a retired fact that should never appear in search."),
+        (
+            retired_id,
+            "Bob",
+            "Bob is a retired fact that should never appear in search.",
+        ),
     ]
 
     for entry_id, entity, fact_text in entries:
@@ -121,7 +157,7 @@ def _seed_knowledge_entries(db_path: Path) -> dict[str, int]:
 
 
 @pytest.fixture
-def seeded_fact_db(tmp_path: Path) -> tuple[Path, dict[str, int]]:
+def seeded_fact_db(tmp_path: Path, mock_embedder_1024) -> tuple[Path, dict[str, int]]:
     """Temp DB with 4 knowledge entries (3 active, 1 retired) + search indexes."""
     db_path = tmp_path / "test_fact_search.db"
     init_db(db_path)

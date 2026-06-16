@@ -18,10 +18,10 @@ from storage.documents import get_by_id
 @dataclass(frozen=True)
 class ResolveResult:
     doc_id: int
-    mode: str          # "summary" | "text" | "file"
+    mode: str  # "summary" | "text" | "file"
     content: str
     title: str
-    degraded: bool     # True if text mode fell back to summary
+    degraded: bool  # True if text mode fell back to summary
 
 
 def resolve(
@@ -95,13 +95,19 @@ def resolve_dicts(
     doc_ids: list[int],
     mode: str = "summary",
     *,
-    max_text_refs: int = 5,
+    max_text_refs: int | None = None,
     db_path: Path | None = None,
 ) -> list[dict]:
     """Convenience wrapper: resolve() → list[dict] for the MCP shim layer.
 
     Keeps tools.py C-14 clean by moving the dict-conversion loop here.
+    Reads ``max_text_refs`` from CONFIG when not explicitly provided.
     """
+    if max_text_refs is None:
+        from core.config import CONFIG
+
+        max_text_refs = CONFIG.main.mcp.inspect.max_text_refs
+
     return [
         {
             "doc_id": r.doc_id,

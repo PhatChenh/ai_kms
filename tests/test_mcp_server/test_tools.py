@@ -1,7 +1,7 @@
 """
 tests/test_mcp_server/test_tools.py
 
-Phase 9: Tool Shim Layer tests — 5 tools, C-14 clean.
+Phase 9: Tool Shim Layer tests — 7 tools, C-14 clean.
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ class TestC14Cleanliness:
 # ============================================================================
 
 
-class TestListsFiveTools:
+class TestListsSevenTools:
     @pytest.mark.asyncio
     async def test_lists_exactly_five_tools(self):
         from mcp_server.context import ContextInjectionEngine
@@ -78,7 +78,7 @@ class TestListsFiveTools:
 
         expected_tools = {
             "kms_vault_info", "kms_search", "kms_inspect",
-            "kms_write", "kms_correct",
+            "kms_write", "kms_correct", "kms_comment", "kms_reports",
         }
 
         async with _in_memory_mcp_client(app) as session:
@@ -105,7 +105,7 @@ class TestListsFiveTools:
 
         async with _in_memory_mcp_client(app) as session:
             result = await session.list_tools()
-            assert len(result.tools) == 5
+            assert len(result.tools) == 7
 
 
 # ============================================================================
@@ -213,6 +213,7 @@ class TestPassThrough:
             mock.assert_called_once_with(
                 1, "retire", new_fact=None, new_tag=None,
                 new_entity=None, reason="stale",
+                reason_category=None, feedback=None,
             )
 
     def test_kms_correct_ctx_optional(self):

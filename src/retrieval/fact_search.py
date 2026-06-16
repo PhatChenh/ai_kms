@@ -13,7 +13,7 @@ Key behaviours:
 - Only non-retired entries are returned (filtered via the JOIN).
 
 Research spike note (Phase 9 P9-B-06):
-  With the default ``all-MiniLM-L6-v2`` model (384-dim) and a small set of
+  With the ``greennode-embedding-large-1007`` model (1024-dim) and a small set of
   short facts (~10-20 tokens each), cosine distances between close neighbours
   were in the range 0.15–0.40 and distances between unrelated facts were
   0.60–0.90, giving clean separation.  The default ``keyword_weight=0.5``
@@ -77,7 +77,7 @@ def search_facts(
     query: str,
     *,
     max_results: int | None = None,
-    keyword_weight: float = 0.5,
+    keyword_weight: float | None = None,
     db_path: Path | None = None,
 ) -> Result[list[FactResult]]:
     """Search the knowledge_entries corpus with dual-modal RRF fusion.
@@ -88,6 +88,7 @@ def search_facts(
                         sub-query (keyword and semantic) before fusion.
         keyword_weight: Weight for the keyword (FTS5) leg in the weighted
                         RRF score.  1.0 = keyword-only, 0.0 = semantic-only.
+                        None reads from config.
         db_path:        Override DB path.
 
     Returns:
@@ -95,8 +96,22 @@ def search_facts(
         or ``Failure`` on any database or model error.
     """
     # ------------------------------------------------------------------
+    # Read defaults from config when not explicitly provided.
+    if max_results is None or keyword_weight is None:
+        try:
+            from core.config import CONFIG
+
+            fs_cfg = CONFIG.main.mcp.fact_search
+            if max_results is None:
+                max_results = fs_cfg.max_results
+            if keyword_weight is None:
+                keyword_weight = fs_cfg.keyword_weight
+        except Exception:
+            pass
     if max_results is None:
         max_results = 20
+    if keyword_weight is None:
+        keyword_weight = 0.5
     # 1. Keyword search (FTS5)
     # ------------------------------------------------------------------
     keyword_ranks = _fts5_search(query, max_results, db_path)
@@ -274,9 +289,15 @@ def _join_entries(
                 dimension=row["dimension"] or "",
                 entity=row["entity"] or "",
                 fact=row["fact"] or "",
-                confidence=str(row["confidence"]) if row["confidence"] is not None else "",
-                trust_score=float(row["trust_score"]) if row["trust_score"] is not None else 0.5,
-                retrieval_score=float(row["retrieval_count"]) if row["retrieval_count"] is not None else 0.0,
+                confidence=str(row["confidence"])
+                if row["confidence"] is not None
+                else "",
+                trust_score=float(row["trust_score"])
+                if row["trust_score"] is not None
+                else 0.5,
+                retrieval_score=float(row["retrieval_count"])
+                if row["retrieval_count"] is not None
+                else 0.0,
                 sources=row["sources"] or "[]",
                 score=id_to_score[eid],
             )

@@ -251,6 +251,21 @@ async def orchestrate(
         guidance_text = rulebook[dim_name].get("guidance", "")
         existing = facts_by_dim.get(dim_name, [])
 
+        # Few-shot correction injection (Phase 10)
+        few_shot_text = ""
+        if CONFIG.main.self_learning.enabled:
+            from pipelines.few_shot import select_corrections, format_few_shot
+
+            doc_entities = [e.entity for e in existing]
+            sel_result = select_corrections(
+                dim_name,
+                doc_entities,
+                cap=CONFIG.main.self_learning.max_corrections_per_prompt,
+                db_path=db_path,
+            )
+            if isinstance(sel_result, Success) and sel_result.value:
+                few_shot_text = format_few_shot(sel_result.value)
+
         # 6a. Extract
         extracted = await extract(
             dim_name,
@@ -259,6 +274,7 @@ async def orchestrate(
             guidance_text,
             feedback=last_error or "",
             config=config,
+            few_shot_corrections=few_shot_text,
         )
 
         if isinstance(extracted, Failure):

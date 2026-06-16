@@ -21,16 +21,16 @@ def search_db(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def mock_encode() -> MagicMock:
-    """Return a mock SentenceTransformer that produces 384-dim float32 zeros."""
+    """Return a mock encoder that produces 1024-dim float32 zeros."""
     model = MagicMock()
-    model.encode.return_value = np.zeros(384, dtype=np.float32)
+    model.encode.return_value = np.zeros(1024, dtype=np.float32)
     return model
 
 
 class TestIndexEmbeddingInsert:
     """Tracer bullet: verify basic insert creates a row with correct embedding."""
 
-    def test_insert_creates_row_with_384_dim_embedding(
+    def test_insert_creates_row_with_1024_dim_embedding(
         self, search_db: Path, mock_encode: MagicMock
     ) -> None:
         import retrieval.embeddings as em
@@ -57,8 +57,8 @@ class TestIndexEmbeddingInsert:
             ).fetchone()
             assert row is not None, "Expected a row in embeddings_vec"
             assert row[0] == "Projects/Alpha/note.md"
-            assert row[1] == 1536, f"Expected 1536 bytes (384*4), got {row[1]}"
-            assert row[2] == 384, f"Expected vec_length 384, got {row[2]}"
+            assert row[1] == 4096, f"Expected 4096 bytes (1024*4), got {row[1]}"
+            assert row[2] == 1024, f"Expected vec_length 1024, got {row[2]}"
         finally:
             conn.close()
 
@@ -218,19 +218,25 @@ class TestRetryOnOperationalError:
 
 
 class TestModelLoadFailure:
-    """SentenceTransformer load failure returns Failure(recoverable=True)."""
+    """Model load failure returns Failure(recoverable=True)."""
 
-    def test_model_load_failure_returns_recoverable_failure(
+    def test_local_model_load_failure_returns_recoverable_failure(
         self, search_db: Path
     ) -> None:
         import retrieval.embeddings as em
 
-        # Force _model to None so _get_model will try to create a new one
         em._model = None
 
-        with patch(
-            "sentence_transformers.SentenceTransformer",
-            side_effect=RuntimeError("cannot load model"),
+        mock_cfg = MagicMock()
+        mock_cfg.main.providers.for_task.return_value = "ollama"
+        mock_cfg.main.search.embedding_model = "all-MiniLM-L6-v2"
+
+        with (
+            patch("core.config.CONFIG", mock_cfg),
+            patch(
+                "sentence_transformers.SentenceTransformer",
+                side_effect=RuntimeError("cannot load model"),
+            ),
         ):
             result = em.index_embedding(
                 vault_path="m.md",
@@ -244,3 +250,30 @@ class TestModelLoadFailure:
         assert result.is_failure(), "Expected Failure on model load error"
         assert result.recoverable is True
         assert "cannot load model" in result.error
+
+    def test_api_provider_failure_returns_recoverable_failure(
+        self, search_db: Path
+    ) -> None:
+        import retrieval.embeddings as em
+
+        em._model = None
+
+        mock_cfg = MagicMock()
+        mock_cfg.main.providers.for_task.return_value = "openai"
+        mock_cfg.main.openai_compat.api_key_env = "NONEXISTENT_KEY_FOR_TEST"
+        mock_cfg.main.openai_compat.base_url = "http://localhost:1/v1"
+        mock_cfg.main.openai_compat.embedding_model = "fake-model"
+        mock_cfg.main.openai_compat.timeout = 1
+
+        with patch("core.config.CONFIG", mock_cfg):
+            result = em.index_embedding(
+                vault_path="m.md",
+                title="M",
+                note_type="note",
+                tags=["t"],
+                summary="s",
+                db_path=search_db,
+            )
+
+        assert result.is_failure(), "Expected Failure on API error"
+        assert result.recoverable is True

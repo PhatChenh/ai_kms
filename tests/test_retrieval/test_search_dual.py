@@ -36,9 +36,16 @@ def _seed_dual_corpus_db(db_path: Path) -> dict[str, int]:
                 trust_score, retrieval_count, reasoning)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                "people", "Alice", "role",
+                "people",
+                "Alice",
+                "role",
                 "Alice is the Engineering Manager.",
-                "confident", 0.95, '["1"]', 0.9, 10.0, "from org chart",
+                "confident",
+                0.95,
+                '["1"]',
+                0.9,
+                10.0,
+                "from org chart",
             ),
         )
         alice_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -49,9 +56,16 @@ def _seed_dual_corpus_db(db_path: Path) -> dict[str, int]:
                 trust_score, retrieval_count, reasoning)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                "process", "standup", "schedule",
+                "process",
+                "standup",
+                "schedule",
                 "Daily standup at 9:30 AM.",
-                "confident", 0.85, '["2"]', 0.7, 5.0, "",
+                "confident",
+                0.85,
+                '["2"]',
+                0.7,
+                5.0,
+                "",
             ),
         )
         standup_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -196,7 +210,7 @@ def _seed_dual_corpus_db(db_path: Path) -> dict[str, int]:
 
 
 @pytest.fixture
-def seeded_dual_db(tmp_path: Path) -> tuple[Path, dict[str, int]]:
+def seeded_dual_db(tmp_path: Path, mock_embedder_1024) -> tuple[Path, dict[str, int]]:
     """Temp DB with facts + documents + all indexes."""
     db_path = tmp_path / "test_dual_search.db"
     init_db(db_path)
@@ -267,9 +281,7 @@ def test_search_dual_fact_dedup(seeded_dual_db):
     dual: DualCorpusResult = result.value
 
     fact_ids = [f.entry_id for f in dual.facts]
-    assert len(fact_ids) == len(set(fact_ids)), (
-        f"Duplicate fact entry_ids: {fact_ids}"
-    )
+    assert len(fact_ids) == len(set(fact_ids)), f"Duplicate fact entry_ids: {fact_ids}"
 
 
 def test_search_dual_doc_dedup(seeded_dual_db):
@@ -284,9 +296,7 @@ def test_search_dual_doc_dedup(seeded_dual_db):
     dual: DualCorpusResult = result.value
 
     doc_ids = [d.id for d in dual.documents if d.id is not None]
-    assert len(doc_ids) == len(set(doc_ids)), (
-        f"Duplicate doc ids: {doc_ids}"
-    )
+    assert len(doc_ids) == len(set(doc_ids)), f"Duplicate doc ids: {doc_ids}"
 
 
 def test_search_dual_with_project_filter(seeded_dual_db):

@@ -8,8 +8,8 @@ Five tools are available:
 
 | Tool | Purpose |
 |---|---|
-| `kms_vault_info` | Discover the vault landscape: projects, domains, inbox stats, global context. |
-| `kms_search` | Find relevant documents by query. Returns context blocks + result cards. |
+| `kms_vault_info` | Discover the knowledge base: entity map grouped by dimension, orientation facts, inbox stats. |
+| `kms_search` | Search facts and documents. Returns orientation context + fact results + document cards. |
 | `kms_inspect` | Drill into documents by integer id. Three modes: summary, text, file. |
 | `kms_write` | Save a new insight from the conversation into the knowledge system. |
 | `kms_correct` | Fix an existing knowledge entry by id. Confirm-first workflow. |
@@ -59,14 +59,10 @@ When you call `kms_inspect` with `mode="text"` on a binary document (PDF, DOCX, 
 - `kms_correct` requires the entry's integer `entry_id`.
 - `kms_write` returns a `document_id` on success.
 
-## Hash-dedup
+## Identity dedup
 
-The server tracks which context hashes you have already seen this conversation. You will not receive the same context block twice. You do not need to track this yourself.
+The server tracks which fact entry IDs and document IDs you have already seen this conversation. You will not receive the same fact or document twice. You do not need to track this yourself.
 
 ## Refinement is expected
 
 Your first search may be broad to discover what exists. Narrow with filters on the second call. This is the intended usage pattern — the server is designed for iterative refinement.
-
-## Broad queries skip context
-
-Queries that match many documents (low frequency signal) automatically skip context injection. Use `include_context=true` on `kms_search` to force context re-injection when you need it.

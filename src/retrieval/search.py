@@ -76,7 +76,7 @@ def search_dual(
     query: str,
     *,
     max_results: int = 20,
-    keyword_weight: float = 0.5,
+    keyword_weight: float | None = None,
     project: str | None = None,
     date_range: tuple[datetime, datetime] | tuple[datetime, None] | None = None,
     location: str | None = None,

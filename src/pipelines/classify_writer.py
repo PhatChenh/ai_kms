@@ -14,7 +14,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from core.config import ConfidenceBand
+from core.config import ConfidenceBand, CONFIG
 from core.result import Failure, Result, Success
 
 _writer_log = logging.getLogger(__name__)
@@ -46,13 +46,13 @@ def _merge_reasoning(existing: str, new: str) -> str:
     return new if new else existing
 
 
-def _should_overwrite(existing_entry) -> bool:
+def _should_overwrite(existing_entry, *, threshold: float) -> bool:
     """Decision point for whether classify may overwrite an existing entry.
 
+    Phase 10: trust_score > threshold -> False (write competing new entry instead).
     Phase 9: always True (current behavior).
-    Phase 10: trust_score > 0.5 -> False (write conflicting new entry instead).
     """
-    return True
+    return existing_entry.trust_score <= threshold
 
 
 def _find_twin(
@@ -67,6 +67,52 @@ def _find_twin(
         if t.status != "retired" and t.dimension == dimension and t.tag == tag:
             return Success(t.id)
     return Success(None)
+
+
+def _insert_competing(
+    fact: dict,
+    dimension: str,
+    doc_id: int,
+    protected_id: int,
+    protected_trust: float,
+    *,
+    band: ConfidenceBand | None,
+    db_path: Path | None,
+    summary: WriteSummary,
+    ke_upsert,
+    KnowledgeEntry,
+) -> bool:
+    """Insert a competing pending entry when overwrite is blocked.
+
+    Returns True if the caller should ``continue`` (skip the normal upsert).
+    """
+    competing = KnowledgeEntry(
+        dimension=dimension,
+        entity=fact.get("entity", ""),
+        tag=fact.get("tag", ""),
+        fact=fact.get("fact", ""),
+        confidence=float(fact.get("confidence", 0.5)),
+        sources=[str(doc_id)],
+        reasoning=fact.get("reason", ""),
+        trust_score=0.5,
+    )
+    comp_result = ke_upsert(competing, status="pending", band=band, db_path=db_path)
+    if isinstance(comp_result, Failure):
+        summary.clean = False
+        _writer_log.warning(
+            "write_entries overwrite_blocked competing insert failed protected_id=%s error=%s",
+            protected_id,
+            comp_result.error,
+        )
+    else:
+        _writer_log.info(
+            "overwrite_blocked protected_id=%s trust=%.2f threshold=%.2f new_pending_id=%s",
+            protected_id,
+            protected_trust,
+            CONFIG.main.self_learning.overwrite_trust_threshold,
+            comp_result.value,
+        )
+    return True
 
 
 def write_entries(
@@ -194,6 +240,9 @@ def write_entries(
             existing_reasoning: str = (
                 row["reasoning"] if "reasoning" in row.keys() else ""
             )
+            existing_trust: float = (
+                row["trust_score"] if "trust_score" in row.keys() else 0.5
+            )
 
             entry = KnowledgeEntry(
                 id=ref_id,
@@ -204,14 +253,28 @@ def write_entries(
                 confidence=float(fact.get("confidence", 0.5)),
                 sources=_merge_sources(existing_sources, doc_id),
                 reasoning=_merge_reasoning(existing_reasoning, fact.get("reason", "")),
+                trust_score=existing_trust,
             )
 
             status = _compute_status(float(fact.get("confidence", 0.5)), band)
 
             # Phase 10 seam — check if overwrite is permitted
-            if not _should_overwrite(entry):
-                # Phase 10: would write conflicting new entry instead
-                pass  # Phase 9: always overwrites
+            if not _should_overwrite(
+                entry, threshold=CONFIG.main.self_learning.overwrite_trust_threshold
+            ):
+                _insert_competing(
+                    fact,
+                    dimension,
+                    doc_id,
+                    ref_id,
+                    entry.trust_score,
+                    band=band,
+                    db_path=db_path,
+                    summary=summary,
+                    ke_upsert=ke_upsert,
+                    KnowledgeEntry=KnowledgeEntry,
+                )
+                continue
 
             up_result = ke_upsert(entry, status=status, band=band, db_path=db_path)
             if isinstance(up_result, Failure):
@@ -245,7 +308,7 @@ def write_entries(
                     with get_connection(db_path, readonly=True) as conn:
                         conn.row_factory = _sqlite3.Row
                         twin_row = conn.execute(
-                            "SELECT sources, reasoning FROM knowledge_entries WHERE id = ?",
+                            "SELECT sources, reasoning, trust_score FROM knowledge_entries WHERE id = ?",
                             (twin_id,),
                         ).fetchone()
                 except _sqlite3.Error:
@@ -253,10 +316,16 @@ def write_entries(
 
                 existing_sources: list[str] = []
                 existing_reasoning: str = ""
+                existing_trust: float = 0.5
                 if twin_row:
                     if twin_row["sources"]:
                         existing_sources = json.loads(twin_row["sources"])
                     existing_reasoning = twin_row["reasoning"] or ""
+                    existing_trust = (
+                        twin_row["trust_score"]
+                        if "trust_score" in twin_row.keys()
+                        else 0.5
+                    )
 
                 twin_entry = KnowledgeEntry(
                     id=twin_id,
@@ -269,14 +338,29 @@ def write_entries(
                     reasoning=_merge_reasoning(
                         existing_reasoning, fact.get("reason", "")
                     ),
+                    trust_score=existing_trust,
                 )
 
                 status = _compute_status(confidence, band)
 
                 # Phase 10 seam — check if overwrite is permitted
-                if not _should_overwrite(twin_entry):
-                    # Phase 10: would write conflicting new entry instead
-                    pass  # Phase 9: always overwrites
+                if not _should_overwrite(
+                    twin_entry,
+                    threshold=CONFIG.main.self_learning.overwrite_trust_threshold,
+                ):
+                    _insert_competing(
+                        fact,
+                        dimension,
+                        doc_id,
+                        twin_id,
+                        twin_entry.trust_score,
+                        band=band,
+                        db_path=db_path,
+                        summary=summary,
+                        ke_upsert=ke_upsert,
+                        KnowledgeEntry=KnowledgeEntry,
+                    )
+                    continue
 
                 up_result = ke_upsert(
                     twin_entry, status=status, band=band, db_path=db_path

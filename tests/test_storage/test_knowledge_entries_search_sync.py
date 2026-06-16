@@ -57,7 +57,7 @@ def _get_embedding_blob(db_path, entry_id: int) -> bytes | None:
 # ---------------------------------------------------------------------------
 
 
-def test_upsert_insert_populates_facts_fts(tmp_path):
+def test_upsert_insert_populates_facts_fts(tmp_path, mock_embedder_1024):
     """After upsert(new_entry), facts_fts contains the entity+fact and is MATCHable."""
     db_path = tmp_path / "kb.db"
     init_db(db_path)
@@ -86,7 +86,7 @@ def test_upsert_insert_populates_facts_fts(tmp_path):
     assert entry_id in matched, f"entry_id {entry_id} not found via MATCH 'Engineering'"
 
 
-def test_upsert_insert_populates_facts_vec(tmp_path):
+def test_upsert_insert_populates_facts_vec(tmp_path, mock_embedder_1024):
     """After upsert(new_entry), facts_vec has an embedding of correct dimension."""
     db_path = tmp_path / "kb.db"
     init_db(db_path)
@@ -106,15 +106,15 @@ def test_upsert_insert_populates_facts_vec(tmp_path):
     # facts_vec should have exactly 1 row
     assert _count_facts_vec(db_path, entry_id) == 1
 
-    # Embedding blob should be 384 float32s = 1536 bytes
+    # Embedding blob should be 1024 float32s = 4096 bytes
     blob = _get_embedding_blob(db_path, entry_id)
     assert blob is not None
-    # Each float32 is 4 bytes; 384 * 4 = 1536
-    assert len(blob) == 384 * 4, f"Expected 1536 bytes, got {len(blob)}"
+    # Each float32 is 4 bytes; 1024 * 4 = 4096
+    assert len(blob) == 1024 * 4, f"Expected 4096 bytes, got {len(blob)}"
 
-    # Verify we can unpack as 384 float32s
-    floats = struct.unpack(f"{384}f", blob)
-    assert len(floats) == 384
+    # Verify we can unpack as 1024 float32s
+    floats = struct.unpack(f"{1024}f", blob)
+    assert len(floats) == 1024
     # Embedding should not be all zeros (sanity check)
     assert any(f != 0.0 for f in floats), "Embedding appears to be all zeros"
 
@@ -124,7 +124,7 @@ def test_upsert_insert_populates_facts_vec(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_upsert_update_syncs_facts_fts(tmp_path):
+def test_upsert_update_syncs_facts_fts(tmp_path, mock_embedder_1024):
     """After upsert(existing_entry_with_changed_fact), old text gone, new present."""
     db_path = tmp_path / "kb.db"
     init_db(db_path)
@@ -166,7 +166,7 @@ def test_upsert_update_syncs_facts_fts(tmp_path):
     assert entry_id in _fts_match(db_path, "Alice")
 
 
-def test_upsert_update_syncs_facts_vec(tmp_path):
+def test_upsert_update_syncs_facts_vec(tmp_path, mock_embedder_1024):
     """After upsert(existing_entry), facts_vec still has exactly 1 row and valid blob."""
     db_path = tmp_path / "kb.db"
     init_db(db_path)
@@ -198,12 +198,10 @@ def test_upsert_update_syncs_facts_vec(tmp_path):
 
     new_blob = _get_embedding_blob(db_path, entry_id)
     assert new_blob is not None
-    assert len(new_blob) == 384 * 4
+    assert len(new_blob) == 1024 * 4
 
     # Blob should be different (different fact text → different embedding)
-    assert new_blob != old_blob, (
-        "Embedding should change when fact text changes"
-    )
+    assert new_blob != old_blob, "Embedding should change when fact text changes"
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +209,7 @@ def test_upsert_update_syncs_facts_vec(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_retire_removes_from_facts_fts(tmp_path):
+def test_retire_removes_from_facts_fts(tmp_path, mock_embedder_1024):
     """After retire(entry_id), facts_fts has no rows for that id."""
     db_path = tmp_path / "kb.db"
     init_db(db_path)
@@ -247,7 +245,7 @@ def test_retire_removes_from_facts_fts(tmp_path):
     )
 
 
-def test_retire_removes_from_facts_vec(tmp_path):
+def test_retire_removes_from_facts_vec(tmp_path, mock_embedder_1024):
     """After retire(entry_id), facts_vec has no rows for that id."""
     db_path = tmp_path / "kb.db"
     init_db(db_path)
@@ -276,7 +274,7 @@ def test_retire_removes_from_facts_vec(tmp_path):
     assert _get_embedding_blob(db_path, entry_id) is None
 
 
-def test_retire_nonexistent_does_not_crash(tmp_path):
+def test_retire_nonexistent_does_not_crash(tmp_path, mock_embedder_1024):
     """retire() on a nonexistent id is still a success (rowcount=0), no crash."""
     db_path = tmp_path / "kb.db"
     init_db(db_path)
@@ -295,7 +293,7 @@ def test_retire_nonexistent_does_not_crash(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_upsert_multiple_entries_independent_fts_rows(tmp_path):
+def test_upsert_multiple_entries_independent_fts_rows(tmp_path, mock_embedder_1024):
     """Each inserted entry gets its own independent facts_fts + facts_vec rows."""
     db_path = tmp_path / "kb.db"
     init_db(db_path)
@@ -321,8 +319,8 @@ def test_upsert_multiple_entries_independent_fts_rows(tmp_path):
     # Each has exactly 1 vec row with correct dimension
     assert _count_facts_vec(db_path, id1) == 1
     assert _count_facts_vec(db_path, id2) == 1
-    assert len(_get_embedding_blob(db_path, id1)) == 384 * 4
-    assert len(_get_embedding_blob(db_path, id2)) == 384 * 4
+    assert len(_get_embedding_blob(db_path, id1)) == 1024 * 4
+    assert len(_get_embedding_blob(db_path, id2)) == 1024 * 4
 
     # MATCH on "Fact" finds both entries (both contain "Fact")
     matched = _fts_match(db_path, "Fact")
@@ -374,6 +372,7 @@ def test_upsert_insert_succeeds_when_embedding_fails(tmp_path, monkeypatch):
 
     # Fact is in knowledge_entries
     from storage.knowledge_entries import query_by_dimension
+
     entries = query_by_dimension("people", db_path=db_path)
     assert entries.is_success()
     assert len(entries.value) == 1
@@ -384,7 +383,9 @@ def test_upsert_insert_succeeds_when_embedding_fails(tmp_path, monkeypatch):
     assert entry_id not in _fts_match(db_path, "Engineering")
 
 
-def test_upsert_update_succeeds_when_embedding_fails(tmp_path, monkeypatch):
+def test_upsert_update_succeeds_when_embedding_fails(
+    tmp_path, monkeypatch, mock_embedder_1024
+):
     """When _embed_fact returns Failure on update, the main row updates
     but search tables are left unchanged (stale index preserved)."""
     db_path = tmp_path / "kb.db"
@@ -393,7 +394,7 @@ def test_upsert_update_succeeds_when_embedding_fails(tmp_path, monkeypatch):
 
     from storage import knowledge_entries as ke
 
-    # 1. First upsert with real embedding (so search tables are populated)
+    # 1. First upsert with mock embedding (so search tables are populated)
     entry = KnowledgeEntry(
         dimension="people",
         entity="Alice",
@@ -412,6 +413,7 @@ def test_upsert_update_succeeds_when_embedding_fails(tmp_path, monkeypatch):
     # 2. Update with embedding failure
     def _fail_embed(_fact_text: str):
         from core.result import Failure as F
+
         return F("oom", recoverable=True, context={})
 
     monkeypatch.setattr(ke, "_embed_fact", _fail_embed)
@@ -424,6 +426,7 @@ def test_upsert_update_succeeds_when_embedding_fails(tmp_path, monkeypatch):
 
     # Main row should be updated
     from storage.knowledge_entries import query_by_dimension
+
     entries = query_by_dimension("people", db_path=db_path)
     assert entries.is_success()
     assert entries.value[0].fact == "Updated Fact"

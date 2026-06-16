@@ -52,6 +52,10 @@ async def write_from_chat(
         try:
             classify_queue.put_nowait(doc_id)
         except Exception:
-            pass
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "classify_queue.put_nowait failed doc_id=%s", doc_id
+            )
 
     return Success(doc_id)
