@@ -1,0 +1,145 @@
+---
+import '../styles/global.css';
+
+const features = [
+  {
+    number: '01',
+    title: 'Auto-Capture',
+    desc: 'Drop anything — notes, PDFs, emails, web articles, YouTube transcripts. The AI reads it, summarizes it, and stores it.',
+    usecases: [
+      {
+        title: 'Inbox Zero',
+        desc: 'Drop a meeting transcript — the AI extracts decisions and action items in seconds. No more "I\'ll file this later."',
+      },
+      {
+        title: 'Any Format, One Place',
+        desc: 'PDFs, DOCX, images with vision AI, web links — everything becomes searchable text in your knowledge base.',
+      },
+      {
+        title: 'Works While You Sleep',
+        desc: 'The daemon watches your folders and processes new files automatically. You wake up to an organized knowledge base.',
+      },
+    ],
+  },
+  {
+    number: '02',
+    title: 'Knowledge Extraction',
+    desc: 'The AI reads across everything you’ve captured and builds a structured knowledge base — who’s who, what’s happening, what was decided.',
+    usecases: [
+      {
+        title: 'People & Relationships',
+        desc: 'Tracks roles, preferences, and context about everyone you work with. Know who to talk to without remembering every detail.',
+      },
+      {
+        title: 'Project Status & Blockers',
+        desc: 'Extracts deadlines, milestones, and decisions from daily updates. See project health at a glance.',
+      },
+      {
+        title: 'Cross-Document Synthesis',
+        desc: 'Connects facts from different sources — email says X, meeting notes say Y — surfaces contradictions you\'d miss.',
+      },
+    ],
+  },
+  {
+    number: '03',
+    title: 'Hybrid Search',
+    desc: 'Ask in plain English. Finds the relevant notes even when you don’t remember the exact words — meaning, not keywords.',
+    usecases: [
+      {
+        title: 'Meaning, Not Keywords',
+        desc: 'Semantic search finds "managing pushback in meetings" when you search "stakeholder resistance." It understands intent.',
+      },
+      {
+        title: 'Three-Tier Results',
+        desc: 'Quick summary first (cheap), snippet view second (medium), full content on demand (deep). Always start cheap.',
+      },
+      {
+        title: 'Chat With Your Knowledge',
+        desc: 'Claude Desktop connects via MCP — search and retrieve context right inside your conversation. No tab-switching.',
+      },
+    ],
+  },
+  {
+    number: '04',
+    title: 'Self-Learning & Briefings',
+    desc: 'The AI gets smarter the more you use it. Correct a fact once — it learns. Wake up to a daily briefing that connects the dots.',
+    usecases: [
+      {
+        title: 'Learn From Corrections',
+        desc: 'Fix an AI extraction once, and future extractions improve automatically. Every correction trains the system.',
+      },
+      {
+        title: 'Daily Briefing',
+        desc: 'Morning digest: what was captured, what\'s new, what needs your attention. Start the day informed in 30 seconds.',
+      },
+      {
+        title: 'Weekly Synthesis',
+        desc: 'Recurring themes, contradictions, and action items you might have missed. The AI connects dots you didn\'t see.',
+      },
+    ],
+  },
+];
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="generator" content={Astro.generator} />
+    <title>AI-KMS — Your knowledge, automated</title>
+  </head>
+  <body>
+    <!-- Nav -->
+    <nav class="nav">
+      <div class="nav-inner">
+        <span class="nav-logo">AI-KMS</span>
+        <div class="nav-links">
+          {features.map((f) => (
+            <a href={`#feature-${f.number}`}>{f.title}</a>
+          ))}
+        </div>
+      </div>
+    </nav>
+
+    <!-- Hero -->
+    <section class="hero">
+      <span class="hero-badge">Knowledge Management · AI-Powered</span>
+      <h1 class="hero-title">Your knowledge,<br />automated</h1>
+      <p class="hero-subtitle">
+        Drop files. Get answers. The AI does the work — you do the judgment.
+      </p>
+      <div class="hero-cta">
+        <a href="#feature-01" class="btn btn-primary">See how it works</a>
+        <a href="#feature-04" class="btn btn-outline">All features</a>
+      </div>
+    </section>
+
+    <!-- Feature blocks -->
+    {features.map((f) => (
+      <section class="feature" id={`feature-${f.number}`}>
+        <div class="feature-top">
+          <div class="feature-top-text">
+            <span class="feature-number">{f.number}</span>
+            <h2 class="feature-title">{f.title}</h2>
+            <p class="feature-desc">{f.desc}</p>
+          </div>
+          <div class="feature-main-demo">core demo — placeholder</div>
+        </div>
+        <div class="feature-usecases">
+          {f.usecases.map((u) => (
+            <div class="usecase-box">
+              <h3 class="usecase-title">{u.title}</h3>
+              <p class="usecase-desc">{u.desc}</p>
+              <div class="usecase-demo">demo — placeholder</div>
+            </div>
+          ))}
+        </div>
+      </section>
+    ))}
+
+    <!-- Footer -->
+    <footer class="footer">
+      <div class="footer-inner">AI-KMS — structure-only scaffold</div>
+    </footer>
+  </body>
+</html>
