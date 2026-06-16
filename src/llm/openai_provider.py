@@ -39,6 +39,7 @@ class OpenAIProvider(LLMProvider):
             api_key=api_key,
             base_url=config.base_url,
             timeout=config.timeout,
+            max_retries=config.max_retries,
         )
         if task == "vision":
             self._model = config.vision_model
@@ -93,7 +94,9 @@ class OpenAIProvider(LLMProvider):
                 context={"provider": "openai_compat", "model": self._model},
             )
 
-    async def describe_image(self, system: str, user: str, image_bytes: bytes, mime_type: str) -> Result[LLMResponse]:
+    async def describe_image(
+        self, system: str, user: str, image_bytes: bytes, mime_type: str
+    ) -> Result[LLMResponse]:
         """Describe an image using a vision-capable model.
 
         Base64-encodes the image bytes and sends an image_url content block
