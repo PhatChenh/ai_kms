@@ -21,8 +21,8 @@ from storage.documents import upsert_from_upload
 
 
 def _fake_embedding() -> bytes:
-    """384 float32 values as a blob (1536 bytes)."""
-    return struct.pack("f" * 384, *([0.1] * 384))
+    """1024 float32 values as a blob (4096 bytes)."""
+    return struct.pack("f" * 1024, *([0.1] * 1024))
 
 
 def _seed(
@@ -149,7 +149,7 @@ def test_rename_preserves_embedding_and_copies_fts(db):
     # Snapshot the embedding before rename.
     old_embedding = _get_embedding(db, "inbox/old.md")
     assert old_embedding is not None
-    assert len(old_embedding) == 1536
+    assert len(old_embedding) == 4096
 
     r = rename("inbox/old.md", "Projects/A/new.md", db_path=db)
     assert r.is_success()

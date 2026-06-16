@@ -1,9 +1,21 @@
 # STATE.md — Cross-Session Project State
 _Created: 2026-05-09_
-_Last updated: 2026-06-15 (Phase 8 Issue Resolution COMPLETE: 20 issues resolved, classify decomposed, 5 items deferred to TD-P9-*) · 2026-06-15 (Phase 8 Slice B — ALL 10 PHASES COMPLETE, ~216 new tests) · 2026-06-14 (Phase 8 Slice A — ALL 7 PHASES COMPLETE, merged to cloud-native)_
+_Last updated: 2026-06-16 (Phase 10 Self-Learning & Reports — build-pipeline COMPLETE: design→spec→research→plan) · 2026-06-15 (Phase 8 Issue Resolution COMPLETE) · 2026-06-15 (Phase 8 Slice B COMPLETE) · 2026-06-14 (Phase 8 Slice A COMPLETE)_
 
 ## Current Position
-**Phase**: Phase 8 (Classify Redesign) — **ALL COMPLETE.** Slice A (infrastructure, no LLM) ✅ 2026-06-14. Slice B (extraction, LLM) ✅ 2026-06-15. **Issue Resolution ✅ 2026-06-15:** 20 issues from nuclear review resolved across 4 phases; `classify.py` decomposed from 984→222 lines into 4 modules (`classify.py`, `classify_extract.py`, `classify_writer.py`, `classify_orchestrator.py`); `documents_classify.py` extracted (6 functions, 194 lines); 5 perf/cleanup items logged as tech debt (TD-P9-PERF-01/02/03, TD-P9-CLEAN-01/02) for Phase 9 intake. **Next: Phase 9 (MCP Adaptation) or Phase 6 Slice B (installable daemon).** (Prior: Phase 6 Daemon Slice A1+A2 COMPLETE; Slice B plan-written. Phase 7A+7B Capture Refactor COMPLETE. Phase 5 Slice 1+2 COMPLETE.)
+**Phase**: Phase 9 (MCP Adaptation) — **DONE** (implemented, merged to cloud-native). Phase 10 (Self-Learning & Reports Backend) — **PLAN READY** (2026-06-16). Full build-pipeline complete: grill→design→spec→research→plan. 10 implementation phases, 20 behavior IDs (P10-SL-01 through P10-SL-20), 3 new tables (fact_corrections, reports, entry_comments), 2 new MCP tools (kms_comment, kms_reports), 4 new files (trust.py, few_shot.py, _comment.py, reports.py). Research: 7 validated, 2 invalidated (A5 retire mechanism, A6 method name), 1 critical gap (upsert missing trust_score in SQL). All corrections incorporated into plan. **Next: implement Phase 10.** (Prior: Phase 8 ALL COMPLETE. Phase 6 Daemon Slice A1+A2 COMPLETE; Slice B plan-written. Phase 7A+7B Capture Refactor COMPLETE. Phase 5 Slice 1+2 COMPLETE.)
+
+**[Phase 10 — Self-Learning & Reports Backend — PLAN READY 2026-06-16]** _(build-pipeline: grill→design→spec→research→plan complete)_:
+- [x] Grill — `docs/0_draft/phase10/phase10_self_learning_grill.md`
+- [x] Design — `docs/1_design/phase10_self_learning.md` (567 lines, 5 design decisions, ADR-0021)
+- [x] Spec — `docs/2_specs/phase10_self_learning.md` (579 lines, 16 components across 2 slices, all 20 behaviors mapped, 9 assumptions)
+- [x] Research — `docs/3_research/phase10_self_learning.md` (7 validated, 2 invalidated, 1 critical gap)
+- [x] Plan — `docs/4_plans/phase10_self_learning.md` (1550 lines, 10 phases)
+- **Key decisions:** separate kms_comment tool (not kms_correct op); few-shot cap=5 hardcoded initially; structural conflict detection (not semantic); trust-floor filter in `query_ranked_for_orientation()` not context.py; upsert trust_score fix as Phase 1 prerequisite
+- **Research corrections applied:** A5 (retire helper call not inline SQL), A6 (method name + SQL location), SR-1 (upsert missing trust_score), _should_overwrite pass-body gap
+- **New files planned:** `src/pipelines/trust.py`, `src/pipelines/few_shot.py`, `src/mcp_server/_comment.py`, `src/pipelines/reports.py`, `src/config/reports.yaml`, `src/storage/migrations/013_self_learning_tables.sql`
+- **New MCP tools:** `kms_comment`, `kms_reports`
+- [ ] Implementation — 10 phases pending
 
 **[Phase 8 Issue Resolution — ✅ COMPLETE 2026-06-15]** _(20 issues from nuclear review resolved across 4 phases)_:
 - [x] Phase 1 — Quick wins: C4 (nested-dict config default), M10 (log format), L1-L4 (docstrings), M9 (constant rename)

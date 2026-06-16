@@ -3,21 +3,61 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import numpy as np
+
 from core.result import Failure, Result, Success
 from storage.db import get_connection
 
 _model = None
 
 
+class _APIEmbedder:
+    """Thin wrapper around OpenAI-compat embeddings endpoint.
+
+    Exposes ``.encode(text) -> np.ndarray`` so callers that previously
+    used a SentenceTransformer model need zero changes.
+    """
+
+    def __init__(self, client, model_name: str) -> None:
+        self._client = client
+        self._model_name = model_name
+
+    def encode(self, text: str) -> np.ndarray:
+        resp = self._client.embeddings.create(model=self._model_name, input=text)
+        return np.array(resp.data[0].embedding, dtype=np.float32)
+
+
 def _get_model():
-    """Lazy-load SentenceTransformer from config model name (C-17 compliant)."""
+    """Lazy-load the embedding model.
+
+    When ``providers.embeddings == "openai"``, uses the OpenAI-compat API
+    (greennode endpoint).  Otherwise falls back to local SentenceTransformer.
+    """
     global _model
     if _model is None:
         from core.config import CONFIG  # noqa: C0415  -- lazy import (C-17)
-        from sentence_transformers import SentenceTransformer
 
-        model_name = CONFIG.main.search.embedding_model
-        _model = SentenceTransformer(model_name)
+        provider_name = CONFIG.main.providers.for_task("embeddings")
+        if provider_name == "openai":
+            import os
+
+            import openai  # noqa: C0415
+
+            compat_cfg = CONFIG.main.openai_compat
+            api_key = os.environ.get(compat_cfg.api_key_env, "")
+            _model = _APIEmbedder(
+                client=openai.OpenAI(
+                    api_key=api_key,
+                    base_url=compat_cfg.base_url,
+                    timeout=compat_cfg.timeout,
+                ),
+                model_name=compat_cfg.embedding_model,
+            )
+        else:
+            from sentence_transformers import SentenceTransformer  # noqa: C0415
+
+            model_name = CONFIG.main.search.embedding_model
+            _model = SentenceTransformer(model_name)
     return _model
 
 
@@ -49,7 +89,7 @@ def index_embedding(
 ) -> Result[None]:
     """Store a semantic embedding for a note in the embeddings_vec table.
 
-    Lazy-loads SentenceTransformer on first call.  Failures are logged but
+    Lazy-loads the embedding model on first call.  Failures are logged but
     never propagate -- callers treat this as best-effort.
     """
     try:

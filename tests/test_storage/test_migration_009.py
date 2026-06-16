@@ -35,7 +35,7 @@ def test_migration_009_sets_schema_version_to_9(tmp_path):
 
     conn = sqlite3.connect(str(db_path))
     version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-    assert version == 12, f"Expected schema_version 12, got {version}"
+    assert version == 14, f"Expected schema_version 12, got {version}"
     conn.close()
 
 

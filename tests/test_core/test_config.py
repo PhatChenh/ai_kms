@@ -750,23 +750,20 @@ class TestMCPConfig:
         """Without explicit config, context_injection has documented defaults."""
         m = MCPConfig()
         ci = m.context_injection
-        assert ci.frequency_threshold == pytest.approx(0.3)
-        assert ci.max_context_files == 3
-        assert ci.include_context_yaml is True
+        assert ci.max_entities_per_dimension == 15
+        assert ci.max_orientation_facts_per_dimension == 5
 
     def test_context_injection_overrides(self):
         """Overridden values in YAML are reflected on the model."""
         m = MCPConfig(
             context_injection={
-                "frequency_threshold": 0.5,
-                "max_context_files": 7,
-                "include_context_yaml": False,
+                "max_entities_per_dimension": 10,
+                "max_orientation_facts_per_dimension": 3,
             }
         )
         ci = m.context_injection
-        assert ci.frequency_threshold == pytest.approx(0.5)
-        assert ci.max_context_files == 7
-        assert ci.include_context_yaml is False
+        assert ci.max_entities_per_dimension == 10
+        assert ci.max_orientation_facts_per_dimension == 3
 
 
 class TestSelfLearningConfig:
@@ -858,6 +855,7 @@ class TestClassifyConfig:
         """max_retries=0 rejected by ge=1 validator."""
         import pytest as pt
         from pydantic import ValidationError
+
         with pt.raises(ValidationError):
             ClassifyConfig(max_retries=0)
 
@@ -1209,7 +1207,12 @@ class TestConfigSingleton:
         assert self.cfg.main.env in ("dev", "prod", "test")
 
     def test_default_provider_for_classify_is_valid(self):
-        assert self.cfg.main.providers.classify in ("claude", "ollama", "claude_cli")
+        assert self.cfg.main.providers.classify in (
+            "claude",
+            "ollama",
+            "claude_cli",
+            "openai",
+        )
 
     def test_routing_pipelines_is_dict(self):
         assert isinstance(self.cfg.routing.pipelines, dict)

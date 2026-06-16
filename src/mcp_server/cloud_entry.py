@@ -121,6 +121,12 @@ def _wrap_lifespan(app: Starlette, db_path: Path | None) -> None:
         app_ref.state.classify_queue = (
             queue  # COUPLING: consumed by api.py upload_handler
         )
+        # Also publish on server module so per-session MCP lifespan can
+        # forward it to tool handlers via lifespan_context (C1 fix).
+        import mcp_server.server as _srv
+
+        _srv._classify_queue = queue
+        _srv._db_path = db_path
         worker = asyncio.create_task(consumer(queue, db_path, CONFIG.main))
         sweep_worker = asyncio.create_task(
             _retrieval_sweep_worker(db_path, CONFIG.main)
@@ -222,5 +228,5 @@ def _obscure(text: str) -> str:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(build_app(), host="0.0.0.0", port=8080)
 
+    uvicorn.run(build_app(), host="0.0.0.0", port=8080)

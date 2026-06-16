@@ -18,6 +18,36 @@ _log = logging.getLogger(__name__)
 _INBOX_LIKE_PATTERN = "inbox/%"
 
 
+def _query_correction_counts(
+    entry_ids: list[int], db_path: Path | None = None
+) -> dict[int, int]:
+    """Batch-query correction counts for volatility flagging (best-effort)."""
+    if not entry_ids:
+        return {}
+    try:
+        from storage.db import get_connection
+
+        with get_connection(db_path, readonly=True) as conn:
+            placeholders = ", ".join("?" for _ in entry_ids)
+            rows = conn.execute(
+                f"SELECT entry_id, COUNT(*) as cnt FROM fact_corrections WHERE entry_id IN ({placeholders}) GROUP BY entry_id",
+                entry_ids,
+            ).fetchall()
+            return {r[0]: r[1] for r in rows}
+    except Exception:
+        return {}
+
+
+def _format_fact_bullet(
+    entry, correction_counts: dict[int, int], volatility_threshold: int
+) -> str:
+    """Format a single fact bullet, appending volatility flag if needed."""
+    bullet = f"- [{entry.entity}] {entry.fact} (confidence: {entry.confidence})"
+    if correction_counts.get(entry.id, 0) >= volatility_threshold:
+        bullet += " [frequently corrected]"
+    return bullet
+
+
 class ContextInjectionEngine:
     """Per-conversation engine that builds orientation context from DB.
 
@@ -26,9 +56,10 @@ class ContextInjectionEngine:
     repeat the same context (identity-based dedup, not hash-based).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, db_path: Path | None = None) -> None:
         self._seen_fact_ids: set[int] = set()
         self._seen_doc_ids: set[int] = set()
+        self._db_path = db_path
 
     # ======================================================================
     # Identity dedup memory
@@ -39,8 +70,18 @@ class ContextInjectionEngine:
         return entry_id in self._seen_fact_ids
 
     def record_fact_seen(self, entry_id: int) -> None:
-        """Mark a knowledge entry as injected this conversation."""
+        """Mark a knowledge entry as injected this conversation.
+
+        Also bumps retrieval_score (P9-MCP-12) so frequently-surfaced
+        facts rank higher in future orientation queries.
+        """
         self._seen_fact_ids.add(entry_id)
+        try:
+            from storage.knowledge_entries import bump_retrieval_score
+
+            bump_retrieval_score(entry_id, db_path=self._db_path)
+        except Exception:
+            _log.debug("bump_retrieval_score failed entry_id=%s", entry_id)
 
     def is_doc_seen(self, doc_id: int) -> bool:
         """Return True if this document was already surfaced."""
@@ -262,9 +303,7 @@ class ContextInjectionEngine:
     # Orientation facts
     # ======================================================================
 
-    def _build_orientation_facts(
-        self, db_path: Path | None = None
-    ) -> Result[str]:
+    def _build_orientation_facts(self, db_path: Path | None = None) -> Result[str]:
         """Build orientation fact bullets for each dimension.
 
         Uses 4-key ranking from query_ranked_for_orientation.
@@ -276,7 +315,9 @@ class ContextInjectionEngine:
             )
             from core.config import CONFIG  # noqa: C0415
 
-            max_per_dim = CONFIG.main.mcp.context_injection.max_orientation_facts_per_dimension
+            max_per_dim = (
+                CONFIG.main.mcp.context_injection.max_orientation_facts_per_dimension
+            )
 
             from storage.db import get_connection  # noqa: C0415
 
@@ -291,17 +332,25 @@ class ContextInjectionEngine:
                 match query_ranked_for_orientation(
                     dimension=dim,
                     limit=max_per_dim,
+                    min_trust=CONFIG.main.self_learning.min_trust_for_context,
                     db_path=db_path,
                 ):
                     case Success(value=entries):
                         if not entries:
                             continue
+                        entry_ids = [e.id for e in entries if e.id is not None]
+                        correction_counts = _query_correction_counts(entry_ids, db_path)
+                        volatility_threshold = (
+                            CONFIG.main.self_learning.volatility_correction_count
+                        )
+
                         lines.append(f"## {dim}")
                         for entry in entries:
                             self.record_fact_seen(entry.id)
                             lines.append(
-                                f"- [{entry.entity}] {entry.fact} "
-                                f"(confidence: {entry.confidence})"
+                                _format_fact_bullet(
+                                    entry, correction_counts, volatility_threshold
+                                )
                             )
                         lines.append("")
                     case Failure() as f:
@@ -333,7 +382,9 @@ class ContextInjectionEngine:
             )
             from core.config import CONFIG  # noqa: C0415
 
-            max_per_dim = CONFIG.main.mcp.context_injection.max_orientation_facts_per_dimension
+            max_per_dim = (
+                CONFIG.main.mcp.context_injection.max_orientation_facts_per_dimension
+            )
 
             blocks: list[dict] = []
             seen_dimensions: set[str] = set()
@@ -342,9 +393,16 @@ class ContextInjectionEngine:
                 match query_ranked_for_orientation(
                     entity=entity,
                     limit=max_per_dim,
+                    min_trust=CONFIG.main.self_learning.min_trust_for_context,
                     db_path=db_path,
                 ):
                     case Success(value=entries):
+                        entry_ids = [e.id for e in entries if e.id is not None]
+                        correction_counts = _query_correction_counts(entry_ids, db_path)
+                        volatility_threshold = (
+                            CONFIG.main.self_learning.volatility_correction_count
+                        )
+
                         by_dim: dict[str, list] = {}
                         for e in entries:
                             if e.dimension not in seen_dimensions:
@@ -357,8 +415,9 @@ class ContextInjectionEngine:
                                 if not self.is_fact_seen(entry.id):
                                     self.record_fact_seen(entry.id)
                                 lines.append(
-                                    f"- [{entry.entity}] {entry.fact} "
-                                    f"(confidence: {entry.confidence})"
+                                    _format_fact_bullet(
+                                        entry, correction_counts, volatility_threshold
+                                    )
                                 )
                             blocks.append(
                                 {

@@ -8,6 +8,9 @@ outcome then silently depends on test execution order.  This autouse fixture
 snapshots and restores both globals around every test in this package.
 """
 
+from unittest.mock import MagicMock
+
+import numpy as np
 import pytest
 
 import retrieval.embeddings as _embeddings
@@ -23,3 +26,15 @@ def _reset_retrieval_model_globals():
     finally:
         _embeddings._model = saved_model
         _reranker._reranker = saved_reranker
+
+
+@pytest.fixture()
+def mock_embedder_1024():
+    """Install a 1024-dim mock as the global embedding model and return it."""
+    rng = np.random.default_rng(42)
+    model = MagicMock()
+    model.encode.side_effect = lambda _text: rng.standard_normal(1024).astype(
+        np.float32
+    )
+    _embeddings._model = model
+    return model

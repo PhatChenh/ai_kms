@@ -311,11 +311,13 @@ class TestOrchestratorRetryPath:
         _original_extract = classify_orch_mod.extract
 
         async def spy_extract(
-            dimension, text, existing_facts, guidance, feedback, config
+            dimension, text, existing_facts, guidance, feedback, config,
+            few_shot_corrections=""
         ):
             captured_feedback.append(feedback)
             return await _original_extract(
-                dimension, text, existing_facts, guidance, feedback, config
+                dimension, text, existing_facts, guidance, feedback, config,
+                few_shot_corrections=few_shot_corrections
             )
 
         classify_orch_mod.extract = spy_extract

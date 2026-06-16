@@ -189,7 +189,7 @@ def _seed_full_db(db_path: Path) -> dict[str, str]:
 
 
 @pytest.fixture
-def seeded_db(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+def seeded_db(tmp_path: Path, mock_embedder_1024) -> tuple[Path, dict[str, str]]:
     """Temp DB with 4 fully indexed notes."""
     db_path = tmp_path / "test_search.db"
     init_db(db_path)

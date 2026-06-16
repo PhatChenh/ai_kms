@@ -2,6 +2,17 @@
 
 ## Active
 
+### TD-071 · Retired facts excluded from fact_search (intent: searchable, traceable)
+**Status:** OPEN
+**Phase:** Phase 10 follow-up — surfaced during phase10→cloud-native merge (2026-06-16).
+**Risk if triggered early:** None to correctness. Retired facts are simply not retrievable via `fact_search`, so the consuming AI / user cannot trace old knowledge once a fact is superseded.
+**What:** Owner decision at merge time: a retired fact should **stay searchable** (so users / consuming AI can trace superseded knowledge) and only be excluded from **context injection**. The merge took phase10's `retire()` (drops the `_delete_search_indexes` purge → rows survive in `facts_fts`/`facts_vec`), but `retrieval/fact_search.py` still filters `AND status != 'retired'` at the JOIN (line ~258, header line 13), so retired facts remain unsearchable. To deliver the intent: relax/parameterize the `status != 'retired'` filter in `fact_search.py` so retired facts surface in search, while keeping `mcp_server/context.py` excluding them from context injection (it already filters retired at the orientation queries). Decide how retired facts are marked in search results so they aren't mistaken for current knowledge.
+**Why deferred:** Out of scope for the merge (user in a hurry; merge-only chosen). The merge stops the index purge; making retired actually searchable is a new `fact_search` change.
+**Touches when revisited:** `src/retrieval/fact_search.py` (JOIN status filter), `src/mcp_server/context.py` (keep excluding retired). Note: `_delete_search_indexes` in `src/storage/knowledge_entries.py` is now an unused private helper (only caller was `retire()`) — remove or repurpose when revisiting.
+**Source:** phase10-self-learning → cloud-native merge, conflict ③ resolution (2026-06-16).
+
+---
+
 ### TD-062 · Reconstruct lost P6-A1 behavior-inventory entries
 **Status:** OPEN
 **Phase:** Phase 6 — before the next `update-behavior-guide` / testing-guide regeneration.

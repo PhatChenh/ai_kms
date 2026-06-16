@@ -742,7 +742,9 @@ After capture, queue the document for async classification (Phase 8).
 
 ---
 
-## Phase 8 — Classify Redesign
+## Phase 8 — Classify Redesign ✅
+
+**Status: DONE**
 
 **`DEPENDS ON: Phase 7 (Capture must populate documents.full_body) · WEIGHT: heavy · TYPE: complete rewrite`**
 
@@ -887,7 +889,8 @@ Write extracted entries to `knowledge_entries` table. Handle updates and retirem
 
 ---
 
-## Phase 9 — MCP Adaptation
+## Phase 9 — MCP Adaptation ✅
+**STATUS: DONE**
 
 **`DEPENDS ON: Phase 8 (knowledge_entries must be populated) · WEIGHT: medium · TYPE: adaptation`**
 

@@ -259,6 +259,19 @@ class ContextInjectionConfig(BaseModel):
     max_orientation_facts_per_dimension: int = Field(5, ge=1)
 
 
+class InspectConfig(BaseModel):
+    """kms_inspect text-mode cap (Phase 9)."""
+
+    max_text_refs: int = Field(5, ge=1)
+
+
+class FactSearchConfig(BaseModel):
+    """Fact search tuning (Phase 9)."""
+
+    keyword_weight: float = Field(0.5, ge=0.0, le=1.0)
+    max_results: int = Field(20, ge=1)
+
+
 class MCPConfig(BaseModel):
     """MCP server settings (Roadmap 9)."""
 
@@ -271,6 +284,8 @@ class MCPConfig(BaseModel):
     retrieval_score: "RetrievalScoreConfig" = Field(
         default_factory=lambda: RetrievalScoreConfig()
     )
+    inspect: InspectConfig = Field(default_factory=InspectConfig)
+    fact_search: FactSearchConfig = Field(default_factory=FactSearchConfig)
 
 
 class RetrievalScoreConfig(BaseModel):
@@ -281,13 +296,25 @@ class RetrievalScoreConfig(BaseModel):
 
 
 class SelfLearningConfig(BaseModel):
-    """Controls how the self-learning pipeline adjusts prompts (Roadmap 8)."""
+    """Controls how the self-learning pipeline adjusts prompts (Roadmap 8).
+
+    Phase 10 additions: trust deltas, overwrite guard threshold,
+    context injection filtering, and few-shot cap are all config-driven (C-06).
+    """
 
     enabled: bool = True
     min_evaluations: int = 20
     confidence_threshold: float = Field(0.8, ge=0.0, le=1.0)
     include_examples_in_prompt: bool = True
     max_examples: int = 5
+    # Phase 10 trust mechanics
+    trust_confirm_delta: float = Field(0.05, ge=0.0, le=1.0)
+    trust_reject_delta: float = Field(-0.10, ge=-1.0, le=0.0)
+    trust_revise_base: float = Field(0.6, ge=0.0, le=1.0)
+    overwrite_trust_threshold: float = Field(0.5, ge=0.0, le=1.0)
+    min_trust_for_context: float = Field(0.3, ge=0.0, le=1.0)
+    volatility_correction_count: int = Field(3, ge=1)
+    max_corrections_per_prompt: int = Field(5, ge=0, le=20)
 
 
 class LoggingConfig(BaseModel):
@@ -343,6 +370,7 @@ class SearchConfig(BaseModel):
     """Search/retrieval configuration. Read from config.yaml search: section."""
 
     embedding_model: str = "all-MiniLM-L6-v2"
+    embedding_dim: int = 1024
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     max_candidates: int = 20
     max_results: int = 10

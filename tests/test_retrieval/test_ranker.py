@@ -211,7 +211,7 @@ def _seed_db_for_partition_test(db_path: Path) -> tuple[str, str]:
 
 
 @pytest.fixture
-def seeded_db(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+def seeded_db(tmp_path: Path, mock_embedder_1024) -> tuple[Path, dict[str, str]]:
     """Temp DB with 3 seeded + indexed notes."""
     db_path = tmp_path / "test_ranker.db"
     init_db(db_path)
@@ -405,7 +405,7 @@ def test_rank_rrf_score_is_positive(seeded_db):
 # ---------------------------------------------------------------------------
 
 
-def test_knn_partition_property(tmp_path: Path):
+def test_knn_partition_property(tmp_path: Path, mock_embedder_1024):
     """Seed two notes: one far-but-in-set (vacation), one near-but-out-of-set
     (budget).  Query "budget" with only the far note in candidates.
     The far-but-in-set note IS returned; the near-but-out-of-set is excluded.

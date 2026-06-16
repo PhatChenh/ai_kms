@@ -48,6 +48,10 @@ system: |
   - Below 0.7: speculative — prefer a lower score over pretending certainty.
 
 user: |
+  {% if few_shot_corrections %}
+  {{ few_shot_corrections }}
+
+  {% endif %}
   Knowledge category (dimension):
   {{ dimension_guidance }}
 
@@ -71,4 +75,4 @@ user: |
   {% endif %}
 
   Respond with a JSON array only.
-variables: [document_text, dimension_guidance, existing_facts, previous_attempt_feedback]
+variables: [document_text, dimension_guidance, existing_facts, previous_attempt_feedback, few_shot_corrections]

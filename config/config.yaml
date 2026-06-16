@@ -1,5 +1,5 @@
 capture:
-  cooldown_seconds: 0 # original: 60, change for testing
+  cooldown_seconds: 60 # original: 60, change for testing
   max_urls_per_note: 3
   rename_gate:
     office_extensions: [".md", ".docx", ".xlsx", ".pptx", ".txt"]
@@ -7,9 +7,6 @@ capture:
   folder_cooldown_seconds: 5.0
   binary_settle_seconds: 5.0
   folder_max_workers: 4
-  vision:
-    describable_mime_prefixes: ["image/"]
-    max_vision_bytes: 10485760  # 10 MB
 claude:
   max_tokens: 1024
   model: claude-haiku-4-5-20251001
@@ -40,17 +37,23 @@ mcp:
   host: 0.0.0.0
   port: 3838
   context_injection:
-    frequency_threshold: 0.3
-    max_context_files: 3
-    include_context_yaml: true
+    max_entities_per_dimension: 15
+    max_orientation_facts_per_dimension: 5
+  retrieval_score:
+    decay_factor: 0.95
+    sweep_interval_hours: 24
+  inspect:
+    max_text_refs: 5
+  fact_search:
+    keyword_weight: 0.5
+    max_results: 20
 openai_compat:
-  api_key_env: FIREWORKS_API_KEY
-  base_url: https://api.fireworks.ai/inference/v1
+  api_key_env: LLM_API_KEY
+  base_url: https://maas-llm-aiplatform-hcm.api.vngcloud.vn/v1
   max_tokens: 1024
-  model: accounts/fireworks/models/gpt-oss-20b
-  synthesis_model: accounts/fireworks/models/llama-v3p1-70b-instruct
-  embedding_model: nomic-ai/nomic-embed-text-v1.5
-  vision_model: ""
+  model: deepseek/deepseek-v4-pro
+  synthesis_model: deepseek/deepseek-v4-pro
+  embedding_model: greennode/greennode-embedding-large-1007
   timeout: 60
 ollama:
   base_url: http://localhost:11434
@@ -63,12 +66,11 @@ ollama:
 para_context_path: /Users/phatchenh/Library/Mobile Documents/iCloud~md~obsidian/Documents/Claude
   Brain/para-context.yaml
 providers:
-  capture: claude_cli # originally claude, changed to use Fireworks via openai_compat provider
-  classify: claude_cli
-  embeddings: ollama
-  self_learn: claude
-  synthesis: claude
-  vision: openai
+  capture: openai # originally claude, changed to use Fireworks via openai provider
+  classify: openai
+  embeddings: openai
+  self_learn: openai
+  synthesis: openai
 self_learning:
   confidence_threshold: 0.8
   enabled: true
@@ -81,10 +83,6 @@ search:
   max_candidates: 20
   max_results: 10
 env: prod   # dev | prod = use vault.root | test = use testing.vault_path below
-classify:
-  max_content_tokens: 10000
-  max_entries_per_dimension: 50
-  max_retries: 3
 testing:
   vault_path: /tmp/ai_kms_test_vault  # isolated vault for manual testing guide runs — never the real vault
 vault:

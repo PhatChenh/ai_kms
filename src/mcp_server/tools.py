@@ -1,7 +1,7 @@
 """
 mcp_server/tools.py — MCP Tool Shim Layer
 
-Five tools, each ONE expression (C-14 hard block).
+Seven tools, each ONE expression (C-14 hard block).
 ctx is auto-excluded from the public schema by the FastMCP framework.
 """
 
@@ -62,10 +62,12 @@ async def kms_write(
     """Save a chat insight as a new document in the knowledge system."""
     from mcp_server._write import write_from_chat
 
-    return {"document_id": (await write_from_chat(
-        content, title_hint,
-        classify_queue=ctx.request_context.lifespan_context.get("classify_queue") if ctx else None,
-    )).unwrap()}
+    _queue = ctx.request_context.lifespan_context.get("classify_queue") if ctx else None
+    return {
+        "document_id": (
+            await write_from_chat(content, title_hint, classify_queue=_queue)
+        ).unwrap()
+    }
 
 
 def kms_correct(
@@ -75,9 +77,11 @@ def kms_correct(
     new_tag: str | None = None,
     new_entity: str | None = None,
     reason: str | None = None,
+    reason_category: str | None = None,
+    feedback: str | None = None,
     ctx: Context = None,
 ) -> dict:
-    """Correct a knowledge entry. Operations: retire, edit_fact, change_tag, change_entity, promote, un_retire."""
+    """Correct a knowledge entry. Operations: retire, edit_fact, change_tag, change_entity, promote, un_retire, confirm, reject, revise."""
     from mcp_server._correct import correct_entry
 
     return correct_entry(
@@ -87,6 +91,32 @@ def kms_correct(
         new_tag=new_tag,
         new_entity=new_entity,
         reason=reason,
+        reason_category=reason_category,
+        feedback=feedback,
+    ).unwrap()
+
+
+def kms_comment(
+    entry_id: int,
+    text: str,
+    ctx: Context = None,
+) -> dict:
+    """Add a comment to a knowledge entry. Comments are additive annotations visible in future extraction context."""
+    from mcp_server import _comment
+
+    return _comment.add_comment(entry_id=entry_id, text=text).unwrap()
+
+
+async def kms_reports(
+    report_type: str,
+    ctx: Context = None,
+) -> dict:
+    """Generate a knowledge report on demand. Types: correction_summary, knowledge_health, volatile_entries, coverage_gaps, conflicts."""
+    from core.config import CONFIG
+    from pipelines import reports
+
+    return (
+        await reports.synthesize_report(report_type=report_type, config=CONFIG.main)
     ).unwrap()
 
 
@@ -96,7 +126,7 @@ def kms_correct(
 
 
 def register_tools(mcp):
-    """Register all five KMS tools on *mcp* (a ``FastMCP`` instance)."""
+    """Register all KMS tools on *mcp* (a ``FastMCP`` instance)."""
     mcp.tool(
         description="Discover the knowledge base: entity map grouped by dimension, key orientation facts, and inbox statistics. Call this FIRST before any search."
     )(kms_vault_info)
@@ -110,5 +140,11 @@ def register_tools(mcp):
         description="Save a chat insight as a new document in the knowledge system. The insight will be classified and indexed automatically."
     )(kms_write)
     mcp.tool(
-        description="Correct a knowledge entry. Operations: retire (requires reason), edit_fact, change_tag, change_entity, promote (pending→confident), un_retire (retired→confident)."
+        description="Correct a knowledge entry. Operations: retire, edit_fact, change_tag, change_entity, promote, un_retire, confirm, reject, revise."
     )(kms_correct)
+    mcp.tool(
+        description="Add a comment to a knowledge entry. Comments are additive annotations visible in future extraction context."
+    )(kms_comment)
+    mcp.tool(
+        description="Generate a knowledge report on demand. Types: correction_summary, knowledge_health, volatile_entries, coverage_gaps, conflicts."
+    )(kms_reports)

@@ -18,3 +18,5 @@ repomix-reference.xml
 docs/reference/
 .worktrees/
 .worktrees/
+.greennode.json
+.agentbase/
