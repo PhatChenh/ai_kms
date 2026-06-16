@@ -51,8 +51,8 @@ openai_compat:
   api_key_env: LLM_API_KEY
   base_url: https://maas-llm-aiplatform-hcm.api.vngcloud.vn/v1
   max_tokens: 1024
-  model: deepseek/deepseek-v4-pro
-  synthesis_model: deepseek/deepseek-v4-pro
+  model: qwen/qwen3-5-27b
+  synthesis_model: qwen/qwen3-5-27b
   embedding_model: greennode/greennode-embedding-large-1007
   timeout: 60
   max_retries: 5
