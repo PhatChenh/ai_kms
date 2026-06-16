@@ -5,40 +5,49 @@ Claude Desktop to it.
 
 ---
 
-## Status (2026-06-16) — read this first if picking up
+## Status (2026-06-16, updated — new machine) — read this first if picking up
 
 | Step | Status |
 |---|---|
-| Local Docker build + `/health` verify | ✅ DONE |
-| IAM service account | ✅ Already present (`.greennode.json`) |
+| Local Docker build + `/health` verify | ✅ DONE (rebuilt on new machine, `--platform linux/amd64`) |
+| IAM service account | ✅ Re-saved on new machine (`.greennode.json`) |
 | Push image to GreenNode Container Registry | ✅ DONE — `vcr.vngcloud.vn/111480-abp111749/kms-image:latest` |
-| Create AgentBase Runtime | ⚠️ BLOCKED — see below |
-| Verify `/health` on real gateway | ⏳ Not reached |
-| Hand off to tester | ⏳ Not reached |
+| Create/Update AgentBase Runtime | ✅ RESOLVED — see below |
+| Verify `/health` on real gateway | ✅ DONE — `{"status":"ok"}`, HTTP 200 |
+| Hand off to tester | ⚠️ BLOCKED on secret rotation — see Security note below |
 
-**Blocker:** `runtime.sh create` succeeds (returns a runtime ID,
-status `CREATING`), but every runtime on this account — including two
-unrelated agents (`Attention-Leak-Hunter-V1.2`,
-`leader-attention-leak-hunter-v1-1-1`) — eventually flips to `status:
-ERROR` with `statusReason: null`, zero logs, zero infra events, zero
-CPU/memory metrics (checked via CLI `logs`/`endpoints events` AND the
-console Monitor tab — Metrics/Log/Events all show "No Data"). 100%
-failure rate across different images strongly suggests an
-account/platform-level issue (quota, node capacity, region), not the
-`kms-image` build itself — the hard runtime contract (listen on
-`:8080`, `GET /health` → 200) was verified working locally before
-push.
-
-**Next step for whoever picks this up:** escalate to GreenNode
-AgentBase support with the runtime IDs below before re-attempting
-`runtime.sh create` — retrying blind without platform-side input is
-unlikely to help.
+**Blocker resolution:** original `runtime-c6507401-2dff-42a3-b295-965940cbf195`
+(`kms-runtime`) and the two unrelated runtimes
+(`Attention-Leak-Hunter-V1.2`, `leader-attention-leak-hunter-v1-1-1`)
+are **still stuck in `status: ERROR`** as of this session — the
+underlying platform issue on `create` was never confirmed fixed.
+What worked instead: **`runtime.sh update <existing-id>`** on the
+already-existing (broken) `kms-runtime` runtime, pushing a fresh image
++ env as version 2. That flipped runtime status to `ACTIVE` and the
+`DEFAULT` endpoint rolled to version 2, `status: ACTIVE`, `/health`
+returns `{"status":"ok"}` — despite `currentReplicaCount: 0` reported
+by the API (appears to be a lagging/cosmetic metric, not literal —
+health checks pass). **`runtime.sh create` for a brand-new name was
+never retried** — unknown if that path is still broken. If starting a
+genuinely new runtime, try `update` on an existing dead one first if
+one is available, before trusting `create`.
 
 ```
-runtime-c6507401-2dff-42a3-b295-965940cbf195   (kms-runtime, this deployment)
-runtime-9ddfa2b7-627c-4b11-a0a9-77b4a1a4f4dd   (unrelated, same symptom)
-runtime-0e224f8c-6575-412e-b278-e4e953a38856   (unrelated, same symptom)
+runtime-c6507401-2dff-42a3-b295-965940cbf195   (kms-runtime — fixed via `update`, now ACTIVE)
+runtime-9ddfa2b7-627c-4b11-a0a9-77b4a1a4f4dd   (unrelated, still ERROR, not touched)
+runtime-0e224f8c-6575-412e-b278-e4e953a38856   (unrelated, still ERROR, not touched)
 ```
+
+**⚠️ Security note (2026-06-16):** `runtime.sh versions <id>` was piped
+through `redact_response.sh` per this guide's own caution below, but
+the redaction script only matches generic field names
+(`secretKey`/`key`/`password`) — it did **not** catch custom env var
+names (`LLM_API_KEY`, `KMS_DAEMON_API_KEY`), so both leaked in
+plaintext into an AI session transcript. **Action required before
+handoff:** rotate `KMS_DAEMON_API_KEY` (generate fresh, push as a new
+runtime version) and consider rotating `LLM_API_KEY` (GreenNode AIP
+key) since it was also exposed. Consider fixing `redact_response.sh`
+to also match known env var name patterns, not just generic key names.
 
 ---
 

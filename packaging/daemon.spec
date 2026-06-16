@@ -12,9 +12,12 @@ dynamically-loaded backends for tray, keyring, watchdog, and extractor libs.
 # is added later, this list must grow.  Keep in sync with that file.
 """
 
+import os
+BASEDIR = os.path.abspath(os.path.join(SPECPATH, '..'))
+
 a = Analysis(
-    ['src/daemon/app.py'],
-    pathex=[],
+    [os.path.join(BASEDIR, 'src', 'daemon', 'app.py')],
+    pathex=[BASEDIR],
     binaries=[],
     datas=[],
     hiddenimports=[
