@@ -50,6 +50,7 @@ def _get_model():
                     api_key=api_key,
                     base_url=compat_cfg.base_url,
                     timeout=compat_cfg.timeout,
+                    max_retries=compat_cfg.max_retries,
                 ),
                 model_name=compat_cfg.embedding_model,
             )
