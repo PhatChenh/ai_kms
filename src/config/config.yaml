@@ -47,6 +47,14 @@ mcp:
   fact_search:
     keyword_weight: 0.5
     max_results: 20
+deepseek:
+  api_key_env: DEEPSEEK_API_KEY
+  base_url: https://api.deepseek.com/v1
+  max_tokens: 4096
+  model: deepseek-chat
+  synthesis_model: deepseek-chat
+  embedding_model: ""
+  timeout: 60
 openai_compat:
   api_key_env: LLM_API_KEY
   base_url: https://maas-llm-aiplatform-hcm.api.vngcloud.vn/v1
@@ -70,7 +78,7 @@ providers:
   classify: openai
   embeddings: openai
   self_learn: openai
-  synthesis: openai
+  synthesis: deepseek
 self_learning:
   confidence_threshold: 0.8
   enabled: true
