@@ -1,4 +1,6 @@
 # Thư Đồng
+![About](docs/0_draft/ui-astro/asset/about%20page.png)
+
 Sống trên đời sống, cần có một Thư Đồng
 
 Để chi bạn biết không? Để mọi context đừng bị gió cuốn đi
