@@ -1,3 +1,5 @@
+Tính năng của Thư Đồng:
+
 # Insight synthesis — the system actively looks for patterns and findings
 
 **Insight synthesis** is what happens after a file is captured. Once the

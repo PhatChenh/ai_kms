@@ -1,3 +1,5 @@
+Tính năng của Thư Đồng:
+
 # Always-available context — your knowledge base, everywhere you are
 
 **Always-available context** means your AI assistant knows what you know —
@@ -20,7 +22,7 @@ The connection between your Claude client and the knowledge system uses a
 standard called **MCP** (Model Context Protocol). In practice, this is a
 one-time setup:
 
-1. Your Claude client is configured to connect to the KMS knowledge server
+1. Your Claude client is configured to connect to the Thư Đồng server
 2. From that moment on, the knowledge system appears as a set of **tools**
    the AI can use — like search, read, and save
 3. You don't call the tools yourself — the AI decides when to use them based

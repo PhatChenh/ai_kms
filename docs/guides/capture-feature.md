@@ -1,3 +1,5 @@
+Tính năng của Thư Đồng:
+
 # Capture — how your files become a searchable knowledge base
 
 **Capture** is the first thing that happens when you add a file to your

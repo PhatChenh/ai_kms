@@ -1,3 +1,5 @@
+Tính năng của Thư Đồng:
+
 # Self-learning — the system gets smarter every time you correct it
 
 **Self-learning** is what separates this knowledge system from a simple

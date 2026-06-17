@@ -4,89 +4,93 @@ import '../styles/global.css';
 const features = [
   {
     number: '01',
-    title: 'Auto-Capture',
-    desc: 'Drop anything — notes, PDFs, emails, web articles, YouTube transcripts. The AI reads it, summarizes it, and stores it.',
+    character: '/asset/peeking-behind-web-2.png',
+    title: 'Tìm Insights Chủ Động',
+    desc: 'Trỏ Thư Đồng vào folder bạn muốn, thả vào email, PDF, Word, Excel, PowerPoint,… hoặc nói với Thư Đồng lưu lại cuộc trò chuyện với AI, nội dung sẽ được lưu lại và chắt lọc thành insights tự động.',
     usecases: [
       {
-        title: 'Inbox Zero',
-        desc: 'Drop a meeting transcript — the AI extracts decisions and action items in seconds. No more "I\'ll file this later."',
+        title: 'Lưu Trên Cloud',
+        desc: 'File bạn thả vào folder — notes, PDF, email, meeting note — nội dung được đồng bộ và lưu trữ trên Cloud.',
       },
       {
-        title: 'Any Format, One Place',
-        desc: 'PDFs, DOCX, images with vision AI, web links — everything becomes searchable text in your knowledge base.',
+        title: 'Agent Đọc & Chắt Lọc',
+        desc: 'Thư Đồng đọc qua từng file, tự rút ra insights quan trọng và lưu lại để cung cấp context cho AI.',
       },
       {
-        title: 'Works While You Sleep',
-        desc: 'The daemon watches your folders and processes new files automatically. You wake up to an organized knowledge base.',
+        title: 'Chủ Động Theo Chủ Đề',
+        desc: 'Nói với Thư Đồng chủ đề hay project đang quan tâm - Thư Đồng sẽ chú ý tìm kiếm và lưu trữ theo phân loại như bạn muốn.',
       },
     ],
   },
   {
     number: '02',
-    title: 'Knowledge Extraction',
-    desc: 'The AI reads across everything you’ve captured and builds a structured knowledge base — who’s who, what’s happening, what was decided.',
+    character: '/asset/taking-note.png',
+    title: 'Học Hỏi & Cải Thiện',
+    desc: 'Mỗi lần bạn chỉnh sửa hoặc sửa lỗi cho AI, Thư Đồng giúp AI ghi nhớ bài học đó — càng dùng lâu, AI và Thư Đồng càng hiểu bạn và làm đúng ý hơn.',
     usecases: [
       {
-        title: 'People & Relationships',
-        desc: 'Tracks roles, preferences, and context about everyone you work with. Know who to talk to without remembering every detail.',
+        title: 'Ghi Nhớ Chỉnh Sửa',
+        desc: 'Khi bạn sửa một lỗi của AI — nhớ nhầm, hiểu sai — Thư Đồng lưu lại bài học đó để không lặp lại.',
       },
       {
-        title: 'Project Status & Blockers',
-        desc: 'Extracts deadlines, milestones, and decisions from daily updates. See project health at a glance.',
+        title: 'Tự Tra Lại Bài Cũ',
+        desc: 'Gặp task tương tự lần trước, Thư Đồng tìm và chỉ dẫn AI đọc lại bài học cũ trước khi làm.',
       },
       {
-        title: 'Cross-Document Synthesis',
-        desc: 'Connects facts from different sources — email says X, meeting notes say Y — surfaces contradictions you\'d miss.',
+        title: 'Feedback Hai Chiều',
+        desc: 'Feedback qua chat trực tiếp, hoặc để Thư Đồng tự quan sát và rút kinh nghiệm — cách nào cũng được.',
       },
     ],
   },
   {
     number: '03',
-    title: 'Hybrid Search',
-    desc: 'Ask in plain English. Finds the relevant notes even when you don’t remember the exact words — meaning, not keywords.',
+    character: '/asset/peeking.png',
+    title: 'Làm Nhiều Hơn Với Insights',
+    desc: 'Hàng nghìn email, chục project, trăm cuộc họp mỗi năm — Thư Đồng chủ động tổng hợp, theo dõi tiến độ, và viết báo cáo giúp bạn không bỏ sót gì.',
     usecases: [
       {
-        title: 'Meaning, Not Keywords',
-        desc: 'Semantic search finds "managing pushback in meetings" when you search "stakeholder resistance." It understands intent.',
+        title: 'Tự Tổng Hợp Insights',
+        desc: 'Thư Đồng chủ động gom các insights rời rạc lại thành bức tranh chung, không cần bạn yêu cầu.',
       },
       {
-        title: 'Three-Tier Results',
-        desc: 'Quick summary first (cheap), snippet view second (medium), full content on demand (deep). Always start cheap.',
+        title: 'Theo Dõi Tiến Độ',
+        desc: 'Tự động keep track tiến độ từng project, để không to-do nào bị quên giữa hàng trăm việc.',
       },
       {
-        title: 'Chat With Your Knowledge',
-        desc: 'Claude Desktop connects via MCP — search and retrieve context right inside your conversation. No tab-switching.',
+        title: 'Giúp Bạn Hiểu Chính Mình',
+        desc: 'Thư Đồng quan sát, và gửi bạn những insights về chính mình, để bạn thấu hiểu mình hơn.',
       },
     ],
   },
   {
     number: '04',
-    title: 'Self-Learning & Briefings',
-    desc: 'The AI gets smarter the more you use it. Correct a fact once — it learns. Wake up to a daily briefing that connects the dots.',
+    character: '/asset/jolly.png',
+    title: 'Context Mọi Lúc, Mọi Nơi',
+    desc: 'Mọi nội dung Thư Đồng lưu trữ đều truy cập được qua MCP — từ điện thoại, laptop, hay bất kỳ AI model nào. Đổi thiết bị, đổi model, KHÔNG đổi context.',
     usecases: [
       {
-        title: 'Learn From Corrections',
-        desc: 'Fix an AI extraction once, and future extractions improve automatically. Every correction trains the system.',
+        title: 'Một Thư Viện, Mọi Thiết Bị',
+        desc: 'Điện thoại, laptop, hay website — tất cả dùng chung một thư viện insights, không lệch context.',
       },
       {
-        title: 'Daily Briefing',
-        desc: 'Morning digest: what was captured, what\'s new, what needs your attention. Start the day informed in 30 seconds.',
+        title: 'Đổi Model, Giữ Context',
+        desc: 'Claude, OpenAI, hay Gemini đều dùng được — đổi model không làm mất context đã xây dựng.',
       },
       {
-        title: 'Weekly Synthesis',
-        desc: 'Recurring themes, contradictions, and action items you might have missed. The AI connects dots you didn\'t see.',
+        title: 'Cloud Hoặc Self-Host',
+        desc: 'Dữ liệu lưu trên cloud hoặc self-host tùy bạn chọn',
       },
     ],
   },
 ];
 ---
 
-<html lang="en">
+<html lang="vi">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="generator" content={Astro.generator} />
-    <title>AI-KMS — Your knowledge, automated</title>
+    <title>Thư Đồng — Trí nhớ dài hạn cho AI</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -98,7 +102,7 @@ const features = [
     <!-- Nav -->
     <nav class="nav">
       <div class="nav-inner">
-        <span class="nav-logo">AI-KMS</span>
+        <span class="nav-logo">Thư Đồng</span>
         <div class="nav-links">
           {features.map((f) => (
             <a href={`#feature-${f.number}`}>{f.title}</a>
@@ -108,44 +112,491 @@ const features = [
     </nav>
 
     <!-- Hero -->
-    <section class="hero">
-      <span class="hero-badge">Knowledge Management · AI-Powered</span>
-      <h1 class="hero-title">Your knowledge,<br />automated</h1>
-      <p class="hero-subtitle">
-        Drop files. Get answers. The AI does the work — you do the judgment.
-      </p>
-      <div class="hero-cta">
-        <a href="#feature-01" class="btn btn-primary">See how it works</a>
-        <a href="#feature-04" class="btn btn-outline">All features</a>
-      </div>
-    </section>
+    <div class="hero-wrap">
+      <section class="hero">
+        <div class="hero-text">
+          <span class="hero-badge">Trí Nhớ Dài Hạn Cho AI</span>
+          <h1 class="hero-title">Sống trên office,<br />cần có một Thư Đồng</h1>
+          <p class="hero-subtitle">
+            Để chi bạn biết không?<br />Để mọi <strong class="hero-context">context</strong> đừng bị gió cuốn đi.
+          </p>
+          <p class="hero-pitch">
+            Thư Đồng là giải pháp xây dựng trí nhớ <span class="kw-positive">dài hạn</span> cho AI, và mở rộng khả
+            năng của AI từ một công cụ hỏi đáp <span class="kw-negative">thụ động</span>, trở thành agent <span class="kw-strong">chủ động</span>
+            quản lý thông tin, tìm kiếm insights, và hỗ trợ suy nghĩ cho người
+            dùng.
+          </p>
+          <div class="hero-cta">
+            <a href="#feature-01" class="btn btn-primary">Xem cách hoạt động</a>
+            <a href="#feature-04" class="btn btn-outline">Tất cả tính năng</a>
+          </div>
+        </div>
+        <div class="hero-illustration">
+          <img src="/asset/hero.png" alt="Thư Đồng mascot" class="hero-img" />
+        </div>
+      </section>
+    </div>
 
     <!-- Feature blocks -->
     {features.map((f) => (
       <section class="feature" id={`feature-${f.number}`}>
-        <div class="feature-top">
-          <div class="feature-top-text">
+        <div class={`feature-top${f.number === '03' ? ' feature-top-compact' : ''}`}>
+          <div class="feature-top-text" data-num={f.number}>
             <span class="feature-number">{f.number}</span>
             <h2 class="feature-title">{f.title}</h2>
             <p class="feature-desc">{f.desc}</p>
+            {f.number === '02' ? <img src={f.character} alt="" class="feature-character-inline" aria-hidden="true" /> : null}
           </div>
-          <div class="feature-main-demo">core demo — placeholder</div>
+          <div class="feature-main-demo">
+
+
+
+            {f.number === '01' ? (
+              <div class="demo-capture-dashboard">
+                <div class="demo-cd-sidebar">
+                  <div class="demo-cd-folder active">
+                    <span class="demo-cd-folder-name">Inbox</span>
+                    <span class="demo-cd-badge">3</span>
+                  </div>
+                  <div class="demo-cd-folder">
+                    <span class="demo-cd-folder-name">Projects</span>
+                  </div>
+                  <div class="demo-cd-folder sub">
+                    <span class="demo-cd-folder-name">Alpha</span>
+                    <span class="demo-cd-badge">5</span>
+                  </div>
+                  <div class="demo-cd-folder sub">
+                    <span class="demo-cd-folder-name">Beta</span>
+                    <span class="demo-cd-badge">2</span>
+                  </div>
+                  <div class="demo-cd-folder">
+                    <span class="demo-cd-folder-name">Domain</span>
+                  </div>
+                </div>
+                <div class="demo-cd-main">
+                  <div class="demo-cd-header">Vừa capture</div>
+                  <div class="demo-cd-item">
+                    <span class="demo-cd-file-icon doc">DOC</span>
+                    <div class="demo-cd-item-body">
+                      <span class="demo-cd-item-name">Báo cáo Q2.docx</span>
+                      <span class="demo-cd-item-insight">Doanh thu tăng 15% so với quý trước…</span>
+                    </div>
+                    <span class="demo-cd-pill done">đã xong</span>
+                  </div>
+                  <div class="demo-cd-item">
+                    <span class="demo-cd-file-icon md">MD</span>
+                    <div class="demo-cd-item-body">
+                      <span class="demo-cd-item-name">Meeting notes.md</span>
+                      <span class="demo-cd-item-insight">Quyết định chuyển hướng chiến lược Q3…</span>
+                    </div>
+                    <span class="demo-cd-pill done">đã xong</span>
+                  </div>
+                  <div class="demo-cd-item">
+                    <span class="demo-cd-file-icon img">IMG</span>
+                    <div class="demo-cd-item-body">
+                      <span class="demo-cd-item-name">Dashboard-analytics.png</span>
+                      <span class="demo-cd-item-insight">Biểu đồ cho thấy xu hướng tăng trưởng…</span>
+                    </div>
+                    <span class="demo-cd-pill new">mới</span>
+                  </div>
+                </div>
+              </div>
+            ) : f.number === '02' ? (
+              <div class="demo-learning-journal">
+                <div class="demo-lj-header">Bài học gần đây</div>
+                <div class="demo-lj-card">
+                  <div class="demo-lj-before">"Deadline dự án Alpha là 15/6"</div>
+                  <div class="demo-lj-after">"Deadline dự án Alpha là 22/6"</div>
+                  <div class="demo-lj-meta">2 ngày trước</div>
+                </div>
+                <div class="demo-lj-card">
+                  <div class="demo-lj-before">"Chị Lan — Project Manager"</div>
+                  <div class="demo-lj-after">"Chị Lan — Product Owner"</div>
+                  <div class="demo-lj-meta">5 ngày trước</div>
+                </div>
+                <div class="demo-lj-card">
+                  <div class="demo-lj-before">"Budget Q2: 500 triệu"</div>
+                  <div class="demo-lj-after">"Budget Q2: 750 triệu"</div>
+                  <div class="demo-lj-meta">1 tuần trước</div>
+                </div>
+              </div>
+            ) : f.number === '03' ? (
+              <div class="demo-insights-dashboard">
+                <div class="demo-id-header">Tổng hợp insights</div>
+                <div class="demo-id-cards">
+                  <div class="demo-id-card on-track">
+                    <span class="demo-id-project">Operations</span>
+                    <span class="demo-id-count">12 insights</span>
+                    <span class="demo-id-status">✅ on track</span>
+                  </div>
+                  <div class="demo-id-card delayed">
+                    <span class="demo-id-project">Sales</span>
+                    <span class="demo-id-count">8 insights</span>
+                    <span class="demo-id-status">⚠️ trễ 1 tuần</span>
+                  </div>
+                  <div class="demo-id-card on-track">
+                    <span class="demo-id-project">Marketing</span>
+                    <span class="demo-id-count">5 insights</span>
+                    <span class="demo-id-status">✅ on track</span>
+                  </div>
+                </div>
+                <div class="demo-id-topics">
+                  <div class="demo-id-topics-label">Chủ đề nổi bật</div>
+                  <div class="demo-id-topic">Doanh thu Q2 — 3 insights liên quan</div>
+                  <div class="demo-id-topic">Chiến lược marketing — 2 insights</div>
+                </div>
+              </div>
+            ) : f.number === '04' ? (
+              <div class="demo-context-hub">
+                <div class="demo-ch-row">
+                  <span class="demo-ch-device">📱</span>
+                  <span class="demo-ch-device">💻</span>
+                  <span class="demo-ch-device">🖥️</span>
+                </div>
+                <div class="demo-ch-hub">
+                  <span class="demo-ch-hub-label">Thư Đồng</span>
+                  <span class="demo-ch-hub-meta">12 insights · 3 projects</span>
+                </div>
+                <div class="demo-ch-row">
+                  <span class="demo-ch-model">Claude</span>
+                  <span class="demo-ch-model">OpenAI</span>
+                  <span class="demo-ch-model">Gemini</span>
+                </div>
+                <div class="demo-ch-tagline">Mọi thiết bị · Mọi model · Một context</div>
+              </div>
+            ) : (
+              <>core demo — placeholder</>
+            )}
+          </div>
+          <img src={f.character} alt="" class={`feature-character${f.number === '01' ? ' feature-character-peek' : ''}${f.number === '03' ? ' feature-character-side' : ''}${f.number === '04' ? ' feature-character-small' : ''}`} aria-hidden="true" style={f.number === '02' ? 'display:none' : ''} />
         </div>
         <div class="feature-usecases">
-          {f.usecases.map((u) => (
+          {f.usecases.map((u, i) => (
             <div class="usecase-box">
               <h3 class="usecase-title">{u.title}</h3>
               <p class="usecase-desc">{u.desc}</p>
-              <div class="usecase-demo">demo — placeholder</div>
+              <div class="usecase-demo">
+                {f.number === '01' ? (
+                  i === 0 ? (
+                    <div class="demo-cloud-sync">
+                      <div class="demo-cs-header">Đồng bộ lên Cloud</div>
+                      <div class="demo-cs-row">
+                        <span class="demo-cs-icon doc"></span>
+                        <span class="demo-cs-name">Báo cáo Q2.xlsx</span>
+                        <span class="demo-cs-status done">đã sync</span>
+                      </div>
+                      <div class="demo-cs-row">
+                        <span class="demo-cs-icon doc"></span>
+                        <span class="demo-cs-name">Meeting notes.docx</span>
+                        <span class="demo-cs-status done">đã sync</span>
+                      </div>
+                      <div class="demo-cs-row">
+                        <span class="demo-cs-icon img"></span>
+                        <span class="demo-cs-name">Ảnh chụp màn hình.png</span>
+                        <span class="demo-cs-status syncing">đang sync</span>
+                      </div>
+                      <div class="demo-cs-row">
+                        <span class="demo-cs-icon doc"></span>
+                        <span class="demo-cs-name">Kế hoạch Q3.xlsx</span>
+                        <span class="demo-cs-status done">đã sync</span>
+                      </div>
+                      <div class="demo-cs-footer">4 files · 3 đã đồng bộ</div>
+                    </div>
+                  ) : i === 1 ? (
+                    <div class="demo-extract">
+                      <div class="demo-ex-doc">
+                        <div class="demo-ex-doc-label">Báo cáo Q2.docx (trích)</div>
+                        <div class="demo-ex-doc-text">
+                          <mark>Doanh thu Q2 đạt 2.3 tỷ</mark>, tăng <mark>15%</mark> so với Q1. Chi phí marketing tăng 8% nhưng <mark>tỉ lệ chuyển đổi tăng 22%</mark>.
+                        </div>
+                      </div>
+                      <div class="demo-ex-arrow">AI chắt lọc</div>
+                      <div class="demo-ex-insight">
+                        <span class="demo-ex-insight-bullet"></span>
+                        <span>Doanh thu Q2 tăng 15% QoQ, đạt 2.3 tỷ</span>
+                      </div>
+                      <div class="demo-ex-insight">
+                        <span class="demo-ex-insight-bullet"></span>
+                        <span>Tỉ lệ chuyển đổi tăng 22% dù chi phí marketing chỉ tăng 8%</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div class="demo-search">
+                      <div class="demo-sr-bar">
+                        <span class="demo-sr-icon"></span>
+                        <span class="demo-sr-placeholder">chủ đề marketing…</span>
+                      </div>
+                      <div class="demo-sr-results">
+                        <div class="demo-sr-topic">Marketing <span class="demo-sr-count">2</span></div>
+                        <div class="demo-sr-item">Chiến dịch hè 2026 — ngân sách &amp; kênh</div>
+                        <div class="demo-sr-item">Phân tích đối thủ Q2 — bảng so sánh</div>
+                        <div class="demo-sr-topic">Chiến lược <span class="demo-sr-count">3</span></div>
+                        <div class="demo-sr-item">Định hướng sản phẩm 2027</div>
+                        <div class="demo-sr-item">Mở rộng thị trường APAC</div>
+                        <div class="demo-sr-item">Rủi ro chuỗi cung ứng Q3</div>
+                      </div>
+                    </div>
+                  )
+                ) : f.number === '02' ? (
+                  i === 0 ? (
+                    <div class="demo-correction-flow">
+                      <div class="demo-cf-row">
+                        <span class="demo-cf-label">AI nói</span>
+                        <span class="demo-cf-old">"Budget Q2 là 500 triệu"</span>
+                      </div>
+                      <div class="demo-cf-row">
+                        <span class="demo-cf-label">Bạn sửa</span>
+                        <span class="demo-cf-new">"Budget Q2 là 750 triệu"</span>
+                      </div>
+                      <div class="demo-cf-row">
+                        <span class="demo-cf-label">AI nói</span>
+                        <span class="demo-cf-old">"Deadline Alpha 15/6"</span>
+                      </div>
+                      <div class="demo-cf-row">
+                        <span class="demo-cf-label">Bạn sửa</span>
+                        <span class="demo-cf-new">"Deadline Alpha 22/6"</span>
+                      </div>
+                      <div class="demo-cf-row">
+                        <span class="demo-cf-label">AI nói</span>
+                        <span class="demo-cf-old">"Chị Lan — PM"</span>
+                      </div>
+                      <div class="demo-cf-row">
+                        <span class="demo-cf-label">Bạn sửa</span>
+                        <span class="demo-cf-new">"Chị Lan — Product Owner"</span>
+                      </div>
+                      <div class="demo-cf-saved">✓ 3 bài học đã lưu — lần sau sẽ đúng</div>
+                    </div>
+                  ) : i === 1 ? (
+                    <div class="demo-retrieval">
+                      <div class="demo-rt-task">Gặp task: viết báo cáo Q3…</div>
+                      <div class="demo-rt-searching">Đang tra cứu bài học cũ…</div>
+                      <div class="demo-rt-found">Tìm thấy 3 bài học liên quan</div>
+                      <div class="demo-rt-lesson">Budget Q2: dùng 750tr (không phải 500tr)</div>
+                      <div class="demo-rt-lesson">Deadline Alpha: 22/6 (không phải 15/6)</div>
+                      <div class="demo-rt-lesson">Chị Lan: Product Owner (không phải PM)</div>
+                      <div class="demo-rt-applied">✓ Đã áp dụng — lần này làm đúng</div>
+                    </div>
+                  ) : (
+                    <div class="demo-dual-feedback">
+                      <div class="demo-df-row">
+                        <div class="demo-df-chat">
+                          <span class="demo-df-label">💬 Chat</span>
+                          <span class="demo-df-msg">"Budget là 750tr không phải 500tr nhé"</span>
+                          <span class="demo-df-msg">"Chị Lan là PO, không phải PM"</span>
+                        </div>
+                        <div class="demo-df-observe">
+                          <span class="demo-df-label">👁️ Tự quan sát</span>
+                          <span class="demo-df-msg">Thấy bạn luôn dùng 750tr trong các báo cáo gần đây</span>
+                          <span class="demo-df-msg">Thấy bạn giới thiệu Chị Lan là PO</span>
+                        </div>
+                      </div>
+                      <div class="demo-df-result">→ Cả hai cách đều cập nhật vào bộ nhớ</div>
+                    </div>
+                  )
+                ) : f.number === '03' ? (
+                  i === 0 ? (
+                    <div class="demo-synthesis">
+                      <div class="demo-sy-source">
+                        <span class="demo-sy-label">Insights rời rạc</span>
+                        <span class="demo-sy-item">"Doanh thu tăng 15%" — từ báo cáo Q2</span>
+                        <span class="demo-sy-item">"KH mới tăng 22%" — từ email</span>
+                        <span class="demo-sy-item">"Đối thủ giảm giá" — từ meeting</span>
+                      </div>
+                      <div class="demo-sy-result">→ Thị trường đang tăng trưởng, cần theo dõi động thái đối thủ</div>
+                    </div>
+                  ) : i === 1 ? (
+                    <div class="demo-tracker">
+                      <div class="demo-tr-row">
+                        <span class="demo-tr-name">Operations</span>
+                        <span class="demo-tr-bar"><span class="demo-tr-fill w85"></span></span>
+                        <span class="demo-tr-pct">85%</span>
+                        <span class="demo-tr-status done">✅</span>
+                      </div>
+                      <div class="demo-tr-row">
+                        <span class="demo-tr-name">Sales</span>
+                        <span class="demo-tr-bar"><span class="demo-tr-fill w45"></span></span>
+                        <span class="demo-tr-pct">45%</span>
+                        <span class="demo-tr-status warn">⚠️</span>
+                      </div>
+                      <div class="demo-tr-row">
+                        <span class="demo-tr-name">Marketing</span>
+                        <span class="demo-tr-bar"><span class="demo-tr-fill w100"></span></span>
+                        <span class="demo-tr-pct">100%</span>
+                        <span class="demo-tr-status done">✅</span>
+                      </div>
+                      <div class="demo-tr-summary">3 projects · 1 đang trễ</div>
+                    </div>
+                  ) : (
+                    <div class="demo-report">
+                      <div class="demo-rp-header">🪞 Góc nhìn về bạn</div>
+                      <div class="demo-rp-body">
+                        <p>Tháng này bạn dành <b>70% thời gian cho Sales</b> — nhiều nhất trong 3 tháng qua.</p>
+                        <p>Bạn có xu hướng <b>ưu tiên task gấp hơn task quan trọng</b> — 8/12 lần bạn chọn deadline gần trước.</p>
+                        <p>Cuối tuần là lúc bạn <b>suy nghĩ chiến lược nhiều nhất</b> — 5 insight chiến lược đến từ thứ 6&ndash;CN.</p>
+                      </div>
+                      <div class="demo-rp-footer">Thư Đồng quan sát mỗi ngày</div>
+                    </div>
+                  )
+                ) : f.number === '04' ? (
+                  i === 0 ? (
+                    <div class="demo-cross-device">
+                      <div class="demo-xd-cards">
+                        <div class="demo-xd-card">
+                          <span class="demo-xd-icon">📱</span>
+                          <span class="demo-xd-count">12 insights</span>
+                          <span class="demo-xd-sync">Đồng bộ ngay</span>
+                        </div>
+                        <div class="demo-xd-card">
+                          <span class="demo-xd-icon">💻</span>
+                          <span class="demo-xd-count">12 insights</span>
+                          <span class="demo-xd-sync">Đồng bộ ngay</span>
+                        </div>
+                      </div>
+                      <div class="demo-xd-unified">Cùng một Thư Đồng — không lệch context</div>
+                    </div>
+                  ) : i === 1 ? (
+                    <div class="demo-model-switch">
+                      <div class="demo-ms-models">
+                        <span class="demo-ms-model">Claude</span>
+                        <span class="demo-ms-model">OpenAI</span>
+                        <span class="demo-ms-model">Gemini</span>
+                      </div>
+                      <div class="demo-ms-hub">↓ Cùng một Thư Đồng Context ↓</div>
+                      <div class="demo-ms-tagline">Đổi model — context không đổi</div>
+                    </div>
+                  ) : (
+                    <div class="demo-deploy">
+                      <div class="demo-dp-options">
+                        <div class="demo-dp-option">
+                          <span class="demo-dp-icon">☁️</span>
+                          <span class="demo-dp-title">Cloud</span>
+                          <span class="demo-dp-detail">Không cần setup</span>
+                          <span class="demo-dp-detail">Auto backup</span>
+                        </div>
+                        <div class="demo-dp-option">
+                          <span class="demo-dp-icon">🏠</span>
+                          <span class="demo-dp-title">Self-Host</span>
+                          <span class="demo-dp-detail">Kiểm soát 100%</span>
+                          <span class="demo-dp-detail">Bảo mật tối đa</span>
+                        </div>
+                      </div>
+                      <div class="demo-dp-choice">Tùy bạn chọn — không ép một phương án</div>
+                    </div>
+                  )
+                ) : (
+                  <>demo — placeholder</>
+                )}
+              </div>
             </div>
           ))}
         </div>
       </section>
     ))}
 
+    <!-- Section 05: Demo CTA -->
+    <section class="demo-cta" id="section-demo">
+      <div class="demo-cta-top">
+        <div class="demo-cta-text">
+          <h2 class="demo-cta-title">Kết nối với File dữ liệu Demo để hỏi thêm về Thư Đồng ngay</h2>
+          <p class="demo-cta-desc">Team YSKM đã để sẵn các document về Thư Đồng trong một folder data. Khi AI của bạn kết nối với Thư Đồng, AI sẽ nhận được đầy đủ context của các file này (có kèm cả một số file công việc mockup)</p>
+        </div>
+        <div class="demo-cta-visual">
+          <img src="/asset/two hands wide.png" alt="" class="demo-cta-img" />
+        </div>
+      </div>
+      <div class="demo-cta-blocks">
+        <div class="demo-cta-block">
+          <div class="step-card">
+            <img src="/asset/first.png" alt="Claude Connectors UI" class="step-card-screenshot" />
+            <div class="step-card-header">
+              <span class="step-card-num">01</span>
+              <span class="step-card-label">Thêm Connector</span>
+            </div>
+            <ol class="step-list">
+              <li class="step-item">
+                <span class="step-dot"></span>
+                <span>Mở <strong>Claude</strong></span>
+              </li>
+              <li class="step-item">
+                <span class="step-dot"></span>
+                <span>Chọn <strong>Customize</strong></span>
+              </li>
+              <li class="step-item">
+                <span class="step-dot"></span>
+                <span>Chọn <strong>Connectors</strong></span>
+              </li>
+              <li class="step-item">
+                <span class="step-dot"></span>
+                <span>Nhấn <strong>"+"</strong></span>
+              </li>
+              <li class="step-item step-item-last">
+                <span class="step-dot step-dot-accent"></span>
+                <span>Chọn <strong>Add custom connector</strong></span>
+              </li>
+            </ol>
+          </div>
+        </div>
+        <div class="demo-cta-block">
+          <div class="step-card">
+            <img src="/asset/second.png" alt="Add custom connector form" class="step-card-screenshot" />
+            <div class="step-card-header">
+              <span class="step-card-num">02</span>
+              <span class="step-card-label">Điền thông tin</span>
+            </div>
+            <ol class="step-list">
+              <li class="step-item">
+                <span class="step-dot"></span>
+                <span>Nhập tên: <strong>"Thư Đồng"</strong></span>
+              </li>
+              <li class="step-item step-item-col">
+                <div class="step-item-row">
+                  <span class="step-dot"></span>
+                  <span>Nhập <strong>MCP server URL</strong></span>
+                </div>
+                <div class="step-url">https://endpoint-70b2a0ac-be3a-427f-954f-6f5c49a1f788.agentbase-runtime.aiplatform.vngcloud.vn/mcp</div>
+              </li>
+              <li class="step-item step-item-last">
+                <span class="step-dot step-dot-accent"></span>
+                <span>Nhấn <strong>Add</strong></span>
+              </li>
+            </ol>
+          </div>
+        </div>
+        <div class="demo-cta-block">
+          <div class="step-card">
+            <img src="/asset/third.png" alt="Claude chat với Thư Đồng" class="step-card-screenshot" />
+            <div class="step-card-header">
+              <span class="step-card-num">03</span>
+              <span class="step-card-label">Bắt đầu hỏi</span>
+            </div>
+            <ul class="prompt-list">
+              <li class="prompt-item">Thư Đồng có chức năng gì?</li>
+              <li class="prompt-item">Trong kho dữ liệu của Thư Đồng đang có gì?</li>
+              <li class="prompt-item">Hôm nay sự kiện gì theo như Thư Đồng ghi lại?</li>
+              <li class="prompt-item">Cho tôi xem report ngày hôm nay?</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- Footer -->
+    <script>
+      const observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach(entry => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add('is-visible');
+              observer.unobserve(entry.target);
+            }
+          });
+        },
+        { threshold: 0.12 }
+      );
+      document.querySelectorAll('.feature').forEach(el => observer.observe(el));
+    </script>
     <footer class="footer">
-      <div class="footer-inner">AI-KMS — structure-only scaffold</div>
+      <div class="footer-inner">Thư Đồng — Trí nhớ dài hạn cho AI</div>
     </footer>
   </body>
 </html>

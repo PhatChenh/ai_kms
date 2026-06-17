@@ -1,6 +1,14 @@
 # P5 Slice 2 — container image for AgentBase cloud deployment
 # Multi-stage: build deps, then assemble minimal runtime.
 
+# ---- UI builder stage ----
+FROM node:22-slim AS ui-builder
+WORKDIR /ui
+COPY docs/0_draft/ui-astro/package.json docs/0_draft/ui-astro/package-lock.json* ./
+RUN npm ci --quiet
+COPY docs/0_draft/ui-astro/ ./
+RUN npm run build
+
 # ---- Builder stage ----
 FROM python:3.12-slim AS builder
 WORKDIR /build
@@ -43,6 +51,9 @@ COPY src/config/ /usr/local/lib/python3.12/site-packages/config/
 COPY src/prompts/ /usr/local/lib/python3.12/site-packages/prompts/
 COPY scripts/ /app/scripts/
 COPY litestream.yml /etc/litestream.yml
+
+# Copy built UI assets
+COPY --from=ui-builder /ui/dist/ /app/ui/
 
 # Pre-download cross-encoder model so container doesn't hit HuggingFace at runtime
 RUN python -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
