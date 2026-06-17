@@ -1,7 +1,7 @@
 # Thư Đồng
 ![About](docs/0_draft/ui-astro/asset/about%20page.png)
 
-Sống trên đời sống, cần có một Thư Đồng
+Sống trên office, cần có một Thư Đồng
 
 Để chi bạn biết không? Để mọi context đừng bị gió cuốn đi
 
@@ -12,7 +12,7 @@ Với Thư Đồng:
 - AI hiểu file bạn làm
 - AI keep track công việc và liên lạc cho bạn
 - AI sắp xếp thông tin, tổng hợp insights, và mang lại cho bạn những report hữu ích
-Mỗi Claude hay OpenAI model đều có khả năng đáp ứng yêu cầu của người dùng tốt, nếu như AI có đủ context và trí nhớ lâu dài. Với Thư Đồng hỗ trợ trí nhớ, AI của bạn sẽ trở thành một phụ tá thực thụ, nhanh nhẹn và linh hoạt, đi theo bạn, lo việc quản lý kiến thức, giống như hình tượng Thư Đồng trong văn hóa thời xưa: đi theo học giả vác sách, mang vở, mài mực và sắp xếp giấy tờ.
+Model nào cũng đáp ứng tốt yêu cầu của bạn — nếu có đủ context và trí nhớ. Với Thư Đồng, AI của bạn trở thành phụ tá thực thụ: nhanh nhẹn, linh hoạt, luôn theo sát, lo việc quản lý kiến thức — đúng như hình tượng Thư Đồng ngày xưa: đi theo học giả, vác sách, mang vở, mài mực, giữ cho giấy tờ ngăn nắp.
 
 
 
