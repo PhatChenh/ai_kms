@@ -1,17 +1,12 @@
 # Thư Đồng
 ![About](docs/0_draft/ui-astro/asset/about%20page.png)
 
-Sống trên office, cần có một Thư Đồng
-
-Để chi bạn biết không? Để mọi context đừng bị gió cuốn đi
-
-Thư Đồng là giải pháp xây dựng trí nhớ dài hạn cho AI, và mở rộng khả năng của AI từ một công cụ hỏi đáp thụ động, trở thành agent chủ động quản lý thông tin, tìm kiếm insights, và hỗ trợ suy nghĩ cho người dùng. 
-
 Với Thư Đồng:
 - AI nhớ điều bạn nói
 - AI hiểu file bạn làm
 - AI keep track công việc và liên lạc cho bạn
 - AI sắp xếp thông tin, tổng hợp insights, và mang lại cho bạn những report hữu ích
+
 Model nào cũng đáp ứng tốt yêu cầu của bạn — nếu có đủ context và trí nhớ. Với Thư Đồng, AI của bạn trở thành phụ tá thực thụ: nhanh nhẹn, linh hoạt, luôn theo sát, lo việc quản lý kiến thức — đúng như hình tượng Thư Đồng ngày xưa: đi theo học giả, vác sách, mang vở, mài mực, giữ cho giấy tờ ngăn nắp.
 
 
