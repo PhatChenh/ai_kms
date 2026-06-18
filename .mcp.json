@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "codegraph": {
+      "command": "/Users/phatchenh/Library/Caches/reasonix/codegraph/v0.9.7/bin/codegraph",
+      "args": ["serve", "--mcp", "--path", "/Users/phatchenh/ai_kms"]
+    }
+  }
+}

@@ -264,6 +264,7 @@ class TestModelLoadFailure:
         mock_cfg.main.openai_compat.base_url = "http://localhost:1/v1"
         mock_cfg.main.openai_compat.embedding_model = "fake-model"
         mock_cfg.main.openai_compat.timeout = 1
+        mock_cfg.main.openai_compat.max_retries = 2
 
         with patch("core.config.CONFIG", mock_cfg):
             result = em.index_embedding(

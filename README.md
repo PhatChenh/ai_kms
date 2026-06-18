@@ -1,20 +1,15 @@
 # Thư Đồng
-Sống trên đời sống, cần có một Thư Đồng
-
-Để chi bạn biết không? Để mọi context đừng bị gió cuốn đi
-
-Thư Đồng là giải pháp xây dựng trí nhớ dài hạn cho AI, và mở rộng khả năng của AI từ một công cụ hỏi đáp thụ động, trở thành agent chủ động quản lý thông tin, tìm kiếm insights, và hỗ trợ suy nghĩ cho người dùng. 
+![About](docs/0_draft/ui-astro/asset/about%20page.png)
 
 Với Thư Đồng:
-- Điều bạn nói -> AI nhớ
-- File bạn làm -> AI hiểu
-- Meeting notes, emails bạn không keep track nổi -> AI giúp
+- AI nhớ điều bạn nói
+- AI hiểu file bạn làm
+- AI keep track công việc và liên lạc cho bạn
+- AI sắp xếp thông tin, tổng hợp insights, và mang lại cho bạn những report hữu ích
 
-và khi bạn không ngồi ở laptop:
-- Mở điện thoại, hỏi chuyện công việc -> AI vẫn biết
-- Tối đi ngủ -> AI tự động sắp xếp thông tin, tổng hợp insights cho bạn
+Model nào cũng đáp ứng tốt yêu cầu của bạn — nếu có đủ context và trí nhớ. Với Thư Đồng, AI của bạn trở thành phụ tá thực thụ: nhanh nhẹn, linh hoạt, luôn theo sát, lo việc quản lý kiến thức — đúng như hình tượng Thư Đồng ngày xưa: đi theo học giả, vác sách, mang vở, mài mực, giữ cho giấy tờ ngăn nắp.
 
-Mỗi Claude hay OpenAI model đều có khả năng đáp ứng yêu cầu của người dùng tốt, nếu như AI có đủ context và trí nhớ lâu dài. Với Thư Đồng hỗ trợ trí nhớ, AI của bạn sẽ trở thành một phụ tá thực thụ, nhanh nhẹn và linh hoạt, đi theo bạn, lo việc quản lý kiến thức, giống như Thư Đồng trong văn hóa thời xưa: đi theo học giả mang vác sách vở, mài mực và sắp xếp giấy tờ.
+
 
 ## Các tính năng của Thư Đồng:
 
@@ -40,4 +35,7 @@ Hàng nghìn email mỗi tháng, 12 project mỗi quý và 200 cuộc họp mỗ
 - Viết báo cáo, phân tích, và documentation giúp bạn
 
 ### Cung cấp context, mọi lúc, mọi nơi
-
+Tất cả file và thông tin Thư Đồng lưu trữ đều có thể được AI truy cập và sử dụng ở mọi lúc, mọi nền tảng thông qua MCP
+- Điện thoại, laptop, website, đều dùng chung một thư viện insights
+- Claude, OpenAI, hay Gemini đều được. Đổi model, không đổi context
+- Dữ liệu lưu trữ trên mây, hoặc self-host đều được

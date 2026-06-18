@@ -101,6 +101,6 @@ vault:
   domain_dir: Domain
   inbox_dir: inbox
   projects_dir: Projects
-  root: /Users/lap14806/demo_vault
+  root: /data/vault
   synthesis_dir: Synthesis
   no_edit_extensions: [".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"]

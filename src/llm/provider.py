@@ -25,6 +25,7 @@ SYNTHESIS_TASKS: frozenset[Task] = frozenset({"synthesis", "documentation"})
 @dataclass(frozen=True)
 class LLMResponse:
     """Immutable response DTO returned by every LLMProvider.complete() call."""
+
     content: str
     model: str
     usage: dict
@@ -50,9 +51,13 @@ class LLMProvider(ABC):
             Failure on any API or network error.
         """
 
-    async def describe_image(self, system: str, user: str, image_bytes: bytes, mime_type: str) -> Result[LLMResponse]:
+    async def describe_image(
+        self, system: str, user: str, image_bytes: bytes, mime_type: str
+    ) -> Result[LLMResponse]:
         """Describe an image. Default: returns Failure — override for vision-capable providers."""
-        return Failure("vision not supported by this provider", recoverable=False, context={})
+        return Failure(
+            "vision not supported by this provider", recoverable=False, context={}
+        )
 
 
 def get_provider(task: Task, config: MainConfig) -> LLMProvider:
@@ -74,18 +79,26 @@ def get_provider(task: Task, config: MainConfig) -> LLMProvider:
     match provider_name:
         case "claude":
             from llm.claude_provider import ClaudeProvider
+
             return ClaudeProvider(config.claude, task=task)
         case "claude_cli":
             from llm.claude_cli_provider import ClaudeCliProvider
+
             return ClaudeCliProvider(config.claude_cli, task=task)
         case "ollama":
             from llm.ollama_provider import OllamaProvider
+
             return OllamaProvider(config.ollama, task=task)
         case "openai":
             from llm.openai_provider import OpenAIProvider
+
             return OpenAIProvider(config.openai_compat, task=task)
+        case "deepseek":
+            from llm.openai_provider import OpenAIProvider
+
+            return OpenAIProvider(config.deepseek, task=task)
         case _:
             raise ValueError(
                 f"Unknown provider '{provider_name}' for task '{task}'. "
-                f"Valid options: 'claude', 'claude_cli', 'ollama', 'openai'."
+                f"Valid options: 'claude', 'claude_cli', 'ollama', 'openai', 'deepseek'."
             )

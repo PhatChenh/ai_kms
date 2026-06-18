@@ -15,12 +15,15 @@ Formula: ``rrf_score = 1/(RRF_K + bm25_rank) + 1/(RRF_K + knn_rank)``
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
 from core.result import Failure, Result, Success
 from storage.db import get_connection
+
+_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Data types
@@ -95,27 +98,21 @@ def rank(
         bm25_results = _bm25_search(query, candidate_paths, max_candidates, db_path)
 
         # ------------------------------------------------------------------
-        # 2. Meaning search (KNN via vec0)
+        # 2. Meaning search (KNN via vec0) -- best-effort; BM25 stands alone
         # ------------------------------------------------------------------
+        knn_results: dict[str, int] = {}
         try:
             model = _get_model()
             query_embedding = model.encode(query)
-        except Exception as exc:
-            # Model load / encode failure -- tag the phase so a caller can
-            # tell an embed failure from a fusion bug during triage.
-            return Failure(
-                error=str(exc),
-                recoverable=True,
-                context={"query": query, "op": "rank", "phase": "embed"},
+            # Convert to raw float32 bytes for sqlite-vec (same format as index time)
+            if hasattr(query_embedding, "numpy"):
+                query_embedding = query_embedding.numpy()
+            embedding_blob = query_embedding.astype("float32").tobytes()
+            knn_results = _knn_search(
+                embedding_blob, candidate_paths, max_candidates, db_path
             )
-        # Convert to raw float32 bytes for sqlite-vec (same format as index time)
-        if hasattr(query_embedding, "numpy"):
-            query_embedding = query_embedding.numpy()
-        embedding_blob = query_embedding.astype("float32").tobytes()
-
-        knn_results = _knn_search(
-            embedding_blob, candidate_paths, max_candidates, db_path
-        )
+        except Exception as exc:
+            _log.warning("rank: embed/KNN failed (BM25-only fallback): %s", exc)
 
         # ------------------------------------------------------------------
         # 3. Reciprocal Rank Fusion
@@ -153,6 +150,11 @@ def _bm25_search(
 
     Ranks are 1-based positions.  Empty dict if no matches.
     """
+    from core.config import CONFIG
+
+    resolved_db = db_path if db_path is not None else CONFIG.main.database.path
+    _log.info("_bm25_search: searching db=%s query=%s", resolved_db, query)
+
     params: list[str | int] = [query, max_candidates]
     sql = (
         "SELECT vault_path, bm25(notes_fts) as score, "
@@ -173,6 +175,7 @@ def _bm25_search(
         for rank, (vp, _score, snip) in enumerate(rows, start=1):
             results[vp] = (rank, snip)
 
+    _log.info("_bm25_search: %d results for query=%s", len(results), query)
     return results
 
 

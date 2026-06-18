@@ -39,7 +39,7 @@ _CONFIG_DIR = _PROJECT_ROOT / "config"
 # ---------------------------------------------------------------------------
 # Type aliases — 3.12 `type` statement, runtime-enforced.
 # ---------------------------------------------------------------------------
-type Provider = Literal["claude", "claude_cli", "ollama", "openai"]
+type Provider = Literal["claude", "claude_cli", "ollama", "openai", "deepseek"]
 type Task = Literal[
     "classify",
     "synthesis",
@@ -416,6 +416,7 @@ class MainConfig(BaseModel):
     claude_cli: ClaudeCliConfig = Field(default_factory=ClaudeCliConfig)
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
     openai_compat: OpenAICompatConfig = Field(default_factory=OpenAICompatConfig)
+    deepseek: OpenAICompatConfig = Field(default_factory=OpenAICompatConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     self_learning: SelfLearningConfig = Field(default_factory=SelfLearningConfig)  # type: ignore[arg-type]
     logging: LoggingConfig = Field(default_factory=LoggingConfig)

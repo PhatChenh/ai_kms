@@ -39,7 +39,9 @@ async def synthesize_report(
         with open(reports_path) as f:
             report_defs = yaml.safe_load(f)
     except Exception as exc:
-        return Failure(f"Cannot load reports.yaml: {exc}", recoverable=False)
+        return Failure(
+            f"Cannot load reports.yaml: {exc}", recoverable=False, context={}
+        )
 
     if report_type not in report_defs.get("report_types", {}):
         return Failure(
@@ -139,7 +141,7 @@ async def synthesize_report(
             )
             report_id = cursor.lastrowid
     except sqlite3.Error as exc:
-        return Failure(f"Failed to store report: {exc}", recoverable=False)
+        return Failure(f"Failed to store report: {exc}", recoverable=False, context={})
 
     # 6. Audit
     from core.audit import write as audit_write

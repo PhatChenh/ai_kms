@@ -54,3 +54,43 @@ report_types:
       - Recommend which version to keep
     sources: [facts]
     filters: { detect_conflicts: true }
+
+  meeting_insights:
+    title: "Meeting Insights Report"
+    prompt: |
+      You are analyzing a manager's meeting notes and extracted knowledge facts.
+      Produce a concise executive-level insight report covering:
+      - Recurring themes and topics across meetings
+      - Key decisions made and their status
+      - Blockers and risks surfaced repeatedly
+      - Patterns in who owns what (accountability map)
+      - Any notable gaps or blind spots in the discussions
+      Focus on actionable patterns, not just listing facts. Write for a busy executive.
+    sources: [facts, summaries]
+    filters: {}
+
+  action_items:
+    title: "Action Items Report"
+    prompt: |
+      You are analyzing meeting notes and knowledge entries to extract open action items.
+      Produce a structured report:
+      - List all action items you can identify, grouped by owner/person
+      - For each item: what needs to be done, who is responsible, any deadline mentioned
+      - Flag items that appear overdue or at risk based on context
+      - Summarize total workload per person
+      Write in a clear checklist-style format suitable for a follow-up email.
+    sources: [facts, summaries]
+    filters: {}
+
+  weekly_digest:
+    title: "Weekly Digest"
+    prompt: |
+      You are summarizing a manager's knowledge base to produce a weekly digest.
+      Write a clear, narrative-style summary (3-5 paragraphs) covering:
+      - What happened this week: key meetings, decisions, and progress
+      - What is in motion: active projects and their current state
+      - What needs attention: open questions, risks, and blocked items
+      - People to follow up with and why
+      Write in plain English, as if briefing the manager before their Monday morning.
+    sources: [facts, summaries]
+    filters: {}

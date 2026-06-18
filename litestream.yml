@@ -2,7 +2,7 @@ dbs:
   - path: /data/kb.db
     replicas:
       - type: s3
-        bucket: ${LITESTREAM_BUCKET}
-        endpoint: ${LITESTREAM_ENDPOINT}
-        access-key-id: ${LITESTREAM_ACCESS_KEY_ID}
-        secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}
+        bucket: "$LITESTREAM_BUCKET"
+        endpoint: "$LITESTREAM_ENDPOINT"
+        access-key-id: "$LITESTREAM_ACCESS_KEY_ID"
+        secret-access-key: "$LITESTREAM_SECRET_ACCESS_KEY"

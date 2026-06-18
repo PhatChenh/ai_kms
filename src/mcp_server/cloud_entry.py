@@ -82,10 +82,31 @@ def build_app(db_path: Path | None = None) -> Starlette:
     # 5. Mount Phase 3 REST routes + health check
     app.routes.extend(api_routes + health_route)
 
+    # 5b. Serve the demo UI at / (static fallback — must be last)
+    _mount_ui(app)
+
     # 6. Phase 7 — Composed outer lifespan: classify worker + catch-up scan
     _wrap_lifespan(app, db_path)
 
     return app
+
+
+# ---------------------------------------------------------------------------
+# UI static mount
+# ---------------------------------------------------------------------------
+
+
+def _mount_ui(app) -> None:
+    """Mount the built Astro UI at / if the dist directory exists."""
+    from starlette.routing import Mount
+    from starlette.staticfiles import StaticFiles
+
+    ui_dir = Path("/app/ui")
+    if ui_dir.is_dir():
+        app.routes.append(Mount("/", StaticFiles(directory=ui_dir, html=True)))
+        _log.info("ui_mounted dir=%s", ui_dir)
+    else:
+        _log.info("ui_dir_missing path=%s — skipping static mount", ui_dir)
 
 
 # ---------------------------------------------------------------------------
